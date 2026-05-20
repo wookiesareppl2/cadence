@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { join } from 'node:path'
+import { closeClaudeUsageStore, refreshClaudeUsageSummary } from './usage/claude-usage-service'
 
 function createMainWindow(): BrowserWindow {
   const mainWindow = new BrowserWindow({
@@ -58,6 +59,8 @@ app.whenReady().then(() => {
     BrowserWindow.fromWebContents(event.sender)?.close()
   })
 
+  ipcMain.handle('usage:claude-summary', () => refreshClaudeUsageSummary())
+
   createMainWindow()
 
   app.on('activate', () => {
@@ -67,4 +70,8 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+app.on('before-quit', () => {
+  closeClaudeUsageStore()
 })

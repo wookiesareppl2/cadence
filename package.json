@@ -7,9 +7,13 @@
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "pnpm run rebuild:native:electron && electron-vite dev",
     "build": "tsc --noEmit && electron-vite build",
     "typecheck": "tsc --noEmit",
+    "test": "pnpm run rebuild:native:node && vitest run",
+    "rebuild:native": "pnpm run rebuild:native:electron",
+    "rebuild:native:electron": "electron-rebuild -f -w better-sqlite3",
+    "rebuild:native:node": "pnpm rebuild better-sqlite3",
     "preview": "electron-vite preview",
     "package": "electron-vite build && electron-builder --dir",
     "dist": "electron-vite build && electron-builder"
@@ -17,10 +21,13 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "better-sqlite3": "^12.10.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.4",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.6",
     "@types/react-dom": "^19.2.3",
@@ -29,7 +36,8 @@
     "electron-builder": "^26.0.12",
     "electron-vite": "^4.0.1",
     "typescript": "^5.9.3",
-    "vite": "^7.2.4"
+    "vite": "^7.2.4",
+    "vitest": "^4.1.6"
   },
   "build": {
     "appId": "dev.ai-dashboard.app",

@@ -1,8 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { JSX } from 'react'
-import { claudeSessions, claudeUsageSummary } from '@platforms/claude/fixtures'
+import { claudeSessions } from '@platforms/claude/fixtures'
 import { codexSessions, codexUsageState } from '@platforms/codex/fixtures'
 import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
+import type { ClaudeUsageSummary, TokenUsage } from '@shared/usage'
+import { emptyTokenUsage } from '@shared/usage'
 
 const formatNumber = (value: number): string => new Intl.NumberFormat('en-US').format(value)
 
@@ -67,6 +69,30 @@ function Titlebar({
 }
 
 function ClaudeWorkspace(): JSX.Element {
+  const [usageSummary, setUsageSummary] = useState<ClaudeUsageSummary | null>(null)
+  const [usageError, setUsageError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    window.dashboard.usage
+      .getClaudeSummary()
+      .then((summary) => {
+        if (!cancelled) setUsageSummary(summary)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setUsageError(error instanceof Error ? error.message : 'Usage scan failed')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const rollingUsage = usageSummary?.rolling.usage ?? emptyTokenUsage()
+  const weeklyUsage = usageSummary?.weekly.usage ?? emptyTokenUsage()
+  const requestCount = usageSummary?.rolling.requestCount ?? 0
+  const statusLabel = usageError ? 'scan error' : usageSummary ? 'live sqlite' : 'scanning'
+
   return (
     <main className="workspace">
       <aside className="sidebar" aria-label="Claude sessions">
@@ -94,30 +120,38 @@ function ClaudeWorkspace(): JSX.Element {
 
       <section className="content-grid" aria-label="Claude Code dashboard">
         <div className="usage-strip">
-          <UsageBlock label="In" value={claudeUsageSummary.rolling.inputTokens} />
-          <UsageBlock label="Out" value={claudeUsageSummary.rolling.outputTokens} />
-          <UsageBlock label="Total" value={claudeUsageSummary.rolling.totalTokens} strong />
-          <UsageBlock label="Req" value={claudeUsageSummary.requestCount} />
+          <UsageBlock label="In" value={rollingUsage.inputTokens} />
+          <UsageBlock label="Out" value={rollingUsage.outputTokens} />
+          <UsageBlock label="Cache" value={rollingUsage.cacheCreationInputTokens + rollingUsage.cacheReadInputTokens} />
+          <UsageBlock label="Total" value={rollingUsage.totalTokens} strong />
           <div className="usage-window">
-            <span>{claudeUsageSummary.rolling.label}</span>
-            <strong>{claudeUsageSummary.rolling.percentUsed}% est.</strong>
+            <span>Req</span>
+            <strong>{formatNumber(requestCount)}</strong>
           </div>
           <div className="usage-window">
-            <span>{claudeUsageSummary.weekly.label}</span>
-            <strong>{claudeUsageSummary.weekly.percentUsed}% est.</strong>
+            <span>{usageSummary?.weekly.label ?? '7d'}</span>
+            <strong>{formatCompactTokens(weeklyUsage.totalTokens)}</strong>
           </div>
         </div>
 
         <section className="panel terminal-panel">
           <div className="panel-header">
             <h1>Claude Code</h1>
-            <span className="status-pill">PTY pending</span>
+            <span className="status-pill">{statusLabel}</span>
           </div>
           <div className="terminal-surface" aria-label="Terminal preview">
             <p>$ claude</p>
             <p>usage source: ~/.claude/projects/*/*.jsonl</p>
             <p>dedupe: requestId</p>
-            <p>sqlite aggregation: pending</p>
+            <p>sqlite aggregation: {usageSummary ? usageSummary.databasePath : 'loading'}</p>
+            {usageSummary ? (
+              <>
+                <p>files scanned: {formatNumber(usageSummary.ingest.scannedFileCount)}</p>
+                <p>usage rows: {formatNumber(usageSummary.ingest.usageRowCount)}</p>
+                <p>duplicates dropped: {formatNumber(usageSummary.ingest.duplicateUsageRowCount)}</p>
+              </>
+            ) : null}
+            {usageError ? <p>error: {usageError}</p> : null}
           </div>
         </section>
 
@@ -133,15 +167,23 @@ function ClaudeWorkspace(): JSX.Element {
             </div>
             <div>
               <dt>dedupe</dt>
-              <dd>{claudeUsageSummary.dedupeKey}</dd>
+              <dd>{usageSummary?.dedupeKey ?? 'requestId'}</dd>
             </div>
             <div>
               <dt>primary</dt>
-              <dd>5h rolling window</dd>
+              <dd>{formatUsageDigest(rollingUsage)}</dd>
             </div>
             <div>
               <dt>secondary</dt>
-              <dd>weekly aggregate</dd>
+              <dd>{formatUsageDigest(weeklyUsage)}</dd>
+            </div>
+            <div>
+              <dt>unique req</dt>
+              <dd>{formatNumber(usageSummary?.ingest.uniqueRequestCount ?? 0)}</dd>
+            </div>
+            <div>
+              <dt>skipped</dt>
+              <dd>{formatNumber(usageSummary?.ingest.skippedUsageRows ?? 0)}</dd>
             </div>
           </dl>
         </section>
@@ -220,4 +262,14 @@ function UsageBlock({ label, value, strong = false }: { label: string; value: nu
       <strong>{formatNumber(value)}</strong>
     </div>
   )
+}
+
+function formatCompactTokens(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}m`
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`
+  return formatNumber(value)
+}
+
+function formatUsageDigest(usage: TokenUsage): string {
+  return `${formatCompactTokens(usage.totalTokens)} total`
 }
