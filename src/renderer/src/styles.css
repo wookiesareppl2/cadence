@@ -95,6 +95,10 @@ button {
   -webkit-app-region: drag;
 }
 
+.app-shell[data-native-window-frame='true'] .titlebar {
+  -webkit-app-region: no-drag;
+}
+
 .platform-switcher {
   display: flex;
   gap: 2px;

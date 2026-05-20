@@ -11,6 +11,7 @@ const formatNumber = (value: number): string => new Intl.NumberFormat('en-US').f
 export function App(): JSX.Element {
   const [platform, setPlatform] = useState<PlatformId>('claude')
   const activePlatform = PLATFORM_CONFIG[platform]
+  const useNativeWindowFrame = window.dashboard?.app.platform === 'linux'
 
   const cssVars = useMemo(
     () =>
@@ -23,8 +24,13 @@ export function App(): JSX.Element {
   )
 
   return (
-    <div className="app-shell" style={cssVars} data-platform={platform}>
-      <Titlebar platform={platform} onPlatformChange={setPlatform} />
+    <div
+      className="app-shell"
+      style={cssVars}
+      data-platform={platform}
+      data-native-window-frame={useNativeWindowFrame ? 'true' : 'false'}
+    >
+      <Titlebar platform={platform} onPlatformChange={setPlatform} useNativeWindowFrame={useNativeWindowFrame} />
       {platform === 'claude' ? <ClaudeWorkspace /> : <CodexWorkspace />}
     </div>
   )
@@ -32,10 +38,12 @@ export function App(): JSX.Element {
 
 function Titlebar({
   platform,
-  onPlatformChange
+  onPlatformChange,
+  useNativeWindowFrame
 }: {
   platform: PlatformId
   onPlatformChange: (platform: PlatformId) => void
+  useNativeWindowFrame: boolean
 }): JSX.Element {
   return (
     <header className="titlebar">
@@ -53,17 +61,19 @@ function Titlebar({
           </button>
         ))}
       </div>
-      <div className="window-controls">
-        <button type="button" aria-label="Minimize" onClick={() => window.dashboard.window.minimize()}>
-          -
-        </button>
-        <button type="button" aria-label="Maximize" onClick={() => window.dashboard.window.toggleMaximize()}>
-          □
-        </button>
-        <button type="button" aria-label="Close" className="close" onClick={() => window.dashboard.window.close()}>
-          x
-        </button>
-      </div>
+      {!useNativeWindowFrame ? (
+        <div className="window-controls">
+          <button type="button" aria-label="Minimize" onClick={() => window.dashboard.window.minimize()}>
+            -
+          </button>
+          <button type="button" aria-label="Maximize" onClick={() => window.dashboard.window.toggleMaximize()}>
+            □
+          </button>
+          <button type="button" aria-label="Close" className="close" onClick={() => window.dashboard.window.close()}>
+            x
+          </button>
+        </div>
+      ) : null}
     </header>
   )
 }

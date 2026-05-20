@@ -9,13 +9,15 @@ if (process.platform === 'linux') {
 }
 
 function createMainWindow(): BrowserWindow {
+  const useNativeFrame = process.platform === 'linux'
+
   const mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 1180,
     minHeight: 720,
     show: false,
-    frame: false,
+    frame: useNativeFrame,
     backgroundColor: '#1e1b19',
     title: 'AI Dashboard',
     webPreferences: {
