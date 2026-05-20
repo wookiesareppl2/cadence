@@ -1,7 +1,9 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, type Rectangle } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { join } from 'node:path'
 import { closeClaudeUsageStore, refreshClaudeUsageSummary } from './usage/claude-usage-service'
+
+let restoreBounds: Rectangle | null = null
 
 if (process.platform === 'linux') {
   app.disableHardwareAcceleration()
@@ -9,15 +11,13 @@ if (process.platform === 'linux') {
 }
 
 function createMainWindow(): BrowserWindow {
-  const useNativeFrame = process.platform === 'linux'
-
   const mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 1180,
     minHeight: 720,
     show: false,
-    frame: useNativeFrame,
+    frame: false,
     backgroundColor: '#1e1b19',
     title: 'AI Dashboard',
     webPreferences: {
@@ -63,6 +63,19 @@ app.whenReady().then(() => {
   ipcMain.on('window:maximize-toggle', (event) => {
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window) return
+
+    if (process.platform === 'linux') {
+      if (restoreBounds) {
+        window.setBounds(restoreBounds, true)
+        restoreBounds = null
+        return
+      }
+
+      restoreBounds = window.getBounds()
+      window.setBounds(screen.getDisplayMatching(restoreBounds).workArea, true)
+      return
+    }
+
     if (window.isMaximized()) {
       window.unmaximize()
     } else {
