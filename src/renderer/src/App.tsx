@@ -73,6 +73,11 @@ function ClaudeWorkspace(): JSX.Element {
   const [usageError, setUsageError] = useState<string | null>(null)
 
   useEffect(() => {
+    if (!window.dashboard?.usage) {
+      setUsageError('Preload API unavailable: window.dashboard.usage was not exposed')
+      return
+    }
+
     let cancelled = false
     window.dashboard.usage
       .getClaudeSummary()
