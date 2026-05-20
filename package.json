@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Desktop control room for AI coding assistants",
   "private": true,
+  "packageManager": "pnpm@11.1.2",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
