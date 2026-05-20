@@ -36,6 +36,35 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+.renderer-failure {
+  min-height: 100vh;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 24px;
+  background: var(--surface-0);
+  color: var(--text-1);
+}
+
+.renderer-failure h1 {
+  margin: 0;
+  color: #d4a24e;
+  font-size: 16px;
+}
+
+.renderer-failure pre {
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-1);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
 button,
 input {
   font: inherit;

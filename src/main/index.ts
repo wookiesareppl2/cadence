@@ -30,6 +30,14 @@ function createMainWindow(): BrowserWindow {
     mainWindow.show()
   })
 
+  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    console.log(`[renderer:${level}] ${message} (${sourceId}:${line})`)
+  })
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('Renderer process exited', details)
+  })
+
   if (is.dev && process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
