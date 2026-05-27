@@ -1,11 +1,16 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { app } from 'electron'
 import type { ClaudePlanUsage, ExtraUsage, UsageWindow } from '@shared/claude-plan-usage'
 
 const API_BASE = 'https://api.anthropic.com/api/oauth'
 const USER_AGENT = 'claude-code/2.1.152'
 const BETA_HEADER = 'oauth-2025-04-20'
+const REFRESH_TIMEOUT_MS = 45_000
+const execFileAsync = promisify(execFile)
+let refreshPromise: Promise<void> | null = null
 
 function readAccessToken(): string {
   const credPath = join(app.getPath('home'), '.claude', '.credentials.json')
@@ -28,6 +33,14 @@ type RawExtraUsage = {
   disabled_reason: string | null
 } | null
 
+type UsageResponse = Pick<Response, 'status' | 'ok' | 'statusText' | 'json'>
+type FetchUsage = (token: string) => Promise<UsageResponse>
+type ClaudePlanUsageDeps = {
+  fetchUsage?: FetchUsage
+  readToken?: () => string
+  refreshCredentials?: () => Promise<void>
+}
+
 function parseWindow(raw: RawWindow): UsageWindow | null {
   if (!raw || typeof raw.utilization !== 'number') return null
   return { utilization: raw.utilization, resetsAt: raw.resets_at }
@@ -45,10 +58,8 @@ function parseExtraUsage(raw: RawExtraUsage): ExtraUsage | null {
   }
 }
 
-export async function fetchClaudePlanUsage(): Promise<ClaudePlanUsage> {
-  const token = readAccessToken()
-
-  const res = await fetch(`${API_BASE}/usage`, {
+async function fetchUsageWithToken(token: string): Promise<UsageResponse> {
+  return fetch(`${API_BASE}/usage`, {
     headers: {
       Authorization: `Bearer ${token}`,
       'anthropic-beta': BETA_HEADER,
@@ -56,6 +67,81 @@ export async function fetchClaudePlanUsage(): Promise<ClaudePlanUsage> {
       'Content-Type': 'application/json'
     }
   })
+}
+
+function claudeRefreshCommand(): { file: string; args: string[] } {
+  const prompt = 'Respond with exactly: pong'
+  const printArgs = [
+    '-p',
+    prompt,
+    '--output-format',
+    'json',
+    '--no-session-persistence',
+    '--max-budget-usd',
+    '0.01',
+    '--permission-mode',
+    'dontAsk',
+    '--disable-slash-commands',
+    '--tools',
+    ''
+  ]
+
+  if (process.platform !== 'win32') {
+    return { file: 'claude', args: printArgs }
+  }
+
+  return { file: 'cmd.exe', args: ['/d', '/s', '/c', 'claude', ...printArgs] }
+}
+
+async function runClaudeRefreshCommand(): Promise<void> {
+  const { file, args } = claudeRefreshCommand()
+  await execFileAsync(file, args, {
+    timeout: REFRESH_TIMEOUT_MS,
+    windowsHide: true,
+    maxBuffer: 1024 * 1024
+  })
+}
+
+async function refreshClaudeCredentials(): Promise<void> {
+  refreshPromise ??= runClaudeRefreshCommand().finally(() => {
+    refreshPromise = null
+  })
+  return refreshPromise
+}
+
+async function fetchWithOptionalCredentialRefresh(
+  fetchUsage: FetchUsage,
+  readToken: () => string,
+  refreshCredentials: () => Promise<void>
+): Promise<UsageResponse> {
+  let res = await fetchUsage(readToken())
+
+  if (res.status !== 401) {
+    return res
+  }
+
+  try {
+    await refreshCredentials()
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : 'unknown error'
+    throw new Error(`Claude credentials expired and automatic refresh failed: ${detail}`)
+  }
+
+  res = await fetchUsage(readToken())
+
+  if (res.status === 401) {
+    throw new Error('Claude credentials expired and automatic refresh did not produce a valid access token')
+  }
+
+  return res
+}
+
+export async function fetchClaudePlanUsage(deps: ClaudePlanUsageDeps = {}): Promise<ClaudePlanUsage> {
+  const res = await fetchWithOptionalCredentialRefresh(
+    deps.fetchUsage ?? fetchUsageWithToken,
+    deps.readToken ?? readAccessToken,
+    deps.refreshCredentials ?? refreshClaudeCredentials
+  )
 
   if (res.status === 401) {
     throw new Error('Claude credentials expired — run any `claude` command to refresh')

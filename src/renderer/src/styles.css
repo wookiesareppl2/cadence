@@ -84,7 +84,7 @@ button {
 }
 
 .titlebar {
-  height: 38px;
+  height: 46px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -161,12 +161,16 @@ button {
 }
 
 .window-controls button {
-  width: 46px;
+  width: 56px;
   height: 100%;
   border: 0;
   background: transparent;
   color: var(--text-2);
   cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1;
   transition:
     background-color 160ms ease,
     color 160ms ease;
@@ -494,7 +498,10 @@ button {
   grid-column: 1;
 }
 
-.inspector-panel,
+.claude-terminal-panel {
+  grid-column: 1 / -1;
+}
+
 .codex-usage {
   grid-column: 2;
 }
@@ -571,7 +578,6 @@ button {
   }
 
   .terminal-panel,
-  .inspector-panel,
   .codex-usage {
     grid-column: 1;
   }

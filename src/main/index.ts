@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen, type Rectangle } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, type Rectangle, type WebContentsConsoleMessageEventParams } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { join } from 'node:path'
 import { closeClaudeUsageStore, refreshClaudeUsageSummary } from './usage/claude-usage-service'
@@ -9,6 +9,12 @@ let restoreBounds: Rectangle | null = null
 if (process.platform === 'linux') {
   app.disableHardwareAcceleration()
   app.commandLine.appendSwitch('disable-gpu')
+}
+
+function shouldForwardRendererConsole({ message, sourceId }: WebContentsConsoleMessageEventParams): boolean {
+  if (sourceId.includes('/@vite/client') && message.startsWith('[vite] ')) return false
+  if (message.includes('Download the React DevTools')) return false
+  return true
 }
 
 function createMainWindow(): BrowserWindow {
@@ -33,8 +39,9 @@ function createMainWindow(): BrowserWindow {
     mainWindow.show()
   })
 
-  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
-    console.log(`[renderer:${level}] ${message} (${sourceId}:${line})`)
+  mainWindow.webContents.on('console-message', (details) => {
+    if (!shouldForwardRendererConsole(details)) return
+    console.log(`[renderer:${details.level}] ${details.message} (${details.sourceId}:${details.lineNumber})`)
   })
 
   mainWindow.webContents.on('render-process-gone', (_event, details) => {

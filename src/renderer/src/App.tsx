@@ -4,7 +4,6 @@ import type { ClaudePlanUsage } from '@shared/claude-plan-usage'
 import { claudeSessions } from '@platforms/claude/fixtures'
 import { codexSessions, codexUsageState } from '@platforms/codex/fixtures'
 import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
-import type { ClaudeUsageSummary } from '@shared/usage'
 
 const formatNumber = (value: number): string => new Intl.NumberFormat('en-US').format(value)
 
@@ -121,23 +120,8 @@ function barTier(pct: number): string {
 
 function ClaudeWorkspace(): JSX.Element {
   const { planUsage, planError } = useClaudePlanUsage()
-  const [usageSummary, setUsageSummary] = useState<ClaudeUsageSummary | null>(null)
-  const [usageError, setUsageError] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (!window.dashboard?.usage) {
-      setUsageError('Preload API unavailable: window.dashboard.usage was not exposed')
-      return
-    }
-    let cancelled = false
-    window.dashboard.usage
-      .getClaudeSummary()
-      .then((summary) => { if (!cancelled) setUsageSummary(summary) })
-      .catch((err: unknown) => { if (!cancelled) setUsageError(err instanceof Error ? err.message : 'Usage scan failed') })
-    return () => { cancelled = true }
-  }, [])
-
-  const statusLabel = (planError || usageError)
+  const statusLabel = planError
     ? 'error'
     : planUsage
       ? 'live'
@@ -194,50 +178,17 @@ function ClaudeWorkspace(): JSX.Element {
           )}
         </div>
 
-        <section className="panel terminal-panel">
+        <section className="panel terminal-panel claude-terminal-panel">
           <div className="panel-header">
             <h1>Claude Code</h1>
             <span className="status-pill">{statusLabel}</span>
           </div>
           <div className="terminal-surface" aria-label="Terminal preview">
             <p>$ claude</p>
-            <p>usage source: ~/.claude/projects/*/*.jsonl</p>
-            <p>dedupe: requestId</p>
-            <p>sqlite aggregation: {usageSummary ? usageSummary.databasePath : 'loading'}</p>
-            {usageSummary ? (
-              <>
-                <p>files scanned: {formatNumber(usageSummary.ingest.scannedFileCount)}</p>
-                <p>usage rows: {formatNumber(usageSummary.ingest.usageRowCount)}</p>
-                <p>duplicates dropped: {formatNumber(usageSummary.ingest.duplicateUsageRowCount)}</p>
-              </>
-            ) : null}
-            {usageError ? <p>error: {usageError}</p> : null}
+            <p>session: {claudeSessions[0]?.title}</p>
+            <p>project: {claudeSessions[0]?.project}</p>
+            <p>branch: {claudeSessions[0]?.branch}</p>
           </div>
-        </section>
-
-        <section className="panel inspector-panel">
-          <div className="panel-header">
-            <h2>Parser Contract</h2>
-            <span className="status-pill">critical</span>
-          </div>
-          <dl className="fact-list">
-            <div>
-              <dt>source</dt>
-              <dd>~/.claude/projects/*/*.jsonl</dd>
-            </div>
-            <div>
-              <dt>dedupe</dt>
-              <dd>{usageSummary?.dedupeKey ?? 'requestId'}</dd>
-            </div>
-            <div>
-              <dt>unique req</dt>
-              <dd>{formatNumber(usageSummary?.ingest.uniqueRequestCount ?? 0)}</dd>
-            </div>
-            <div>
-              <dt>skipped</dt>
-              <dd>{formatNumber(usageSummary?.ingest.skippedUsageRows ?? 0)}</dd>
-            </div>
-          </dl>
         </section>
       </section>
     </main>
