@@ -359,26 +359,53 @@ button {
 .usage-strip {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(4, minmax(116px, 1fr)) repeat(2, 132px);
-  gap: 1px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--border);
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
 }
 
-.usage-block,
-.usage-window {
-  min-height: 68px;
+.usage-error,
+.usage-loading {
+  grid-column: 1 / -1;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-1);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: center;
+}
+
+.usage-error {
+  color: var(--caution);
+  border-color: var(--caution);
+}
+
+.usage-bar-card {
   display: grid;
-  align-content: center;
-  gap: 7px;
-  padding: 12px 14px;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
   background: var(--surface-1);
 }
 
-.usage-block strong,
-.usage-window strong {
+.usage-bar-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.usage-bar-label {
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.usage-bar-pct {
   color: var(--text-1);
   font-family: var(--font-mono);
   font-size: 20px;
@@ -386,9 +413,37 @@ button {
   line-height: 1;
 }
 
-.usage-block.strong strong,
-.usage-window strong {
-  color: var(--accent);
+.usage-bar-card[data-tier="normal"] .usage-bar-pct { color: var(--success); }
+.usage-bar-card[data-tier="warning"] .usage-bar-pct { color: var(--caution); }
+.usage-bar-card[data-tier="critical"] .usage-bar-pct { color: #c0392b; }
+
+.usage-bar-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.usage-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 600ms ease;
+}
+
+[data-tier="normal"] .usage-bar-fill { background: var(--success); }
+[data-tier="warning"] .usage-bar-fill { background: var(--caution); }
+[data-tier="critical"] .usage-bar-fill { background: #c0392b; }
+
+.usage-bar-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.usage-bar-reset {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
 .panel {

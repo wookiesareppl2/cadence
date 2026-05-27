@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { ClaudePlanUsage } from '@shared/claude-plan-usage'
 import type { ClaudeUsageSummary } from '@shared/usage'
 
 const api = {
@@ -11,7 +12,8 @@ const api = {
     platform: process.platform
   },
   usage: {
-    getClaudeSummary: (): Promise<ClaudeUsageSummary> => ipcRenderer.invoke('usage:claude-summary')
+    getClaudeSummary: (): Promise<ClaudeUsageSummary> => ipcRenderer.invoke('usage:claude-summary'),
+    getClaudePlanUsage: (): Promise<ClaudePlanUsage> => ipcRenderer.invoke('usage:claude-plan')
   }
 }
 

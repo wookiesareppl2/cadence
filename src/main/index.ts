@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, screen, type Rectangle } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { join } from 'node:path'
 import { closeClaudeUsageStore, refreshClaudeUsageSummary } from './usage/claude-usage-service'
+import { fetchClaudePlanUsage } from './usage/claude-plan-usage-service'
 
 let restoreBounds: Rectangle | null = null
 
@@ -88,6 +89,7 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('usage:claude-summary', () => refreshClaudeUsageSummary())
+  ipcMain.handle('usage:claude-plan', () => fetchClaudePlanUsage())
 
   createMainWindow()
 
