@@ -6,5 +6,7 @@ export type CodexPlanUsage = {
   planType: string | null
   sourcePath: string | null
   sourceTimestamp: string | null
+  isStale: boolean
+  staleReason: string | null
   fetchedAt: string
 }

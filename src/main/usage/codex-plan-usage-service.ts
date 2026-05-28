@@ -24,6 +24,8 @@ type LatestRateLimits = {
   rateLimits: RawRateLimits
 }
 
+const STALE_AFTER_MS = 30 * 60_000
+
 async function findJsonlFiles(root: string): Promise<string[]> {
   const files: string[] = []
 
@@ -106,16 +108,23 @@ export async function fetchCodexPlanUsage(): Promise<CodexPlanUsage> {
       planType: null,
       sourcePath: null,
       sourceTimestamp: null,
+      isStale: false,
+      staleReason: null,
       fetchedAt: new Date().toISOString()
     }
   }
 
+  const ageMs = Date.now() - latest.timestampMs
+  const isStale = ageMs > STALE_AFTER_MS
+
   return {
-    fiveHour: parseUsageWindow(latest.rateLimits.primary, 300),
-    sevenDay: parseUsageWindow(latest.rateLimits.secondary, 10_080),
+    fiveHour: isStale ? null : parseUsageWindow(latest.rateLimits.primary, 300),
+    sevenDay: isStale ? null : parseUsageWindow(latest.rateLimits.secondary, 10_080),
     planType: typeof latest.rateLimits.plan_type === 'string' ? latest.rateLimits.plan_type : null,
     sourcePath: latest.sourcePath,
     sourceTimestamp: latest.timestamp,
+    isStale,
+    staleReason: isStale ? `Local Codex usage data last updated ${new Date(latest.timestamp).toLocaleString()}` : null,
     fetchedAt: new Date().toISOString()
   }
 }

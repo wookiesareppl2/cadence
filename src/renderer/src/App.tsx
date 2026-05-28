@@ -177,12 +177,9 @@ function SessionList({
       {sessions.map((session, index) => (
         <button key={`${session.platform}:${session.id}`} type="button" className={`session-item ${index === 0 ? 'active' : ''}`}>
           <span className="session-title">{session.title}</span>
-          <span className="session-project">{session.project}</span>
+          {session.project && session.project !== session.title ? <span className="session-project">{session.project}</span> : null}
           <span className="session-meta">
-            {session.branch ? <span>{session.branch}</span> : null}
-            {session.usageLabel ? <span>{session.usageLabel}</span> : null}
-            <span>{session.status}</span>
-            <span>{session.age}</span>
+            <span>Updated {session.age}</span>
           </span>
         </button>
       ))}
@@ -297,7 +294,7 @@ function CodexWorkspace(): JSX.Element {
           </button>
         </div>
         <div className="session-list">
-          <SessionList sessions={sessions} loading={loading} error={error} emptyLabel="No Codex sessions indexed" />
+          <SessionList sessions={sessions} loading={loading} error={error} emptyLabel="No Codex sessions found" />
         </div>
       </aside>
 
@@ -307,6 +304,8 @@ function CodexWorkspace(): JSX.Element {
             <div className="usage-error">{planError}</div>
           ) : !planUsage ? (
             <div className="usage-loading">Fetching Codex usage data...</div>
+          ) : planUsage.isStale ? (
+            <div className="usage-loading">{planUsage.staleReason ?? 'Local Codex usage data is stale.'}</div>
           ) : planUsage.fiveHour || planUsage.sevenDay ? (
             <>
               {planUsage.fiveHour && (

@@ -8,6 +8,7 @@ type ClaudeSessionDraft = {
   sourcePath: string
   cwd: string | null
   branch: string | null
+  title: string | null
   updatedAtMs: number
   tokenTotal: number
 }
@@ -43,12 +44,12 @@ function relativeAge(timestampMs: number): string {
   const diffMs = Math.max(0, Date.now() - timestampMs)
   const minutes = Math.floor(diffMs / 60_000)
   if (minutes < 1) return 'now'
-  if (minutes < 60) return `${minutes}m`
+  if (minutes < 60) return `${minutes}m ago`
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h`
+  if (hours < 24) return `${hours}h ago`
   const days = Math.floor(hours / 24)
-  if (days < 30) return `${days}d`
-  return `${Math.floor(days / 30)}mo`
+  if (days < 30) return `${days}d ago`
+  return `${Math.floor(days / 30)}mo ago`
 }
 
 function formatTokenLabel(value: number): string | null {
@@ -59,13 +60,36 @@ function formatTokenLabel(value: number): string | null {
 }
 
 function projectLabel(cwd: string | null, sourcePath: string): string {
-  if (cwd) return cwd
+  if (cwd) return basename(cwd)
   return basename(dirname(sourcePath)).replaceAll('-', ' ')
 }
 
-function sessionTitle(cwd: string | null, id: string): string {
-  const name = cwd ? basename(cwd) : 'Claude session'
-  return `${name} / ${id.slice(0, 8)}`
+function contentText(value: unknown): string | null {
+  if (typeof value === 'string') return value
+  if (!Array.isArray(value)) return null
+
+  const text = value
+    .map((item) => {
+      if (typeof item === 'string') return item
+      if (item && typeof item === 'object' && 'text' in item && typeof item.text === 'string') return item.text
+      return null
+    })
+    .filter(Boolean)
+    .join(' ')
+    .trim()
+
+  return text || null
+}
+
+function readableTitle(text: string | null, fallback: string): string {
+  if (!text) return fallback
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  if (!normalized) return fallback
+  return normalized.length > 56 ? `${normalized.slice(0, 53)}...` : normalized
+}
+
+function sessionTitle(title: string | null, cwd: string | null): string {
+  return readableTitle(title, cwd ? basename(cwd) : 'Claude session')
 }
 
 async function readClaudeSession(path: string): Promise<ClaudeSessionDraft | null> {
@@ -75,6 +99,7 @@ async function readClaudeSession(path: string): Promise<ClaudeSessionDraft | nul
     sourcePath: path,
     cwd: null,
     branch: null,
+    title: null,
     updatedAtMs: stats.mtimeMs,
     tokenTotal: 0
   }
@@ -87,6 +112,7 @@ async function readClaudeSession(path: string): Promise<ClaudeSessionDraft | nul
       if (typeof row.sessionId === 'string') draft.id = row.sessionId
       if (typeof row.cwd === 'string') draft.cwd = row.cwd
       if (typeof row.gitBranch === 'string') draft.branch = row.gitBranch
+      if (!draft.title && row.type === 'user') draft.title = contentText(row.message?.content)
       if (typeof row.timestamp === 'string') {
         const parsed = Date.parse(row.timestamp)
         if (!Number.isNaN(parsed)) draft.updatedAtMs = Math.max(draft.updatedAtMs, parsed)
@@ -120,7 +146,7 @@ export async function getClaudeSessions(): Promise<AssistantSession[]> {
     .map((session) => ({
       id: session.id,
       platform: 'claude',
-      title: sessionTitle(session.cwd, session.id),
+      title: sessionTitle(session.title, session.cwd),
       project: projectLabel(session.cwd, session.sourcePath),
       branch: session.branch,
       usageLabel: formatTokenLabel(session.tokenTotal),
@@ -151,10 +177,10 @@ export async function getCodexSessions(): Promise<AssistantSession[]> {
           id: row.id,
           platform: 'codex',
           title: row.thread_name || `Codex ${String(row.id).slice(0, 8)}`,
-          project: 'Codex',
+          project: '',
           branch: null,
           usageLabel: null,
-          status: 'indexed',
+          status: '',
           age: updatedAt ? relativeAge(Date.parse(updatedAt)) : 'unknown',
           updatedAt
         }
