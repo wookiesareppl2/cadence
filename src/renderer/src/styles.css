@@ -261,6 +261,23 @@ button {
   padding: 0 6px 10px;
 }
 
+.session-placeholder {
+  margin: 8px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--surface-0);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.session-placeholder.error {
+  color: var(--caution);
+  border-color: color-mix(in srgb, var(--caution) 45%, var(--border));
+}
+
 .session-item {
   width: 100%;
   display: grid;
@@ -504,8 +521,8 @@ button {
   grid-column: 1 / -1;
 }
 
-.codex-usage {
-  grid-column: 2;
+.codex-terminal-panel {
+  grid-column: 1 / -1;
 }
 
 .terminal-surface {
@@ -614,10 +631,6 @@ button {
   white-space: nowrap;
 }
 
-.codex-usage {
-  grid-row: 1 / -1;
-}
-
 .muted-copy {
   max-width: 66ch;
   margin: 0;
@@ -639,8 +652,7 @@ button {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .terminal-panel,
-  .codex-usage {
+  .terminal-panel {
     grid-column: 1;
   }
 }

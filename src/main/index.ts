@@ -4,6 +4,8 @@ import { join } from 'node:path'
 import { closeAllTerminals, resizeTerminal, restartTerminal, startTerminal, writeTerminal } from './terminal/terminal-service'
 import { closeClaudeUsageStore, refreshClaudeUsageSummary } from './usage/claude-usage-service'
 import { fetchClaudePlanUsage } from './usage/claude-plan-usage-service'
+import { fetchCodexPlanUsage } from './usage/codex-plan-usage-service'
+import { getClaudeSessions, getCodexSessions } from './sessions/session-service'
 
 let restoreBounds: Rectangle | null = null
 
@@ -98,6 +100,9 @@ app.whenReady().then(() => {
 
   ipcMain.handle('usage:claude-summary', () => refreshClaudeUsageSummary())
   ipcMain.handle('usage:claude-plan', () => fetchClaudePlanUsage())
+  ipcMain.handle('usage:codex-plan', () => fetchCodexPlanUsage())
+  ipcMain.handle('sessions:claude', () => getClaudeSessions())
+  ipcMain.handle('sessions:codex', () => getCodexSessions())
   ipcMain.handle('terminal:start', (event, platform: string) => startTerminal(platform, event.sender))
   ipcMain.handle('terminal:restart', (event, platform: string) => restartTerminal(platform, event.sender))
   ipcMain.on('terminal:input', (_event, platform: string, data: string) => writeTerminal(platform, data))

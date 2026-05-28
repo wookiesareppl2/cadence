@@ -4,12 +4,13 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import type { ClaudePlanUsage } from '@shared/claude-plan-usage'
-import { claudeSessions } from '@platforms/claude/fixtures'
-import { codexSessions, codexUsageState } from '@platforms/codex/fixtures'
+import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
+import type { AssistantSession } from '@shared/sessions'
 import type { TerminalPlatform, TerminalStartResult } from '@shared/terminal'
 
 const PLAN_POLL_INTERVAL_MS = 180_000
+const SESSION_POLL_INTERVAL_MS = 60_000
 
 export function App(): JSX.Element {
   const [platform, setPlatform] = useState<PlatformId>('claude')
@@ -92,6 +93,103 @@ function useClaudePlanUsage(): { planUsage: ClaudePlanUsage | null; planError: s
   return { planUsage, planError }
 }
 
+function useCodexPlanUsage(): { planUsage: CodexPlanUsage | null; planError: string | null } {
+  const [planUsage, setPlanUsage] = useState<CodexPlanUsage | null>(null)
+  const [planError, setPlanError] = useState<string | null>(null)
+
+  const fetchPlan = useCallback(() => {
+    if (!window.dashboard?.usage?.getCodexPlanUsage) return
+    window.dashboard.usage
+      .getCodexPlanUsage()
+      .then((usage) => {
+        setPlanUsage(usage)
+        setPlanError(null)
+      })
+      .catch((err: unknown) => setPlanError(err instanceof Error ? err.message : 'Failed to fetch Codex usage'))
+  }, [])
+
+  useEffect(() => {
+    fetchPlan()
+    const id = setInterval(fetchPlan, PLAN_POLL_INTERVAL_MS)
+    return () => clearInterval(id)
+  }, [fetchPlan])
+
+  return { planUsage, planError }
+}
+
+function usePlatformSessions(platform: PlatformId): {
+  sessions: AssistantSession[]
+  loading: boolean
+  error: string | null
+} {
+  const [sessions, setSessions] = useState<AssistantSession[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const fetchSessions = useCallback(() => {
+    const loader =
+      platform === 'claude'
+        ? window.dashboard?.sessions?.getClaudeSessions
+        : window.dashboard?.sessions?.getCodexSessions
+
+    if (!loader) {
+      setError('Session API unavailable')
+      setLoading(false)
+      return
+    }
+
+    loader()
+      .then((nextSessions) => {
+        setSessions(nextSessions)
+        setError(null)
+      })
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Session scan failed'))
+      .finally(() => setLoading(false))
+  }, [platform])
+
+  useEffect(() => {
+    setLoading(true)
+    fetchSessions()
+    const id = setInterval(fetchSessions, SESSION_POLL_INTERVAL_MS)
+    return () => clearInterval(id)
+  }, [fetchSessions])
+
+  return { sessions, loading, error }
+}
+
+function SessionList({
+  sessions,
+  loading,
+  error,
+  emptyLabel
+}: {
+  sessions: AssistantSession[]
+  loading: boolean
+  error: string | null
+  emptyLabel: string
+}): JSX.Element {
+  if (loading) return <div className="session-placeholder">Scanning sessions...</div>
+  if (error) return <div className="session-placeholder error">{error}</div>
+  if (sessions.length === 0) return <div className="session-placeholder">{emptyLabel}</div>
+
+  return (
+    <>
+      {sessions.map((session, index) => (
+        <button key={`${session.platform}:${session.id}`} type="button" className={`session-item ${index === 0 ? 'active' : ''}`}>
+          <span className="session-title">{session.title}</span>
+          <span className="session-project">{session.project}</span>
+          <span className="session-meta">
+            {session.branch ? <span>{session.branch}</span> : null}
+            {session.usageLabel ? <span>{session.usageLabel}</span> : null}
+            <span>{session.status}</span>
+            <span>{session.age}</span>
+          </span>
+        </button>
+      ))}
+    </>
+  )
+}
+
 function useCountdown(resetsAt: string | null): string {
   const [now, setNow] = useState(() => Date.now())
 
@@ -122,6 +220,7 @@ function barTier(pct: number): string {
 
 function ClaudeWorkspace(): JSX.Element {
   const { planUsage, planError } = useClaudePlanUsage()
+  const { sessions, loading, error } = usePlatformSessions('claude')
 
   const statusLabel = planError
     ? 'error'
@@ -140,17 +239,7 @@ function ClaudeWorkspace(): JSX.Element {
         </div>
         <input className="sidebar-search" placeholder="Search sessions" aria-label="Search sessions" />
         <div className="session-list">
-          {claudeSessions.map((session, index) => (
-            <button key={session.id} type="button" className={`session-item ${index === 0 ? 'active' : ''}`}>
-              <span className="session-title">{session.title}</span>
-              <span className="session-project">{session.project}</span>
-              <span className="session-meta">
-                <span>{session.branch}</span>
-                <span>{session.tokens}</span>
-                <span>{session.age}</span>
-              </span>
-            </button>
-          ))}
+          <SessionList sessions={sessions} loading={loading} error={error} emptyLabel="No Claude sessions found" />
         </div>
       </aside>
 
@@ -189,6 +278,10 @@ function ClaudeWorkspace(): JSX.Element {
 }
 
 function CodexWorkspace(): JSX.Element {
+  const { planUsage, planError } = useCodexPlanUsage()
+  const { sessions, loading, error } = usePlatformSessions('codex')
+  const statusLabel = planError ? 'usage error' : planUsage ? 'live' : 'connecting'
+
   return (
     <main className="workspace">
       <aside className="sidebar" aria-label="Codex sessions">
@@ -204,38 +297,40 @@ function CodexWorkspace(): JSX.Element {
           </button>
         </div>
         <div className="session-list">
-          {codexSessions.map((session, index) => (
-            <button key={session.id} type="button" className={`session-item ${index === 0 ? 'active' : ''}`}>
-              <span className="session-title">{session.title}</span>
-              <span className="session-project">{session.project}</span>
-              <span className="session-meta">
-                <span>{session.status}</span>
-                <span>{session.age}</span>
-              </span>
-            </button>
-          ))}
+          <SessionList sessions={sessions} loading={loading} error={error} emptyLabel="No Codex sessions indexed" />
         </div>
       </aside>
 
       <section className="content-grid" aria-label="Codex dashboard">
-        <section className="panel codex-usage">
-          <div className="panel-header">
-            <h1>{codexUsageState.headline}</h1>
-            <span className="status-pill">not configured</span>
-          </div>
-          <p className="muted-copy">{codexUsageState.detail}</p>
-          <dl className="fact-list">
-            {codexUsageState.telemetry.map(([label, value]) => (
-              <div key={label}>
-                <dt>{label}</dt>
-                <dd>{value}</dd>
-              </div>
-            ))}
-          </dl>
-        </section>
+        <div className="usage-strip">
+          {planError ? (
+            <div className="usage-error">{planError}</div>
+          ) : !planUsage ? (
+            <div className="usage-loading">Fetching Codex usage data...</div>
+          ) : planUsage.fiveHour || planUsage.sevenDay ? (
+            <>
+              {planUsage.fiveHour && (
+                <UsageBar
+                  label="5-Hour Usage"
+                  utilization={planUsage.fiveHour.utilization}
+                  resetsAt={planUsage.fiveHour.resetsAt}
+                />
+              )}
+              {planUsage.sevenDay && (
+                <UsageBar
+                  label="Weekly Usage"
+                  utilization={planUsage.sevenDay.utilization}
+                  resetsAt={planUsage.sevenDay.resetsAt}
+                />
+              )}
+            </>
+          ) : (
+            <div className="usage-loading">Codex usage limits will appear after Codex reports rate-limit data.</div>
+          )}
+        </div>
 
-        <section className="panel terminal-panel">
-          <TerminalPane platform="codex" title="Codex Terminal" statusLabel="live" />
+        <section className="panel terminal-panel codex-terminal-panel">
+          <TerminalPane platform="codex" title="Codex Terminal" statusLabel={statusLabel} />
         </section>
       </section>
     </main>
