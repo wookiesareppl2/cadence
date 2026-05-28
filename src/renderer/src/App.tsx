@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
+import { FitAddon } from '@xterm/addon-fit'
+import { Terminal } from '@xterm/xterm'
+import '@xterm/xterm/css/xterm.css'
 import type { ClaudePlanUsage } from '@shared/claude-plan-usage'
 import { claudeSessions } from '@platforms/claude/fixtures'
 import { codexSessions, codexUsageState } from '@platforms/codex/fixtures'
 import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
-
-const formatNumber = (value: number): string => new Intl.NumberFormat('en-US').format(value)
+import type { TerminalPlatform, TerminalStartResult } from '@shared/terminal'
 
 const PLAN_POLL_INTERVAL_MS = 180_000
 
@@ -179,16 +181,7 @@ function ClaudeWorkspace(): JSX.Element {
         </div>
 
         <section className="panel terminal-panel claude-terminal-panel">
-          <div className="panel-header">
-            <h1>Claude Code</h1>
-            <span className="status-pill">{statusLabel}</span>
-          </div>
-          <div className="terminal-surface" aria-label="Terminal preview">
-            <p>$ claude</p>
-            <p>session: {claudeSessions[0]?.title}</p>
-            <p>project: {claudeSessions[0]?.project}</p>
-            <p>branch: {claudeSessions[0]?.branch}</p>
-          </div>
+          <TerminalPane platform="claude" title="Claude Terminal" statusLabel={statusLabel} />
         </section>
       </section>
     </main>
@@ -242,19 +235,148 @@ function CodexWorkspace(): JSX.Element {
         </section>
 
         <section className="panel terminal-panel">
-          <div className="panel-header">
-            <h2>Codex Terminal</h2>
-            <span className="status-pill">PTY pending</span>
-          </div>
-          <div className="terminal-surface" aria-label="Terminal preview">
-            <p>$ codex</p>
-            <p>usage source: OpenAI API</p>
-            <p>local token cache: unavailable</p>
-            <p>view state: isolated from Claude Code</p>
-          </div>
+          <TerminalPane platform="codex" title="Codex Terminal" statusLabel="live" />
         </section>
       </section>
     </main>
+  )
+}
+
+function TerminalPane({
+  platform,
+  title,
+  statusLabel
+}: {
+  platform: TerminalPlatform
+  title: string
+  statusLabel: string
+}): JSX.Element {
+  const hostRef = useRef<HTMLDivElement | null>(null)
+  const terminalRef = useRef<Terminal | null>(null)
+  const fitAddonRef = useRef<FitAddon | null>(null)
+  const [session, setSession] = useState<TerminalStartResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const fitTerminal = useCallback(() => {
+    const terminal = terminalRef.current
+    const fitAddon = fitAddonRef.current
+    if (!terminal || !fitAddon) return
+
+    fitAddon.fit()
+    window.dashboard.terminal.resize(platform, terminal.cols, terminal.rows)
+  }, [platform])
+
+  const restartTerminal = useCallback(() => {
+    const terminal = terminalRef.current
+    if (!terminal) return
+
+    terminal.clear()
+    setError(null)
+    window.dashboard.terminal
+      .restart(platform)
+      .then((result) => {
+        setSession(result)
+        if (result.replay) terminal.write(result.replay)
+        fitTerminal()
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : 'Terminal restart failed')
+      })
+  }, [fitTerminal, platform])
+
+  useEffect(() => {
+    if (!hostRef.current) return
+
+    const terminal = new Terminal({
+      allowProposedApi: false,
+      convertEol: false,
+      cursorBlink: true,
+      fontFamily: '"JetBrains Mono", "Cascadia Mono", Consolas, monospace',
+      fontSize: 12.5,
+      lineHeight: 1.35,
+      scrollback: 6000,
+      theme: {
+        background: '#191614',
+        foreground: '#e7ded7',
+        cursor: '#e07a5f',
+        selectionBackground: '#3b322d',
+        black: '#1e1b19',
+        blue: '#7aa2d6',
+        brightBlack: '#5e544d',
+        brightBlue: '#9dc1ee',
+        brightCyan: '#9ad7d4',
+        brightGreen: '#a7cbb8',
+        brightMagenta: '#d7a8c7',
+        brightRed: '#e07a5f',
+        brightWhite: '#f2ebe6',
+        brightYellow: '#e2c178',
+        cyan: '#81bfc0',
+        green: '#81b29a',
+        magenta: '#c793b7',
+        red: '#c95f4c',
+        white: '#e7ded7',
+        yellow: '#d5aa5f'
+      }
+    })
+    const fitAddon = new FitAddon()
+
+    terminal.loadAddon(fitAddon)
+    terminal.open(hostRef.current)
+    terminalRef.current = terminal
+    fitAddonRef.current = fitAddon
+
+    const dataDisposable = terminal.onData((data) => window.dashboard.terminal.input(platform, data))
+    const resizeDisposable = terminal.onResize(({ cols, rows }) => {
+      window.dashboard.terminal.resize(platform, cols, rows)
+    })
+    const removeDataListener = window.dashboard.terminal.onData((event) => {
+      if (event.platform === platform) terminal.write(event.data)
+    })
+    const observer = new ResizeObserver(() => window.requestAnimationFrame(fitTerminal))
+
+    observer.observe(hostRef.current)
+    window.requestAnimationFrame(fitTerminal)
+    window.dashboard.terminal
+      .start(platform)
+      .then((result) => {
+        setSession(result)
+        if (result.replay) terminal.write(result.replay)
+        fitTerminal()
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : 'Terminal failed to start')
+      })
+
+    return () => {
+      observer.disconnect()
+      removeDataListener()
+      dataDisposable.dispose()
+      resizeDisposable.dispose()
+      terminal.dispose()
+      terminalRef.current = null
+      fitAddonRef.current = null
+    }
+  }, [fitTerminal, platform])
+
+  const shellLabel = session ? `${session.shell} pid ${session.pid}` : 'starting'
+
+  return (
+    <>
+      <div className="panel-header terminal-header">
+        <div className="terminal-heading">
+          <h1>{title}</h1>
+          <span>{shellLabel}</span>
+        </div>
+        <div className="terminal-actions">
+          <span className="status-pill">{error ? 'error' : statusLabel}</span>
+          <button type="button" className="terminal-action" onClick={restartTerminal}>
+            Restart
+          </button>
+        </div>
+      </div>
+      {error ? <div className="terminal-error">{error}</div> : null}
+      <div ref={hostRef} className="terminal-surface" aria-label={title} />
+    </>
   )
 }
 

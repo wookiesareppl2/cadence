@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, screen, type Rectangle, type WebContentsConsoleMessageEventParams } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { join } from 'node:path'
+import { closeAllTerminals, resizeTerminal, restartTerminal, startTerminal, writeTerminal } from './terminal/terminal-service'
 import { closeClaudeUsageStore, refreshClaudeUsageSummary } from './usage/claude-usage-service'
 import { fetchClaudePlanUsage } from './usage/claude-plan-usage-service'
 
@@ -97,6 +98,12 @@ app.whenReady().then(() => {
 
   ipcMain.handle('usage:claude-summary', () => refreshClaudeUsageSummary())
   ipcMain.handle('usage:claude-plan', () => fetchClaudePlanUsage())
+  ipcMain.handle('terminal:start', (event, platform: string) => startTerminal(platform, event.sender))
+  ipcMain.handle('terminal:restart', (event, platform: string) => restartTerminal(platform, event.sender))
+  ipcMain.on('terminal:input', (_event, platform: string, data: string) => writeTerminal(platform, data))
+  ipcMain.on('terminal:resize', (_event, platform: string, cols: number, rows: number) => {
+    resizeTerminal(platform, cols, rows)
+  })
 
   createMainWindow()
 
@@ -110,5 +117,6 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  closeAllTerminals()
   closeClaudeUsageStore()
 })

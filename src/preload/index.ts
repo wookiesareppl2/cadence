@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { ClaudePlanUsage } from '@shared/claude-plan-usage'
+import type { TerminalDataEvent, TerminalPlatform, TerminalStartResult } from '@shared/terminal'
 import type { ClaudeUsageSummary } from '@shared/usage'
 
 const api = {
@@ -14,6 +15,19 @@ const api = {
   usage: {
     getClaudeSummary: (): Promise<ClaudeUsageSummary> => ipcRenderer.invoke('usage:claude-summary'),
     getClaudePlanUsage: (): Promise<ClaudePlanUsage> => ipcRenderer.invoke('usage:claude-plan')
+  },
+  terminal: {
+    start: (platform: TerminalPlatform): Promise<TerminalStartResult> => ipcRenderer.invoke('terminal:start', platform),
+    restart: (platform: TerminalPlatform): Promise<TerminalStartResult> => ipcRenderer.invoke('terminal:restart', platform),
+    input: (platform: TerminalPlatform, data: string): void => ipcRenderer.send('terminal:input', platform, data),
+    resize: (platform: TerminalPlatform, cols: number, rows: number): void => {
+      ipcRenderer.send('terminal:resize', platform, cols, rows)
+    },
+    onData: (callback: (event: TerminalDataEvent) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: TerminalDataEvent): void => callback(payload)
+      ipcRenderer.on('terminal:data', listener)
+      return () => ipcRenderer.removeListener('terminal:data', listener)
+    }
   }
 }
 

@@ -2,6 +2,7 @@ packages:
   - .
 
 allowBuilds:
+  '@homebridge/node-pty-prebuilt-multiarch': true
   better-sqlite3: true
   electron: true
   electron-winstaller: true

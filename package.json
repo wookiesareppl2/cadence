@@ -8,19 +8,22 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "pnpm run rebuild:native:electron && electron-vite dev",
-    "build": "tsc --noEmit && electron-vite build",
+    "build": "tsc --noEmit && electron-vite build && node scripts/copy-terminal-worker.mjs",
     "typecheck": "tsc --noEmit",
     "test": "pnpm run rebuild:native:node && vitest run",
     "rebuild:native": "pnpm run rebuild:native:electron",
-    "rebuild:native:electron": "electron-rebuild -f -w better-sqlite3",
-    "rebuild:native:node": "pnpm rebuild better-sqlite3",
+    "rebuild:native:electron": "electron-rebuild -f -o better-sqlite3",
+    "rebuild:native:node": "pnpm rebuild better-sqlite3 @homebridge/node-pty-prebuilt-multiarch",
     "preview": "electron-vite preview",
-    "package": "electron-vite build && electron-builder --dir",
-    "dist": "electron-vite build && electron-builder"
+    "package": "electron-vite build && node scripts/copy-terminal-worker.mjs && electron-builder --dir",
+    "dist": "electron-vite build && node scripts/copy-terminal-worker.mjs && electron-builder"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "better-sqlite3": "^12.10.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
