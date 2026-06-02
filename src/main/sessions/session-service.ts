@@ -134,13 +134,44 @@ async function readClaudeSession(path: string): Promise<ClaudeSessionDraft | nul
   return draft
 }
 
+// Claude Code reuses one sessionId across multiple .jsonl files when a session
+// is resumed/continued, so several drafts can share the same id. Merge them into
+// a single entry — summing usage and keeping the freshest metadata — so the list
+// has unique ids (avoids duplicate React keys and dropped/duplicated rows).
+function dedupeById(drafts: ClaudeSessionDraft[]): ClaudeSessionDraft[] {
+  const byId = new Map<string, ClaudeSessionDraft>()
+
+  for (const draft of drafts) {
+    const existing = byId.get(draft.id)
+    if (!existing) {
+      byId.set(draft.id, { ...draft })
+      continue
+    }
+
+    existing.tokenTotal += draft.tokenTotal
+    existing.title = existing.title ?? draft.title
+    if (draft.updatedAtMs >= existing.updatedAtMs) {
+      existing.updatedAtMs = draft.updatedAtMs
+      existing.sourcePath = draft.sourcePath
+      existing.cwd = draft.cwd ?? existing.cwd
+      existing.branch = draft.branch ?? existing.branch
+    } else {
+      existing.cwd = existing.cwd ?? draft.cwd
+      existing.branch = existing.branch ?? draft.branch
+    }
+  }
+
+  return [...byId.values()]
+}
+
 export async function getClaudeSessions(): Promise<AssistantSession[]> {
   const root = join(app.getPath('home'), '.claude', 'projects')
   const files = await findJsonlFiles(root)
   const sessions = await Promise.all(files.map(readClaudeSession))
 
-  return sessions
-    .filter((session): session is ClaudeSessionDraft => Boolean(session))
+  const drafts = sessions.filter((session): session is ClaudeSessionDraft => Boolean(session))
+
+  return dedupeById(drafts)
     .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
     .slice(0, MAX_SESSIONS)
     .map((session) => ({

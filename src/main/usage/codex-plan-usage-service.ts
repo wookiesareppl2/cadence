@@ -1,130 +1,110 @@
-import { app } from 'electron'
-import { readdir, readFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import type { UsageWindow } from '@shared/claude-plan-usage'
 
-type RawRateLimitWindow = {
-  used_percent?: unknown
-  window_minutes?: unknown
-  resets_at?: unknown
+// Codex usage is fetched live from the ChatGPT/Codex backend, mirroring how Claude
+// plan usage works — no local-log scraping (those snapshots are only as fresh as
+// the user's last Codex run, so they can never be trusted as current).
+//
+// The actual HTTP call runs in a spawned system-Node worker because Electron's
+// bundled BoringSSL TLS stack is rejected by the backend edge with 403; system
+// Node (OpenSSL) is accepted. See codex-usage-worker.mjs.
+const execFileAsync = promisify(execFile)
+const WORKER_TIMEOUT_MS = 20_000
+const USAGE_ENDPOINT = 'https://chatgpt.com/backend-api/codex/usage'
+
+type WorkerCommand = 'fetch' | 'refresh'
+type RunWorker = (command: WorkerCommand) => Promise<string>
+type CodexPlanUsageDeps = { runWorker?: RunWorker }
+
+type FetchResult = {
+  ok: boolean
+  status?: number
+  statusText?: string
+  body?: string
+  error?: string
+}
+type RefreshResult = { ok: boolean; status?: number; error?: string }
+
+type RawApiWindow = { used_percent?: unknown; reset_at?: unknown } | undefined
+type RawApiRateLimit = { primary_window?: RawApiWindow; secondary_window?: RawApiWindow } | undefined
+
+function workerPath(): string {
+  const sourcePath = join(process.cwd(), 'src', 'main', 'usage', 'codex-usage-worker.mjs')
+  if (existsSync(sourcePath)) return sourcePath
+  return join(__dirname, 'codex-usage-worker.mjs')
 }
 
-type RawRateLimits = {
-  limit_id?: unknown
-  plan_type?: unknown
-  primary?: RawRateLimitWindow
-  secondary?: RawRateLimitWindow
+async function runWorkerProcess(command: WorkerCommand): Promise<string> {
+  const { stdout } = await execFileAsync('node', [workerPath(), command], {
+    timeout: WORKER_TIMEOUT_MS,
+    windowsHide: true,
+    maxBuffer: 1024 * 1024
+  })
+  return stdout
 }
 
-type LatestRateLimits = {
-  timestampMs: number
-  timestamp: string
-  sourcePath: string
-  rateLimits: RawRateLimits
-}
-
-const STALE_AFTER_MS = 30 * 60_000
-
-async function findJsonlFiles(root: string): Promise<string[]> {
-  const files: string[] = []
-
-  async function visit(dir: string): Promise<void> {
-    let entries
-    try {
-      entries = await readdir(dir, { withFileTypes: true })
-    } catch {
-      return
-    }
-
-    await Promise.all(
-      entries.map(async (entry) => {
-        const path = join(dir, entry.name)
-        if (entry.isDirectory()) {
-          await visit(path)
-          return
-        }
-        if (entry.isFile() && entry.name.endsWith('.jsonl')) files.push(path)
-      })
-    )
+function parseWorkerJson<T>(stdout: string): T {
+  try {
+    return JSON.parse(stdout.trim()) as T
+  } catch {
+    throw new Error(`Codex usage worker returned an unreadable response: ${stdout.slice(0, 200)}`)
   }
-
-  await visit(root)
-  return files
 }
 
-function parseUsageWindow(raw: RawRateLimitWindow | undefined, expectedWindowMinutes: number): UsageWindow | null {
-  if (!raw || raw.window_minutes !== expectedWindowMinutes || typeof raw.used_percent !== 'number') return null
-
+function parseApiWindow(raw: RawApiWindow): UsageWindow | null {
+  if (!raw || typeof raw.used_percent !== 'number') return null
   return {
     utilization: raw.used_percent,
-    resetsAt: typeof raw.resets_at === 'number' ? new Date(raw.resets_at * 1000).toISOString() : null
+    resetsAt: typeof raw.reset_at === 'number' ? new Date(raw.reset_at * 1000).toISOString() : null
   }
 }
 
-async function scanRateLimitFile(sourcePath: string): Promise<LatestRateLimits | null> {
-  let raw = ''
-  try {
-    raw = await readFile(sourcePath, 'utf-8')
-  } catch {
-    return null
-  }
-
-  let latest: LatestRateLimits | null = null
-
-  for (const line of raw.split(/\r?\n/)) {
-    if (!line.trim()) continue
-    try {
-      const row = JSON.parse(line)
-      const rateLimits = row.payload?.rate_limits
-      if (!rateLimits || rateLimits.limit_id !== 'codex') continue
-
-      const timestamp = typeof row.timestamp === 'string' ? row.timestamp : null
-      const timestampMs = timestamp ? Date.parse(timestamp) : NaN
-      if (!timestamp || Number.isNaN(timestampMs)) continue
-
-      if (!latest || timestampMs > latest.timestampMs) {
-        latest = { timestampMs, timestamp, sourcePath, rateLimits }
-      }
-    } catch {
-      // Ignore malformed append-only log rows.
-    }
-  }
-
-  return latest
-}
-
-export async function fetchCodexPlanUsage(): Promise<CodexPlanUsage> {
-  const root = join(app.getPath('home'), '.codex', 'sessions')
-  const latestByFile = await Promise.all((await findJsonlFiles(root)).map(scanRateLimitFile))
-  const latest = latestByFile
-    .filter((entry): entry is LatestRateLimits => entry !== null)
-    .sort((a, b) => b.timestampMs - a.timestampMs)[0]
-
-  if (!latest) {
-    return {
-      fiveHour: null,
-      sevenDay: null,
-      planType: null,
-      sourcePath: null,
-      sourceTimestamp: null,
-      isStale: false,
-      staleReason: null,
-      fetchedAt: new Date().toISOString()
-    }
-  }
-
-  const ageMs = Date.now() - latest.timestampMs
-  const isStale = ageMs > STALE_AFTER_MS
-
+function mapLiveUsage(data: { plan_type?: unknown; rate_limit?: RawApiRateLimit }): CodexPlanUsage {
+  const rateLimit = data.rate_limit
+  const now = new Date().toISOString()
   return {
-    fiveHour: isStale ? null : parseUsageWindow(latest.rateLimits.primary, 300),
-    sevenDay: isStale ? null : parseUsageWindow(latest.rateLimits.secondary, 10_080),
-    planType: typeof latest.rateLimits.plan_type === 'string' ? latest.rateLimits.plan_type : null,
-    sourcePath: latest.sourcePath,
-    sourceTimestamp: latest.timestamp,
-    isStale,
-    staleReason: isStale ? `Local Codex usage data last updated ${new Date(latest.timestamp).toLocaleString()}` : null,
-    fetchedAt: new Date().toISOString()
+    fiveHour: parseApiWindow(rateLimit?.primary_window),
+    sevenDay: parseApiWindow(rateLimit?.secondary_window),
+    planType: typeof data.plan_type === 'string' ? data.plan_type : null,
+    sourcePath: USAGE_ENDPOINT,
+    sourceTimestamp: now,
+    isStale: false,
+    staleReason: null,
+    fetchedAt: now
   }
+}
+
+function describeFailure(result: FetchResult): string {
+  if (result.error) return result.error
+  const status = result.status ?? 0
+  const statusText = result.statusText ? ` ${result.statusText}` : ''
+  const bodyHint = result.body ? ` — ${result.body.replace(/\s+/g, ' ').trim().slice(0, 200)}` : ''
+  return `Codex usage API returned ${status}${statusText}${bodyHint}`
+}
+
+export async function fetchCodexPlanUsage(deps: CodexPlanUsageDeps = {}): Promise<CodexPlanUsage> {
+  const run = deps.runWorker ?? runWorkerProcess
+
+  let result = parseWorkerJson<FetchResult>(await run('fetch'))
+
+  // Hands-off refresh: on an expired access token, refresh via the OAuth
+  // refresh_token (rewriting ~/.codex/auth.json) and retry once — the Codex
+  // analogue of Claude's automatic credential refresh.
+  if (result.status === 401) {
+    const refresh = parseWorkerJson<RefreshResult>(await run('refresh'))
+    if (!refresh.ok) {
+      throw new Error(`Codex credentials expired and automatic refresh failed: ${refresh.error ?? 'unknown error'}`)
+    }
+    result = parseWorkerJson<FetchResult>(await run('fetch'))
+  }
+
+  if (!result.ok) {
+    throw new Error(describeFailure(result))
+  }
+
+  return mapLiveUsage(parseWorkerJson<{ plan_type?: unknown; rate_limit?: RawApiRateLimit }>(result.body ?? '{}'))
 }

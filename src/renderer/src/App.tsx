@@ -304,9 +304,7 @@ function CodexWorkspace(): JSX.Element {
             <div className="usage-error">{planError}</div>
           ) : !planUsage ? (
             <div className="usage-loading">Fetching Codex usage data...</div>
-          ) : planUsage.isStale ? (
-            <div className="usage-loading">{planUsage.staleReason ?? 'Local Codex usage data is stale.'}</div>
-          ) : planUsage.fiveHour || planUsage.sevenDay ? (
+          ) : (
             <>
               {planUsage.fiveHour && (
                 <UsageBar
@@ -323,8 +321,6 @@ function CodexWorkspace(): JSX.Element {
                 />
               )}
             </>
-          ) : (
-            <div className="usage-loading">Codex usage limits will appear after Codex reports rate-limit data.</div>
           )}
         </div>
 
