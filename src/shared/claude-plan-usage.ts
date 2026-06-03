@@ -12,9 +12,16 @@ export type ExtraUsage = {
   disabledReason: string | null
 }
 
+export type PlanUsageRefreshMeta = {
+  state: 'fresh' | 'cached' | 'rate_limited'
+  nextRefreshAt: string | null
+  message: string | null
+}
+
 export type ClaudePlanUsage = {
   fiveHour: UsageWindow | null
   sevenDay: UsageWindow | null
   extraUsage: ExtraUsage | null
   fetchedAt: string
+  refresh?: PlanUsageRefreshMeta
 }

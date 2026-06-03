@@ -23,6 +23,13 @@ const fetch403 = JSON.stringify({
   statusText: 'Forbidden',
   body: '<html><body>Just a moment...</body></html>'
 })
+const fetch429 = JSON.stringify({
+  ok: false,
+  status: 429,
+  statusText: 'Too Many Requests',
+  retryAfter: '180',
+  body: 'too many requests'
+})
 
 describe('Codex plan usage service', () => {
   it('maps a live usage response into 5-hour and weekly windows', async () => {
@@ -73,6 +80,15 @@ describe('Codex plan usage service', () => {
     const runWorker = vi.fn().mockResolvedValue(fetch403)
 
     await expect(fetchCodexPlanUsage({ runWorker })).rejects.toThrow(/403 Forbidden.*Just a moment/)
+  })
+
+  it('surfaces 429 responses with retry-after timing', async () => {
+    const runWorker = vi.fn().mockResolvedValue(fetch429)
+
+    await expect(fetchCodexPlanUsage({ runWorker })).rejects.toMatchObject({
+      name: 'UsageRateLimitError',
+      retryAfterMs: 180_000
+    })
   })
 
   it('surfaces a worker-level error message verbatim', async () => {

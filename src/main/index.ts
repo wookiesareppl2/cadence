@@ -3,8 +3,7 @@ import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { join } from 'node:path'
 import { closeAllTerminals, resizeTerminal, restartTerminal, startTerminal, writeTerminal } from './terminal/terminal-service'
 import { closeClaudeUsageStore, refreshClaudeUsageSummary } from './usage/claude-usage-service'
-import { fetchClaudePlanUsage } from './usage/claude-plan-usage-service'
-import { fetchCodexPlanUsage } from './usage/codex-plan-usage-service'
+import { getCachedClaudePlanUsage, getCachedCodexPlanUsage } from './usage/usage-plan-cache'
 import { getClaudeSessions, getCodexSessions, getSessionHistory } from './sessions/session-service'
 import { attachWorkspace, listWorkspaces } from './workspaces/workspace-service'
 import type { PlatformId } from '@shared/platform'
@@ -101,8 +100,8 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('usage:claude-summary', () => refreshClaudeUsageSummary())
-  ipcMain.handle('usage:claude-plan', () => fetchClaudePlanUsage())
-  ipcMain.handle('usage:codex-plan', () => fetchCodexPlanUsage())
+  ipcMain.handle('usage:claude-plan', () => getCachedClaudePlanUsage())
+  ipcMain.handle('usage:codex-plan', () => getCachedCodexPlanUsage())
   ipcMain.handle('sessions:claude', () => getClaudeSessions())
   ipcMain.handle('sessions:codex', () => getCodexSessions())
   ipcMain.handle('sessions:history', (_event, platform: PlatformId, sessionId: string) => getSessionHistory(platform, sessionId))

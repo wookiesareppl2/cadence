@@ -62,6 +62,7 @@ async function runFetch() {
     ok: res.ok,
     status: res.status,
     statusText: res.statusText,
+    retryAfter: res.headers.get('retry-after'),
     // Full body when ok (so the parent can parse it); trimmed otherwise to keep
     // error payloads (e.g. Cloudflare HTML) small.
     body: res.ok ? body : body.slice(0, 600)

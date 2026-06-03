@@ -11,19 +11,35 @@ import {
   useSessionHistory
 } from '@renderer/components/session-browser'
 import type { ProjectSessionGroup } from '@renderer/components/session-browser'
-import type { ClaudePlanUsage } from '@shared/claude-plan-usage'
+import type { ClaudePlanUsage, PlanUsageRefreshMeta, UsageWindow } from '@shared/claude-plan-usage'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
 import type { TerminalPlatform, TerminalStartResult } from '@shared/terminal'
 
-const PLAN_POLL_INTERVAL_MS = 180_000
+const PLAN_POLL_INTERVAL_MS = 60_000
 
 // A bump in `nonce` re-triggers a terminal (re)start in `cwd`, even if the same
 // project is started twice in a row.
 type TerminalStartRequest = { cwd: string; nonce: number }
+type PlanUsageDisplay = {
+  fiveHour: UsageWindow | null
+  sevenDay: UsageWindow | null
+  fetchedAt: string
+  refresh?: PlanUsageRefreshMeta
+}
+type PlanUsageState<T extends PlanUsageDisplay> = {
+  planUsage: T | null
+  planError: string | null
+  refreshing: boolean
+}
+type PlanUsageStates = {
+  claude: PlanUsageState<ClaudePlanUsage>
+  codex: PlanUsageState<CodexPlanUsage>
+}
 
 export function App(): JSX.Element {
   const [platform, setPlatform] = useState<PlatformId>('claude')
+  const planUsageStates = usePlanUsagePolling()
   const [selectedSessionIds, setSelectedSessionIds] = useState<Record<PlatformId, string | null>>({
     claude: null,
     codex: null
@@ -81,6 +97,7 @@ export function App(): JSX.Element {
       <Titlebar platform={platform} onPlatformChange={setPlatform} />
       {platform === 'claude' ? (
         <ClaudeWorkspace
+          usageState={planUsageStates.claude}
           selectedProjectId={selectedProjectIds.claude}
           selectedSessionId={selectedSessionIds.claude}
           sessionDetailOpen={sessionDetailOpen.claude}
@@ -90,6 +107,7 @@ export function App(): JSX.Element {
         />
       ) : (
         <CodexWorkspace
+          usageState={planUsageStates.codex}
           selectedProjectId={selectedProjectIds.codex}
           selectedSessionId={selectedSessionIds.codex}
           sessionDetailOpen={sessionDetailOpen.codex}
@@ -140,49 +158,65 @@ function Titlebar({
   )
 }
 
-function useClaudePlanUsage(): { planUsage: ClaudePlanUsage | null; planError: string | null } {
-  const [planUsage, setPlanUsage] = useState<ClaudePlanUsage | null>(null)
-  const [planError, setPlanError] = useState<string | null>(null)
+function usePlanUsagePolling(): PlanUsageStates {
+  const [states, setStates] = useState<PlanUsageStates>({
+    claude: { planUsage: null, planError: null, refreshing: false },
+    codex: { planUsage: null, planError: null, refreshing: false }
+  })
 
-  const fetchPlan = useCallback(() => {
-    if (!window.dashboard?.usage?.getClaudePlanUsage) return
-    window.dashboard.usage
-      .getClaudePlanUsage()
-      .then(setPlanUsage)
-      .catch((err: unknown) => setPlanError(err instanceof Error ? err.message : 'Failed to fetch plan usage'))
-  }, [])
+  const fetchPlan = useCallback((platform: PlatformId) => {
+    const loader =
+      platform === 'claude'
+        ? window.dashboard?.usage?.getClaudePlanUsage
+        : window.dashboard?.usage?.getCodexPlanUsage
 
-  useEffect(() => {
-    fetchPlan()
-    const id = setInterval(fetchPlan, PLAN_POLL_INTERVAL_MS)
-    return () => clearInterval(id)
-  }, [fetchPlan])
+    if (!loader) {
+      setStates((current) => ({
+        ...current,
+        [platform]: {
+          ...current[platform],
+          planError: `${PLATFORM_CONFIG[platform].label} usage API unavailable`,
+          refreshing: false
+        }
+      }))
+      return
+    }
 
-  return { planUsage, planError }
-}
+    setStates((current) => ({
+      ...current,
+      [platform]: { ...current[platform], refreshing: true }
+    }))
 
-function useCodexPlanUsage(): { planUsage: CodexPlanUsage | null; planError: string | null } {
-  const [planUsage, setPlanUsage] = useState<CodexPlanUsage | null>(null)
-  const [planError, setPlanError] = useState<string | null>(null)
-
-  const fetchPlan = useCallback(() => {
-    if (!window.dashboard?.usage?.getCodexPlanUsage) return
-    window.dashboard.usage
-      .getCodexPlanUsage()
+    loader()
       .then((usage) => {
-        setPlanUsage(usage)
-        setPlanError(null)
+        setStates((current) => ({
+          ...current,
+          [platform]: { planUsage: usage, planError: null, refreshing: false }
+        }))
       })
-      .catch((err: unknown) => setPlanError(err instanceof Error ? err.message : 'Failed to fetch Codex usage'))
+      .catch((err: unknown) => {
+        setStates((current) => ({
+          ...current,
+          [platform]: {
+            ...current[platform],
+            planError: err instanceof Error ? err.message : `${PLATFORM_CONFIG[platform].label} usage refresh failed`,
+            refreshing: false
+          }
+        }))
+      })
   }, [])
 
   useEffect(() => {
-    fetchPlan()
-    const id = setInterval(fetchPlan, PLAN_POLL_INTERVAL_MS)
+    fetchPlan('claude')
+    fetchPlan('codex')
+    const id = setInterval(() => {
+      fetchPlan('claude')
+      fetchPlan('codex')
+    }, PLAN_POLL_INTERVAL_MS)
     return () => clearInterval(id)
   }, [fetchPlan])
 
-  return { planUsage, planError }
+  return states
 }
 
 function useCountdown(resetsAt: string | null): string {
@@ -214,6 +248,7 @@ function barTier(pct: number): string {
 }
 
 function ClaudeWorkspace({
+  usageState,
   selectedProjectId,
   selectedSessionId,
   sessionDetailOpen,
@@ -221,6 +256,7 @@ function ClaudeWorkspace({
   onSelectedSessionIdChange,
   onToggleSessionDetail
 }: {
+  usageState: PlanUsageState<ClaudePlanUsage>
   selectedProjectId: string | null
   selectedSessionId: string | null
   sessionDetailOpen: boolean
@@ -228,7 +264,7 @@ function ClaudeWorkspace({
   onSelectedSessionIdChange: (sessionId: string | null) => void
   onToggleSessionDetail: () => void
 }): JSX.Element {
-  const { planUsage, planError } = useClaudePlanUsage()
+  const { planUsage, planError } = usageState
   const sessionBrowser = useProjectSessionBrowserState({
     platform: 'claude',
     selectedProjectId,
@@ -262,30 +298,11 @@ function ClaudeWorkspace({
         className={`content-grid ${sessionDetailOpen ? 'detail-open' : 'detail-closed'}`}
         aria-label="Claude Code dashboard"
       >
-        <div className="usage-strip">
-          {planError ? (
-            <div className="usage-error">{planError}</div>
-          ) : !planUsage ? (
-            <div className="usage-loading">Fetching usage data...</div>
-          ) : (
-            <>
-              {planUsage.fiveHour && (
-                <UsageBar
-                  label="5-Hour Usage"
-                  utilization={planUsage.fiveHour.utilization}
-                  resetsAt={planUsage.fiveHour.resetsAt}
-                />
-              )}
-              {planUsage.sevenDay && (
-                <UsageBar
-                  label="Weekly Usage"
-                  utilization={planUsage.sevenDay.utilization}
-                  resetsAt={planUsage.sevenDay.resetsAt}
-                />
-              )}
-            </>
-          )}
-        </div>
+        <UsageStrip
+          planUsage={planUsage}
+          planError={planError}
+          loadingLabel="Fetching Claude usage"
+        />
 
         <div className="main-stack">
           <SessionHistoryPanel session={sessionBrowser.selectedSession} historyState={historyState} />
@@ -310,6 +327,7 @@ function ClaudeWorkspace({
 }
 
 function CodexWorkspace({
+  usageState,
   selectedProjectId,
   selectedSessionId,
   sessionDetailOpen,
@@ -317,6 +335,7 @@ function CodexWorkspace({
   onSelectedSessionIdChange,
   onToggleSessionDetail
 }: {
+  usageState: PlanUsageState<CodexPlanUsage>
   selectedProjectId: string | null
   selectedSessionId: string | null
   sessionDetailOpen: boolean
@@ -324,7 +343,7 @@ function CodexWorkspace({
   onSelectedSessionIdChange: (sessionId: string | null) => void
   onToggleSessionDetail: () => void
 }): JSX.Element {
-  const { planUsage, planError } = useCodexPlanUsage()
+  const { planUsage, planError } = usageState
   const sessionBrowser = useProjectSessionBrowserState({
     platform: 'codex',
     selectedProjectId,
@@ -353,30 +372,11 @@ function CodexWorkspace({
         className={`content-grid ${sessionDetailOpen ? 'detail-open' : 'detail-closed'}`}
         aria-label="Codex dashboard"
       >
-        <div className="usage-strip">
-          {planError ? (
-            <div className="usage-error">{planError}</div>
-          ) : !planUsage ? (
-            <div className="usage-loading">Fetching Codex usage data...</div>
-          ) : (
-            <>
-              {planUsage.fiveHour && (
-                <UsageBar
-                  label="5-Hour Usage"
-                  utilization={planUsage.fiveHour.utilization}
-                  resetsAt={planUsage.fiveHour.resetsAt}
-                />
-              )}
-              {planUsage.sevenDay && (
-                <UsageBar
-                  label="Weekly Usage"
-                  utilization={planUsage.sevenDay.utilization}
-                  resetsAt={planUsage.sevenDay.resetsAt}
-                />
-              )}
-            </>
-          )}
-        </div>
+        <UsageStrip
+          planUsage={planUsage}
+          planError={planError}
+          loadingLabel="Fetching Codex usage"
+        />
 
         <div className="main-stack">
           <SessionHistoryPanel session={sessionBrowser.selectedSession} historyState={historyState} />
@@ -561,15 +561,95 @@ function TerminalPane({
   )
 }
 
+function UsageStrip({
+  planUsage,
+  planError,
+  loadingLabel
+}: {
+  planUsage: PlanUsageDisplay | null
+  planError: string | null
+  loadingLabel: string
+}): JSX.Element {
+  const refreshLabel = planUsage ? usageRefreshLabel(planUsage, planError) : null
+  const refreshTitle = planUsage ? planError ?? planUsage.refresh?.message ?? undefined : undefined
+
+  return (
+    <div className="usage-strip">
+      {planUsage?.fiveHour ? (
+        <UsageBar
+          label="5-Hour Usage"
+          utilization={planUsage.fiveHour.utilization}
+          resetsAt={planUsage.fiveHour.resetsAt}
+          refreshLabel={refreshLabel}
+          refreshTitle={refreshTitle}
+        />
+      ) : (
+        <UsageBarPlaceholder label="5-Hour Usage" message={planError ?? loadingLabel} />
+      )}
+      {planUsage?.sevenDay ? (
+        <UsageBar
+          label="Weekly Usage"
+          utilization={planUsage.sevenDay.utilization}
+          resetsAt={planUsage.sevenDay.resetsAt}
+          refreshLabel={refreshLabel}
+          refreshTitle={refreshTitle}
+        />
+      ) : (
+        <UsageBarPlaceholder label="Weekly Usage" message={planError ? 'Waiting for safe retry' : loadingLabel} />
+      )}
+    </div>
+  )
+}
+
+function usageRefreshLabel(
+  usage: PlanUsageDisplay,
+  error: string | null
+): string {
+  if (error) return 'Refresh error'
+  if (usage.refresh?.state === 'rate_limited') return 'Rate limited'
+  return `Updated ${formatUsageFetchedAt(usage.fetchedAt)}`
+}
+
+function formatUsageFetchedAt(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '--:--'
+  return new Intl.DateTimeFormat(undefined, {
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(date)
+}
+
+function UsageBarPlaceholder({ label, message }: { label: string; message: string }): JSX.Element {
+  return (
+    <div className="usage-bar-card usage-bar-placeholder">
+      <div className="usage-bar-header">
+        <span className="usage-bar-label">{label}</span>
+        <span className="usage-bar-pct">--</span>
+      </div>
+      <div className="usage-bar-track">
+        <div className="usage-bar-fill" style={{ width: '0%' }} />
+      </div>
+      <div className="usage-bar-footer">
+        <span className="usage-bar-refresh">{message}</span>
+        <span className="usage-bar-reset">--</span>
+      </div>
+    </div>
+  )
+}
+
 function UsageBar({
   label,
   utilization,
   resetsAt,
+  refreshLabel,
+  refreshTitle,
   subtitle
 }: {
   label: string
   utilization: number
   resetsAt: string | null
+  refreshLabel?: string | null
+  refreshTitle?: string
   subtitle?: string
 }): JSX.Element {
   const countdown = useCountdown(resetsAt)
@@ -586,6 +666,13 @@ function UsageBar({
         <div className="usage-bar-fill" style={{ width: `${pct}%` }} />
       </div>
       <div className="usage-bar-footer">
+        {refreshLabel ? (
+          <span className="usage-bar-refresh" title={refreshTitle}>
+            {refreshLabel}
+          </span>
+        ) : (
+          <span />
+        )}
         <span className="usage-bar-reset">{subtitle ?? countdown}</span>
       </div>
     </div>

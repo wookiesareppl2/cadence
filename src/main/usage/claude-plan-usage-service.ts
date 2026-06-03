@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { app } from 'electron'
 import type { ClaudePlanUsage, ExtraUsage, UsageWindow } from '@shared/claude-plan-usage'
+import { retryAfterHeaderMs, UsageRateLimitError } from './usage-rate-limit'
 
 const API_BASE = 'https://api.anthropic.com/api/oauth'
 const USER_AGENT = 'claude-code/2.1.152'
@@ -33,7 +34,9 @@ type RawExtraUsage = {
   disabled_reason: string | null
 } | null
 
-type UsageResponse = Pick<Response, 'status' | 'ok' | 'statusText' | 'json'>
+type UsageResponse = Pick<Response, 'status' | 'ok' | 'statusText' | 'json'> & {
+  headers?: Pick<Headers, 'get'>
+}
 type FetchUsage = (token: string) => Promise<UsageResponse>
 type ClaudePlanUsageDeps = {
   fetchUsage?: FetchUsage
@@ -145,6 +148,13 @@ export async function fetchClaudePlanUsage(deps: ClaudePlanUsageDeps = {}): Prom
 
   if (res.status === 401) {
     throw new Error('Claude credentials expired — run any `claude` command to refresh')
+  }
+
+  if (res.status === 429) {
+    throw new UsageRateLimitError(
+      `Claude usage API returned 429: ${res.statusText || 'Too Many Requests'}`,
+      retryAfterHeaderMs(res.headers?.get('retry-after'))
+    )
   }
 
   if (!res.ok) {

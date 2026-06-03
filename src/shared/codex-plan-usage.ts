@@ -1,4 +1,4 @@
-import type { UsageWindow } from './claude-plan-usage'
+import type { PlanUsageRefreshMeta, UsageWindow } from './claude-plan-usage'
 
 export type CodexPlanUsage = {
   fiveHour: UsageWindow | null
@@ -9,4 +9,5 @@ export type CodexPlanUsage = {
   isStale: boolean
   staleReason: string | null
   fetchedAt: string
+  refresh?: PlanUsageRefreshMeta
 }

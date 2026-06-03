@@ -411,6 +411,10 @@ button {
   border-color: var(--caution);
 }
 
+.usage-bar-placeholder {
+  color: var(--text-3);
+}
+
 .usage-bar-card {
   display: grid;
   gap: 8px;
@@ -457,7 +461,6 @@ button {
 .usage-bar-fill {
   height: 100%;
   border-radius: 3px;
-  transition: width 600ms ease;
 }
 
 [data-tier="normal"] .usage-bar-fill { background: var(--success); }
@@ -467,13 +470,22 @@ button {
 .usage-bar-footer {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
+  gap: 10px;
 }
 
+.usage-bar-refresh,
 .usage-bar-reset {
   color: var(--text-3);
   font-family: var(--font-mono);
   font-size: 11px;
+}
+
+.usage-bar-refresh {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .panel {

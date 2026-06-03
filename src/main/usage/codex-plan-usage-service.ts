@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import type { UsageWindow } from '@shared/claude-plan-usage'
+import { retryAfterHeaderMs, UsageRateLimitError } from './usage-rate-limit'
 
 // Codex usage is fetched live from the ChatGPT/Codex backend, mirroring how Claude
 // plan usage works — no local-log scraping (those snapshots are only as fresh as
@@ -24,6 +25,7 @@ type FetchResult = {
   ok: boolean
   status?: number
   statusText?: string
+  retryAfter?: string | null
   body?: string
   error?: string
 }
@@ -100,6 +102,10 @@ export async function fetchCodexPlanUsage(deps: CodexPlanUsageDeps = {}): Promis
       throw new Error(`Codex credentials expired and automatic refresh failed: ${refresh.error ?? 'unknown error'}`)
     }
     result = parseWorkerJson<FetchResult>(await run('fetch'))
+  }
+
+  if (result.status === 429) {
+    throw new UsageRateLimitError(describeFailure(result), retryAfterHeaderMs(result.retryAfter))
   }
 
   if (!result.ok) {

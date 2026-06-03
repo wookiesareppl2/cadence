@@ -1,10 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 import { fetchClaudePlanUsage } from '../src/main/usage/claude-plan-usage-service'
+import { UsageRateLimitError } from '../src/main/usage/usage-rate-limit'
 
-const usageResponse = (status: number, body: unknown = {}): Pick<Response, 'status' | 'ok' | 'statusText' | 'json'> => ({
+const usageResponse = (
+  status: number,
+  body: unknown = {},
+  retryAfter: string | null = null
+): Pick<Response, 'status' | 'ok' | 'statusText' | 'json'> & { headers: Pick<Headers, 'get'> } => ({
   status,
   ok: status >= 200 && status < 300,
-  statusText: status === 200 ? 'OK' : 'Unauthorized',
+  statusText: status === 200 ? 'OK' : status === 429 ? 'Too Many Requests' : 'Unauthorized',
+  headers: { get: (name: string) => (name.toLowerCase() === 'retry-after' ? retryAfter : null) },
   json: () => Promise.resolve(body)
 })
 
@@ -44,5 +50,18 @@ describe('Claude plan usage service', () => {
     expect(refreshCredentials).not.toHaveBeenCalled()
     expect(readToken).toHaveBeenCalledTimes(1)
     expect(fetchUsage).toHaveBeenCalledWith('valid-token')
+  })
+
+  it('surfaces 429 responses with retry-after timing', async () => {
+    const readToken = vi.fn().mockReturnValue('valid-token')
+    const refreshCredentials = vi.fn().mockResolvedValue(undefined)
+    const fetchUsage = vi.fn().mockResolvedValue(usageResponse(429, {}, '120'))
+
+    await expect(fetchClaudePlanUsage({ fetchUsage, readToken, refreshCredentials })).rejects.toMatchObject({
+      name: 'UsageRateLimitError',
+      retryAfterMs: 120_000
+    } satisfies Partial<UsageRateLimitError>)
+
+    expect(refreshCredentials).not.toHaveBeenCalled()
   })
 })
