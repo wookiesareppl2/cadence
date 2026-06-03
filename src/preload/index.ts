@@ -5,6 +5,7 @@ import type { PlatformId } from '@shared/platform'
 import type { AssistantSession, AssistantSessionHistory } from '@shared/sessions'
 import type { TerminalDataEvent, TerminalPlatform, TerminalStartResult } from '@shared/terminal'
 import type { ClaudeUsageSummary } from '@shared/usage'
+import type { Workspace } from '@shared/workspaces'
 
 const api = {
   window: {
@@ -26,8 +27,13 @@ const api = {
     getSessionHistory: (platform: PlatformId, sessionId: string): Promise<AssistantSessionHistory> =>
       ipcRenderer.invoke('sessions:history', platform, sessionId)
   },
+  workspaces: {
+    list: (): Promise<Workspace[]> => ipcRenderer.invoke('workspaces:list'),
+    attach: (): Promise<Workspace | null> => ipcRenderer.invoke('workspaces:attach')
+  },
   terminal: {
-    start: (platform: TerminalPlatform): Promise<TerminalStartResult> => ipcRenderer.invoke('terminal:start', platform),
+    start: (platform: TerminalPlatform, cwd?: string): Promise<TerminalStartResult> =>
+      ipcRenderer.invoke('terminal:start', platform, cwd),
     restart: (platform: TerminalPlatform): Promise<TerminalStartResult> => ipcRenderer.invoke('terminal:restart', platform),
     input: (platform: TerminalPlatform, data: string): void => ipcRenderer.send('terminal:input', platform, data),
     resize: (platform: TerminalPlatform, cols: number, rows: number): void => {

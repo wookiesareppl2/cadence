@@ -10,6 +10,7 @@ type WorkerRequest = {
   requestId?: number
   type: 'start' | 'restart' | 'input' | 'resize' | 'closeAll'
   platform?: TerminalPlatform
+  cwd?: string
   data?: string
   cols?: number
   rows?: number
@@ -144,10 +145,21 @@ function sendWorkerRequest(request: WorkerRequest): Promise<TerminalStartResult>
   })
 }
 
-export async function startTerminal(platform: string, webContents: WebContents): Promise<TerminalStartResult> {
+export async function startTerminal(
+  platform: string,
+  webContents: WebContents,
+  cwd?: string
+): Promise<TerminalStartResult> {
   assertPlatform(platform)
   subscribe(platform, webContents)
-  return sendWorkerRequest({ type: 'start', platform })
+
+  let workspaceCwd: string | undefined
+  if (typeof cwd === 'string' && cwd.trim()) {
+    if (!existsSync(cwd)) throw new Error(`Workspace folder not found: ${cwd}`)
+    workspaceCwd = cwd
+  }
+
+  return sendWorkerRequest({ type: 'start', platform, cwd: workspaceCwd })
 }
 
 export function writeTerminal(platform: string, data: string): void {

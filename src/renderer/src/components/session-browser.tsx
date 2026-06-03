@@ -2,11 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Dispatch, JSX, SetStateAction } from 'react'
 import type { PlatformId } from '@shared/platform'
 import type { AssistantProject, AssistantSession, AssistantSessionHistory } from '@shared/sessions'
+import type { Workspace } from '@shared/workspaces'
 import './session-browser.css'
 
 const SESSION_POLL_INTERVAL_MS = 60_000
 
-type ProjectSessionGroup = AssistantProject & {
+export type ProjectSessionGroup = AssistantProject & {
   sessions: AssistantSession[]
 }
 
@@ -33,6 +34,7 @@ export type ProjectSessionBrowserState = {
   setQuery: Dispatch<SetStateAction<string>>
   selectProject: (projectId: string) => void
   selectSession: (sessionId: string) => void
+  attachWorkspace: () => Promise<void>
 }
 
 export type SessionHistoryState = {
@@ -49,9 +51,13 @@ export function useProjectSessionBrowserState({
   onSelectedSessionIdChange
 }: UseProjectSessionBrowserStateArgs): ProjectSessionBrowserState {
   const { sessions, loading, error } = usePlatformSessions(platform)
+  const { workspaces, refresh: refreshWorkspaces } = useWorkspaces()
   const [query, setQuery] = useState('')
 
-  const projects = useMemo(() => groupSessionsByProject(platform, sessions), [platform, sessions])
+  const projects = useMemo(
+    () => mergeWorkspaceProjects(platform, groupSessionsByProject(platform, sessions), workspaces),
+    [platform, sessions, workspaces]
+  )
   const filteredProjects = useMemo(() => filterProjects(projects, query), [projects, query])
   const selectedProject = useMemo(
     () => filteredProjects.find((project) => project.id === selectedProjectId) ?? filteredProjects[0] ?? null,
@@ -89,6 +95,14 @@ export function useProjectSessionBrowserState({
     [onSelectedSessionIdChange]
   )
 
+  const attachWorkspace = useCallback(async () => {
+    const workspace = await window.dashboard?.workspaces?.attach()
+    if (!workspace) return
+    await refreshWorkspaces()
+    onSelectedProjectIdChange(`${platform}:${workspaceProjectKey(workspace.path)}`)
+    onSelectedSessionIdChange(null)
+  }, [onSelectedProjectIdChange, onSelectedSessionIdChange, platform, refreshWorkspaces])
+
   return {
     sessions,
     projects,
@@ -103,8 +117,29 @@ export function useProjectSessionBrowserState({
     query,
     setQuery,
     selectProject,
-    selectSession
+    selectSession,
+    attachWorkspace
   }
+}
+
+function useWorkspaces(): { workspaces: Workspace[]; refresh: () => Promise<void> } {
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+
+  const refresh = useCallback(async () => {
+    const list = window.dashboard?.workspaces?.list
+    if (!list) return
+    try {
+      setWorkspaces(await list())
+    } catch {
+      setWorkspaces([])
+    }
+  }, [])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  return { workspaces, refresh }
 }
 
 export function useSessionHistory(session: AssistantSession | null): SessionHistoryState {
@@ -159,21 +194,32 @@ export function ProjectSessionSidebar({
   title,
   ariaLabel,
   emptyLabel,
-  browser
+  browser,
+  onStartSession
 }: {
   title: string
   ariaLabel: string
   emptyLabel: string
   browser: ProjectSessionBrowserState
+  onStartSession: (project: ProjectSessionGroup) => void
 }): JSX.Element {
   const projectEmptyMessage =
     browser.projects.length > 0 && browser.filteredProjects.length === 0 ? 'No matching projects' : emptyLabel
+  const selectedProject = browser.selectedProject
+  const canStartSession = Boolean(selectedProject?.path)
 
   return (
     <aside className="sidebar project-sidebar" aria-label={ariaLabel}>
       <div className="sidebar-header">
         <h2>{title}</h2>
-        <span className="sidebar-count">{browser.projects.length}</span>
+        <button
+          type="button"
+          className="sidebar-action"
+          onClick={() => browser.attachWorkspace()}
+          title="Attach an existing folder or create a new project workspace"
+        >
+          + New Project
+        </button>
       </div>
       <input
         className="sidebar-search"
@@ -188,21 +234,33 @@ export function ProjectSessionSidebar({
           loading={browser.loading}
           error={browser.error}
           emptyLabel={projectEmptyMessage}
-          selectedProjectId={browser.selectedProject?.id ?? null}
+          selectedProjectId={selectedProject?.id ?? null}
           onSelectProject={browser.selectProject}
         />
       </div>
       <div className="session-stack">
         <div className="session-stack-header">
           <span>Sessions</span>
-          {browser.selectedProject ? <span>{browser.selectedProject.sessionCount}</span> : null}
+          <button
+            type="button"
+            className="session-start-action"
+            disabled={!canStartSession}
+            title={
+              canStartSession
+                ? `Start a new terminal session in ${selectedProject?.path}`
+                : 'Select a project with a folder to start a session'
+            }
+            onClick={() => selectedProject && onStartSession(selectedProject)}
+          >
+            + New Session
+          </button>
         </div>
         <div className="session-list compact" aria-label={`${ariaLabel} sessions`}>
           <SessionList
             sessions={browser.projectSessions}
             loading={browser.loading}
             error={browser.error}
-            emptyLabel={browser.selectedProject ? 'No sessions in project' : 'Select a project'}
+            emptyLabel={selectedProject ? 'No sessions yet — start one' : 'Select a project'}
             selectedSessionId={browser.selectedSession?.id ?? null}
             onSelectSession={browser.selectSession}
           />
@@ -397,8 +455,8 @@ function ProjectList({
             <span className="project-title">{project.name}</span>
             {project.path ? <span className="project-path">{project.path}</span> : null}
             <span className="project-meta">
-              <span>{project.sessionCount} sessions</span>
-              <span>Updated {project.age}</span>
+              <span>{project.sessionCount === 0 ? 'No sessions yet' : `${project.sessionCount} sessions`}</span>
+              <span>{project.sessionCount === 0 ? 'Attached' : `Updated ${project.age}`}</span>
             </span>
           </button>
         )
@@ -494,6 +552,46 @@ function groupSessionsByProject(platform: PlatformId, sessions: AssistantSession
       sessions: project.sessions.sort((a, b) => Date.parse(b.updatedAt ?? '0') - Date.parse(a.updatedAt ?? '0'))
     }))
     .sort((a, b) => Date.parse(b.latestUpdatedAt ?? '0') - Date.parse(a.latestUpdatedAt ?? '0'))
+}
+
+// Mirror of session-service.projectId normalization, usable in the renderer where
+// node's path.resolve is unavailable. Stored workspace paths are already resolved
+// in the main process, so lowercasing is enough to match a session-backed project.
+function workspaceProjectKey(path: string): string {
+  return path.toLowerCase()
+}
+
+// Surface attached workspaces as projects so a freshly created/attached folder
+// appears immediately, even before it has any session history. A workspace whose
+// folder already has sessions reuses that existing project entry instead.
+function mergeWorkspaceProjects(
+  platform: PlatformId,
+  projects: ProjectSessionGroup[],
+  workspaces: Workspace[]
+): ProjectSessionGroup[] {
+  const existing = new Set(projects.map((project) => project.id))
+  const extras: ProjectSessionGroup[] = []
+
+  for (const workspace of workspaces) {
+    const id = `${platform}:${workspaceProjectKey(workspace.path)}`
+    if (existing.has(id)) continue
+    existing.add(id)
+    extras.push({
+      id,
+      platform,
+      name: workspace.name,
+      path: workspace.path,
+      branch: null,
+      sessionCount: 0,
+      latestUpdatedAt: new Date(workspace.addedAtMs).toISOString(),
+      age: 'attached',
+      sessions: []
+    })
+  }
+
+  return [...extras, ...projects].sort(
+    (a, b) => Date.parse(b.latestUpdatedAt ?? '0') - Date.parse(a.latestUpdatedAt ?? '0')
+  )
 }
 
 function filterProjects(projects: ProjectSessionGroup[], query: string): ProjectSessionGroup[] {

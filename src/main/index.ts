@@ -6,6 +6,7 @@ import { closeClaudeUsageStore, refreshClaudeUsageSummary } from './usage/claude
 import { fetchClaudePlanUsage } from './usage/claude-plan-usage-service'
 import { fetchCodexPlanUsage } from './usage/codex-plan-usage-service'
 import { getClaudeSessions, getCodexSessions, getSessionHistory } from './sessions/session-service'
+import { attachWorkspace, listWorkspaces } from './workspaces/workspace-service'
 import type { PlatformId } from '@shared/platform'
 
 let restoreBounds: Rectangle | null = null
@@ -105,7 +106,9 @@ app.whenReady().then(() => {
   ipcMain.handle('sessions:claude', () => getClaudeSessions())
   ipcMain.handle('sessions:codex', () => getCodexSessions())
   ipcMain.handle('sessions:history', (_event, platform: PlatformId, sessionId: string) => getSessionHistory(platform, sessionId))
-  ipcMain.handle('terminal:start', (event, platform: string) => startTerminal(platform, event.sender))
+  ipcMain.handle('workspaces:list', () => listWorkspaces())
+  ipcMain.handle('workspaces:attach', (event) => attachWorkspace(BrowserWindow.fromWebContents(event.sender)))
+  ipcMain.handle('terminal:start', (event, platform: string, cwd?: string) => startTerminal(platform, event.sender, cwd))
   ipcMain.handle('terminal:restart', (event, platform: string) => restartTerminal(platform, event.sender))
   ipcMain.on('terminal:input', (_event, platform: string, data: string) => writeTerminal(platform, data))
   ipcMain.on('terminal:resize', (_event, platform: string, cols: number, rows: number) => {

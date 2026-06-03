@@ -14,6 +14,47 @@
   text-align: center;
 }
 
+.sidebar-action {
+  padding: 4px 9px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 4px;
+  background: var(--accent-dim);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease;
+}
+
+.sidebar-action:hover {
+  border-color: var(--accent);
+  background: var(--accent-hover);
+}
+
+.session-start-action {
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease;
+}
+
+.session-start-action:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.session-start-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .project-list {
   min-height: 150px;
   flex: 0 1 44%;

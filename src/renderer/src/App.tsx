@@ -10,12 +10,17 @@ import {
   useProjectSessionBrowserState,
   useSessionHistory
 } from '@renderer/components/session-browser'
+import type { ProjectSessionGroup } from '@renderer/components/session-browser'
 import type { ClaudePlanUsage } from '@shared/claude-plan-usage'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
 import type { TerminalPlatform, TerminalStartResult } from '@shared/terminal'
 
 const PLAN_POLL_INTERVAL_MS = 180_000
+
+// A bump in `nonce` re-triggers a terminal (re)start in `cwd`, even if the same
+// project is started twice in a row.
+type TerminalStartRequest = { cwd: string; nonce: number }
 
 export function App(): JSX.Element {
   const [platform, setPlatform] = useState<PlatformId>('claude')
@@ -232,6 +237,10 @@ function ClaudeWorkspace({
     onSelectedSessionIdChange
   })
   const historyState = useSessionHistory(sessionBrowser.selectedSession)
+  const [startRequest, setStartRequest] = useState<TerminalStartRequest | null>(null)
+  const startSession = useCallback((project: ProjectSessionGroup) => {
+    if (project.path) setStartRequest({ cwd: project.path, nonce: Date.now() })
+  }, [])
 
   const statusLabel = planError
     ? 'error'
@@ -246,6 +255,7 @@ function ClaudeWorkspace({
         ariaLabel="Claude projects"
         emptyLabel="No Claude projects found"
         browser={sessionBrowser}
+        onStartSession={startSession}
       />
 
       <section
@@ -280,7 +290,12 @@ function ClaudeWorkspace({
         <div className="main-stack">
           <SessionHistoryPanel session={sessionBrowser.selectedSession} historyState={historyState} />
           <section className="panel terminal-panel claude-terminal-panel">
-            <TerminalPane platform="claude" title="Claude Terminal" statusLabel={statusLabel} />
+            <TerminalPane
+              platform="claude"
+              title="Claude Terminal"
+              statusLabel={statusLabel}
+              startRequest={startRequest}
+            />
           </section>
         </div>
         <SessionDetailDrawer
@@ -318,6 +333,10 @@ function CodexWorkspace({
     onSelectedSessionIdChange
   })
   const historyState = useSessionHistory(sessionBrowser.selectedSession)
+  const [startRequest, setStartRequest] = useState<TerminalStartRequest | null>(null)
+  const startSession = useCallback((project: ProjectSessionGroup) => {
+    if (project.path) setStartRequest({ cwd: project.path, nonce: Date.now() })
+  }, [])
   const statusLabel = planError ? 'usage error' : planUsage ? 'live' : 'connecting'
 
   return (
@@ -327,6 +346,7 @@ function CodexWorkspace({
         ariaLabel="Codex projects"
         emptyLabel="No Codex projects found"
         browser={sessionBrowser}
+        onStartSession={startSession}
       />
 
       <section
@@ -361,7 +381,12 @@ function CodexWorkspace({
         <div className="main-stack">
           <SessionHistoryPanel session={sessionBrowser.selectedSession} historyState={historyState} />
           <section className="panel terminal-panel codex-terminal-panel">
-            <TerminalPane platform="codex" title="Codex Terminal" statusLabel={statusLabel} />
+            <TerminalPane
+              platform="codex"
+              title="Codex Terminal"
+              statusLabel={statusLabel}
+              startRequest={startRequest}
+            />
           </section>
         </div>
         <SessionDetailDrawer
@@ -378,15 +403,18 @@ function CodexWorkspace({
 function TerminalPane({
   platform,
   title,
-  statusLabel
+  statusLabel,
+  startRequest
 }: {
   platform: TerminalPlatform
   title: string
   statusLabel: string
+  startRequest?: TerminalStartRequest | null
 }): JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
+  const handledStartNonceRef = useRef<number | null>(null)
   const [session, setSession] = useState<TerminalStartResult | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -490,6 +518,26 @@ function TerminalPane({
       fitAddonRef.current = null
     }
   }, [fitTerminal, platform])
+
+  useEffect(() => {
+    if (!startRequest || handledStartNonceRef.current === startRequest.nonce) return
+    const terminal = terminalRef.current
+    if (!terminal) return
+
+    handledStartNonceRef.current = startRequest.nonce
+    setError(null)
+    terminal.reset()
+    window.dashboard.terminal
+      .start(platform, startRequest.cwd)
+      .then((result) => {
+        setSession(result)
+        if (result.replay) terminal.write(result.replay)
+        fitTerminal()
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : 'Failed to start session')
+      })
+  }, [startRequest, platform, fitTerminal])
 
   const shellLabel = session ? `${session.shell} pid ${session.pid}` : 'starting'
 

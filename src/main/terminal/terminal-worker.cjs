@@ -31,8 +31,8 @@ function rememberOutput(session, data) {
   }
 }
 
-function createSession(platform) {
-  const cwd = terminalCwd()
+function createSession(platform, requestedCwd) {
+  const cwd = requestedCwd || terminalCwd()
   const shell = shellCommand()
   const terminal = pty.spawn(shell.file, shell.args, {
     name: 'xterm-256color',
@@ -56,6 +56,9 @@ function createSession(platform) {
   })
 
   terminal.onExit(({ exitCode, signal }) => {
+    // A session that has already been replaced (e.g. by starting a new workspace
+    // session) must not delete its successor or leak an exit notice into it.
+    if (sessions.get(platform) !== session) return
     const suffix = signal ? ` signal=${signal}` : ''
     const data = `\r\n[terminal exited code=${exitCode}${suffix}]\r\n`
     rememberOutput(session, data)
@@ -67,13 +70,22 @@ function createSession(platform) {
   return session
 }
 
-function start(requestId, platform) {
+function start(requestId, platform, requestedCwd) {
   if (!VALID_PLATFORMS.has(platform)) {
     send({ type: 'error', requestId, message: `Invalid terminal platform: ${platform}` })
     return
   }
 
-  const session = sessions.get(platform) || createSession(platform)
+  let session = sessions.get(platform)
+  if (requestedCwd && (!session || session.cwd !== requestedCwd)) {
+    // Explicit workspace request: start a fresh session rooted in that folder,
+    // replacing any existing terminal for the platform.
+    if (session) session.pty.kill()
+    session = createSession(platform, requestedCwd)
+  } else if (!session) {
+    session = createSession(platform)
+  }
+
   send({
     type: 'started',
     requestId,
@@ -88,11 +100,13 @@ function start(requestId, platform) {
 }
 
 function restart(requestId, platform) {
-  if (sessions.has(platform)) {
-    sessions.get(platform).pty.kill()
+  const existing = sessions.get(platform)
+  const cwd = existing ? existing.cwd : undefined
+  if (existing) {
+    existing.pty.kill()
     sessions.delete(platform)
   }
-  start(requestId, platform)
+  start(requestId, platform, cwd)
 }
 
 function write(platform, data) {
@@ -114,7 +128,7 @@ function closeAll() {
 
 process.on('message', (message) => {
   try {
-    if (message.type === 'start') start(message.requestId, message.platform)
+    if (message.type === 'start') start(message.requestId, message.platform, message.cwd)
     if (message.type === 'restart') restart(message.requestId, message.platform)
     if (message.type === 'input') write(message.platform, message.data)
     if (message.type === 'resize') resize(message.platform, message.cols, message.rows)
