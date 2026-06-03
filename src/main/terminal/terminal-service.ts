@@ -31,6 +31,7 @@ let worker: ChildProcess | null = null
 let nextRequestId = 1
 const pendingRequests = new Map<number, PendingRequest>()
 const subscribers = new Map<TerminalPlatform, Set<WebContents>>()
+const subscribersWithCleanup = new WeakSet<WebContents>()
 
 function assertPlatform(platform: string): asserts platform is TerminalPlatform {
   if (!VALID_PLATFORMS.has(platform as PlatformId)) {
@@ -52,9 +53,15 @@ function subscribe(platform: TerminalPlatform, webContents: WebContents): void {
   const platformSubscribers = subscribers.get(platform) ?? new Set<WebContents>()
   platformSubscribers.add(webContents)
   subscribers.set(platform, platformSubscribers)
-  webContents.once('destroyed', () => {
-    platformSubscribers.delete(webContents)
-  })
+
+  if (!subscribersWithCleanup.has(webContents)) {
+    subscribersWithCleanup.add(webContents)
+    webContents.once('destroyed', () => {
+      for (const platformSubscribers of subscribers.values()) {
+        platformSubscribers.delete(webContents)
+      }
+    })
+  }
 }
 
 function relayData(platform: TerminalPlatform, data: string): void {

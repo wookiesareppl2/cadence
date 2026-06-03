@@ -108,6 +108,7 @@ button {
 .platform-switcher button,
 .window-controls button,
 .icon-button,
+.project-item,
 .session-item,
 .primary-action,
 .secondary-action,
@@ -139,6 +140,7 @@ button {
 .platform-switcher button:focus-visible,
 .window-controls button:focus-visible,
 .icon-button:focus-visible,
+.project-item:focus-visible,
 .session-item:focus-visible,
 .primary-action:focus-visible,
 .secondary-action:focus-visible,
@@ -373,10 +375,15 @@ button {
   min-height: 0;
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) minmax(320px, 0.8fr);
+  grid-template-columns: minmax(0, 1fr) 28px;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 10px;
   padding: 10px;
+  transition: grid-template-columns 180ms ease;
+}
+
+.content-grid.detail-open {
+  grid-template-columns: minmax(0, 1fr) 286px;
 }
 
 .usage-strip {
@@ -514,15 +521,25 @@ button {
 }
 
 .terminal-panel {
-  grid-column: 1;
+  min-height: 0;
 }
 
 .claude-terminal-panel {
-  grid-column: 1 / -1;
+  min-height: 0;
 }
 
 .codex-terminal-panel {
-  grid-column: 1 / -1;
+  min-height: 0;
+}
+
+.main-stack {
+  grid-column: 1;
+  grid-row: 2;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(190px, 0.48fr) minmax(260px, 1fr);
+  gap: 10px;
 }
 
 .terminal-surface {
@@ -648,11 +665,21 @@ button {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .content-grid.detail-open,
+  .content-grid.detail-closed {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .usage-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .terminal-panel {
+    min-height: 280px;
+  }
+
+  .main-stack {
     grid-column: 1;
+    grid-row: auto;
   }
 }

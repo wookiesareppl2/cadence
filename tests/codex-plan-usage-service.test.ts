@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { fetchCodexPlanUsage } from '../src/main/usage/codex-plan-usage-service'
 
+type RunWorker = (command: 'fetch' | 'refresh') => Promise<string>
+
 const fetchOk = JSON.stringify({
   ok: true,
   status: 200,
@@ -38,7 +40,7 @@ describe('Codex plan usage service', () => {
   })
 
   it('refreshes credentials and retries once after a 401', async () => {
-    const runWorker = vi.fn(async (command: 'fetch' | 'refresh') => command)
+    const runWorker = vi.fn<RunWorker>()
       .mockResolvedValueOnce(fetch401) // first fetch
       .mockResolvedValueOnce(JSON.stringify({ ok: true })) // refresh
       .mockResolvedValueOnce(fetchOk) // retried fetch

@@ -1,7 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { ClaudePlanUsage } from '@shared/claude-plan-usage'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
-import type { AssistantSession } from '@shared/sessions'
+import type { PlatformId } from '@shared/platform'
+import type { AssistantSession, AssistantSessionHistory } from '@shared/sessions'
 import type { TerminalDataEvent, TerminalPlatform, TerminalStartResult } from '@shared/terminal'
 import type { ClaudeUsageSummary } from '@shared/usage'
 
@@ -21,7 +22,9 @@ const api = {
   },
   sessions: {
     getClaudeSessions: (): Promise<AssistantSession[]> => ipcRenderer.invoke('sessions:claude'),
-    getCodexSessions: (): Promise<AssistantSession[]> => ipcRenderer.invoke('sessions:codex')
+    getCodexSessions: (): Promise<AssistantSession[]> => ipcRenderer.invoke('sessions:codex'),
+    getSessionHistory: (platform: PlatformId, sessionId: string): Promise<AssistantSessionHistory> =>
+      ipcRenderer.invoke('sessions:history', platform, sessionId)
   },
   terminal: {
     start: (platform: TerminalPlatform): Promise<TerminalStartResult> => ipcRenderer.invoke('terminal:start', platform),

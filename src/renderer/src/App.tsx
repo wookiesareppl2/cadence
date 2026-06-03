@@ -3,18 +3,63 @@ import type { JSX } from 'react'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
+import {
+  ProjectSessionSidebar,
+  SessionDetailDrawer,
+  SessionHistoryPanel,
+  useProjectSessionBrowserState,
+  useSessionHistory
+} from '@renderer/components/session-browser'
 import type { ClaudePlanUsage } from '@shared/claude-plan-usage'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
-import type { AssistantSession } from '@shared/sessions'
 import type { TerminalPlatform, TerminalStartResult } from '@shared/terminal'
 
 const PLAN_POLL_INTERVAL_MS = 180_000
-const SESSION_POLL_INTERVAL_MS = 60_000
 
 export function App(): JSX.Element {
   const [platform, setPlatform] = useState<PlatformId>('claude')
+  const [selectedSessionIds, setSelectedSessionIds] = useState<Record<PlatformId, string | null>>({
+    claude: null,
+    codex: null
+  })
+  const [selectedProjectIds, setSelectedProjectIds] = useState<Record<PlatformId, string | null>>({
+    claude: null,
+    codex: null
+  })
+  const [sessionDetailOpen, setSessionDetailOpen] = useState<Record<PlatformId, boolean>>({
+    claude: false,
+    codex: false
+  })
   const activePlatform = PLATFORM_CONFIG[platform]
+
+  const selectClaudeSession = useCallback((sessionId: string | null) => {
+    setSelectedSessionIds((current) =>
+      current.claude === sessionId ? current : { ...current, claude: sessionId }
+    )
+  }, [])
+
+  const selectClaudeProject = useCallback((projectId: string | null) => {
+    setSelectedProjectIds((current) =>
+      current.claude === projectId ? current : { ...current, claude: projectId }
+    )
+  }, [])
+
+  const selectCodexSession = useCallback((sessionId: string | null) => {
+    setSelectedSessionIds((current) => (current.codex === sessionId ? current : { ...current, codex: sessionId }))
+  }, [])
+
+  const selectCodexProject = useCallback((projectId: string | null) => {
+    setSelectedProjectIds((current) => (current.codex === projectId ? current : { ...current, codex: projectId }))
+  }, [])
+
+  const toggleClaudeSessionDetail = useCallback(() => {
+    setSessionDetailOpen((current) => ({ ...current, claude: !current.claude }))
+  }, [])
+
+  const toggleCodexSessionDetail = useCallback(() => {
+    setSessionDetailOpen((current) => ({ ...current, codex: !current.codex }))
+  }, [])
 
   const cssVars = useMemo(
     () =>
@@ -29,7 +74,25 @@ export function App(): JSX.Element {
   return (
     <div className="app-shell" style={cssVars} data-platform={platform}>
       <Titlebar platform={platform} onPlatformChange={setPlatform} />
-      {platform === 'claude' ? <ClaudeWorkspace /> : <CodexWorkspace />}
+      {platform === 'claude' ? (
+        <ClaudeWorkspace
+          selectedProjectId={selectedProjectIds.claude}
+          selectedSessionId={selectedSessionIds.claude}
+          sessionDetailOpen={sessionDetailOpen.claude}
+          onSelectedProjectIdChange={selectClaudeProject}
+          onSelectedSessionIdChange={selectClaudeSession}
+          onToggleSessionDetail={toggleClaudeSessionDetail}
+        />
+      ) : (
+        <CodexWorkspace
+          selectedProjectId={selectedProjectIds.codex}
+          selectedSessionId={selectedSessionIds.codex}
+          sessionDetailOpen={sessionDetailOpen.codex}
+          onSelectedProjectIdChange={selectCodexProject}
+          onSelectedSessionIdChange={selectCodexSession}
+          onToggleSessionDetail={toggleCodexSessionDetail}
+        />
+      )}
     </div>
   )
 }
@@ -117,76 +180,6 @@ function useCodexPlanUsage(): { planUsage: CodexPlanUsage | null; planError: str
   return { planUsage, planError }
 }
 
-function usePlatformSessions(platform: PlatformId): {
-  sessions: AssistantSession[]
-  loading: boolean
-  error: string | null
-} {
-  const [sessions, setSessions] = useState<AssistantSession[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-
-  const fetchSessions = useCallback(() => {
-    const loader =
-      platform === 'claude'
-        ? window.dashboard?.sessions?.getClaudeSessions
-        : window.dashboard?.sessions?.getCodexSessions
-
-    if (!loader) {
-      setError('Session API unavailable')
-      setLoading(false)
-      return
-    }
-
-    loader()
-      .then((nextSessions) => {
-        setSessions(nextSessions)
-        setError(null)
-      })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Session scan failed'))
-      .finally(() => setLoading(false))
-  }, [platform])
-
-  useEffect(() => {
-    setLoading(true)
-    fetchSessions()
-    const id = setInterval(fetchSessions, SESSION_POLL_INTERVAL_MS)
-    return () => clearInterval(id)
-  }, [fetchSessions])
-
-  return { sessions, loading, error }
-}
-
-function SessionList({
-  sessions,
-  loading,
-  error,
-  emptyLabel
-}: {
-  sessions: AssistantSession[]
-  loading: boolean
-  error: string | null
-  emptyLabel: string
-}): JSX.Element {
-  if (loading) return <div className="session-placeholder">Scanning sessions...</div>
-  if (error) return <div className="session-placeholder error">{error}</div>
-  if (sessions.length === 0) return <div className="session-placeholder">{emptyLabel}</div>
-
-  return (
-    <>
-      {sessions.map((session, index) => (
-        <button key={`${session.platform}:${session.id}`} type="button" className={`session-item ${index === 0 ? 'active' : ''}`}>
-          <span className="session-title">{session.title}</span>
-          {session.project && session.project !== session.title ? <span className="session-project">{session.project}</span> : null}
-          <span className="session-meta">
-            <span>Updated {session.age}</span>
-          </span>
-        </button>
-      ))}
-    </>
-  )
-}
-
 function useCountdown(resetsAt: string | null): string {
   const [now, setNow] = useState(() => Date.now())
 
@@ -215,9 +208,30 @@ function barTier(pct: number): string {
   return 'normal'
 }
 
-function ClaudeWorkspace(): JSX.Element {
+function ClaudeWorkspace({
+  selectedProjectId,
+  selectedSessionId,
+  sessionDetailOpen,
+  onSelectedProjectIdChange,
+  onSelectedSessionIdChange,
+  onToggleSessionDetail
+}: {
+  selectedProjectId: string | null
+  selectedSessionId: string | null
+  sessionDetailOpen: boolean
+  onSelectedProjectIdChange: (projectId: string | null) => void
+  onSelectedSessionIdChange: (sessionId: string | null) => void
+  onToggleSessionDetail: () => void
+}): JSX.Element {
   const { planUsage, planError } = useClaudePlanUsage()
-  const { sessions, loading, error } = usePlatformSessions('claude')
+  const sessionBrowser = useProjectSessionBrowserState({
+    platform: 'claude',
+    selectedProjectId,
+    selectedSessionId,
+    onSelectedProjectIdChange,
+    onSelectedSessionIdChange
+  })
+  const historyState = useSessionHistory(sessionBrowser.selectedSession)
 
   const statusLabel = planError
     ? 'error'
@@ -227,20 +241,17 @@ function ClaudeWorkspace(): JSX.Element {
 
   return (
     <main className="workspace">
-      <aside className="sidebar" aria-label="Claude sessions">
-        <div className="sidebar-header">
-          <h2>Sessions</h2>
-          <button type="button" className="icon-button" aria-label="New session">
-            +
-          </button>
-        </div>
-        <input className="sidebar-search" placeholder="Search sessions" aria-label="Search sessions" />
-        <div className="session-list">
-          <SessionList sessions={sessions} loading={loading} error={error} emptyLabel="No Claude sessions found" />
-        </div>
-      </aside>
+      <ProjectSessionSidebar
+        title="Projects"
+        ariaLabel="Claude projects"
+        emptyLabel="No Claude projects found"
+        browser={sessionBrowser}
+      />
 
-      <section className="content-grid" aria-label="Claude Code dashboard">
+      <section
+        className={`content-grid ${sessionDetailOpen ? 'detail-open' : 'detail-closed'}`}
+        aria-label="Claude Code dashboard"
+      >
         <div className="usage-strip">
           {planError ? (
             <div className="usage-error">{planError}</div>
@@ -266,39 +277,62 @@ function ClaudeWorkspace(): JSX.Element {
           )}
         </div>
 
-        <section className="panel terminal-panel claude-terminal-panel">
-          <TerminalPane platform="claude" title="Claude Terminal" statusLabel={statusLabel} />
-        </section>
+        <div className="main-stack">
+          <SessionHistoryPanel session={sessionBrowser.selectedSession} historyState={historyState} />
+          <section className="panel terminal-panel claude-terminal-panel">
+            <TerminalPane platform="claude" title="Claude Terminal" statusLabel={statusLabel} />
+          </section>
+        </div>
+        <SessionDetailDrawer
+          session={sessionBrowser.selectedSession}
+          emptyLabel="No Claude session selected"
+          open={sessionDetailOpen}
+          onToggle={onToggleSessionDetail}
+        />
       </section>
     </main>
   )
 }
 
-function CodexWorkspace(): JSX.Element {
+function CodexWorkspace({
+  selectedProjectId,
+  selectedSessionId,
+  sessionDetailOpen,
+  onSelectedProjectIdChange,
+  onSelectedSessionIdChange,
+  onToggleSessionDetail
+}: {
+  selectedProjectId: string | null
+  selectedSessionId: string | null
+  sessionDetailOpen: boolean
+  onSelectedProjectIdChange: (projectId: string | null) => void
+  onSelectedSessionIdChange: (sessionId: string | null) => void
+  onToggleSessionDetail: () => void
+}): JSX.Element {
   const { planUsage, planError } = useCodexPlanUsage()
-  const { sessions, loading, error } = usePlatformSessions('codex')
+  const sessionBrowser = useProjectSessionBrowserState({
+    platform: 'codex',
+    selectedProjectId,
+    selectedSessionId,
+    onSelectedProjectIdChange,
+    onSelectedSessionIdChange
+  })
+  const historyState = useSessionHistory(sessionBrowser.selectedSession)
   const statusLabel = planError ? 'usage error' : planUsage ? 'live' : 'connecting'
 
   return (
     <main className="workspace">
-      <aside className="sidebar" aria-label="Codex sessions">
-        <div className="sidebar-header">
-          <h2>Codex</h2>
-        </div>
-        <div className="session-action-group">
-          <button type="button" className="primary-action">
-            New Codex Session
-          </button>
-          <button type="button" className="secondary-action">
-            Attach Workspace
-          </button>
-        </div>
-        <div className="session-list">
-          <SessionList sessions={sessions} loading={loading} error={error} emptyLabel="No Codex sessions found" />
-        </div>
-      </aside>
+      <ProjectSessionSidebar
+        title="Projects"
+        ariaLabel="Codex projects"
+        emptyLabel="No Codex projects found"
+        browser={sessionBrowser}
+      />
 
-      <section className="content-grid" aria-label="Codex dashboard">
+      <section
+        className={`content-grid ${sessionDetailOpen ? 'detail-open' : 'detail-closed'}`}
+        aria-label="Codex dashboard"
+      >
         <div className="usage-strip">
           {planError ? (
             <div className="usage-error">{planError}</div>
@@ -324,9 +358,18 @@ function CodexWorkspace(): JSX.Element {
           )}
         </div>
 
-        <section className="panel terminal-panel codex-terminal-panel">
-          <TerminalPane platform="codex" title="Codex Terminal" statusLabel={statusLabel} />
-        </section>
+        <div className="main-stack">
+          <SessionHistoryPanel session={sessionBrowser.selectedSession} historyState={historyState} />
+          <section className="panel terminal-panel codex-terminal-panel">
+            <TerminalPane platform="codex" title="Codex Terminal" statusLabel={statusLabel} />
+          </section>
+        </div>
+        <SessionDetailDrawer
+          session={sessionBrowser.selectedSession}
+          emptyLabel="No Codex session selected"
+          open={sessionDetailOpen}
+          onToggle={onToggleSessionDetail}
+        />
       </section>
     </main>
   )
