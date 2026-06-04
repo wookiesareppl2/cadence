@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Dispatch, JSX, SetStateAction } from 'react'
 import type { PlatformId } from '@shared/platform'
-import type { AssistantProject, AssistantSession, AssistantSessionHistory } from '@shared/sessions'
+import type {
+  AssistantProject,
+  AssistantSession,
+  AssistantSessionHistory,
+  AssistantSessionHistoryEntry
+} from '@shared/sessions'
 import type { Workspace } from '@shared/workspaces'
+import { HistoryMarkdown } from './history-markdown'
 import './session-browser.css'
 
 const SESSION_POLL_INTERVAL_MS = 60_000
@@ -41,6 +47,21 @@ export type SessionHistoryState = {
   history: AssistantSessionHistory | null
   loading: boolean
   error: string | null
+}
+
+// Only tool rows carry detail beyond the rail badge (which tool ran). User,
+// assistant, and context rows are fully identified by the rail, so showing a
+// speaker label there would just duplicate it.
+function historySpeakerLabel(entry: AssistantSessionHistoryEntry): string | null {
+  if (entry.role !== 'tool') return null
+  return entry.label || 'Tool'
+}
+
+function historyRoleCode(role: AssistantSessionHistoryEntry['role']): string {
+  if (role === 'user') return 'YOU'
+  if (role === 'assistant') return 'AGT'
+  if (role === 'tool') return 'RUN'
+  return 'CTX'
 }
 
 export function useProjectSessionBrowserState({
@@ -147,8 +168,18 @@ export function useSessionHistory(session: AssistantSession | null): SessionHist
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Depend on the session's identity + last-updated time, not its object
+  // reference. The session list re-polls every minute and hands back freshly
+  // built session objects, so the selection changes reference without changing
+  // identity — keying the reload on identity stops a needless re-fetch (and its
+  // placeholder flash) on every poll, while still refreshing when the session
+  // genuinely gains new activity (updatedAt advances).
+  const platform = session?.platform ?? null
+  const sessionId = session?.id ?? null
+  const updatedAt = session?.updatedAt ?? null
+
   useEffect(() => {
-    if (!session) {
+    if (!platform || !sessionId) {
       setHistory(null)
       setLoading(false)
       setError(null)
@@ -167,7 +198,7 @@ export function useSessionHistory(session: AssistantSession | null): SessionHist
     setLoading(true)
     setError(null)
 
-    loader(session.platform, session.id)
+    loader(platform, sessionId)
       .then((nextHistory) => {
         if (cancelled) return
         setHistory(nextHistory)
@@ -185,7 +216,7 @@ export function useSessionHistory(session: AssistantSession | null): SessionHist
     return () => {
       cancelled = true
     }
-  }, [session])
+  }, [platform, sessionId, updatedAt])
 
   return { history, loading, error }
 }
@@ -354,27 +385,45 @@ export function SessionHistoryPanel({
           <h2>History</h2>
           <span>{session ? session.title : 'No session selected'}</span>
         </div>
-        {session ? <span className="status-pill">{loading ? 'loading' : `${entryCount} entries`}</span> : null}
+        {session ? (
+          <span className="status-pill">{loading && !history ? 'loading' : `${entryCount} entries`}</span>
+        ) : null}
       </div>
       {!session ? (
         <div className="history-placeholder">Select a project session to load its transcript.</div>
-      ) : error ? (
+      ) : error && !history ? (
         <div className="history-placeholder error">{error}</div>
-      ) : loading ? (
+      ) : loading && !history ? (
         <div className="history-placeholder">Loading transcript...</div>
       ) : !history || history.entries.length === 0 ? (
         <div className="history-placeholder">No readable transcript entries found.</div>
       ) : (
         <div className="history-feed">
-          {history.entries.map((entry) => (
-            <article key={entry.id} className="history-entry" data-role={entry.role}>
-              <div className="history-entry-meta">
-                <span>{entry.label}</span>
-                {entry.timestamp ? <time>{formatEntryTimestamp(entry.timestamp)}</time> : null}
-              </div>
-              <pre>{entry.text}</pre>
-            </article>
-          ))}
+          {[...history.entries].reverse().map((entry) => {
+            const speaker = historySpeakerLabel(entry)
+            const showMeta = Boolean(speaker || entry.timestamp)
+
+            return (
+              <article key={entry.id} className="history-entry" data-role={entry.role}>
+                <div className="history-entry-rail" aria-hidden="true">
+                  {historyRoleCode(entry.role)}
+                </div>
+                <div className="history-entry-content">
+                  {showMeta ? (
+                    <div className="history-entry-meta">
+                      {speaker ? <span className="history-entry-speaker">{speaker}</span> : null}
+                      {entry.timestamp ? <time>{formatEntryTimestamp(entry.timestamp)}</time> : null}
+                    </div>
+                  ) : null}
+                  {entry.role === 'user' || entry.role === 'assistant' ? (
+                    <HistoryMarkdown text={entry.text} />
+                  ) : (
+                    <pre>{entry.text}</pre>
+                  )}
+                </div>
+              </article>
+            )
+          })}
         </div>
       )}
     </section>

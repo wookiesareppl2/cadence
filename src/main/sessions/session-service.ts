@@ -5,6 +5,7 @@ import type { AssistantSession, AssistantSessionHistory, AssistantSessionHistory
 import type { PlatformId } from '@shared/platform'
 import { contentText, resolveSessionTitle, titleCandidate, type TitleMessage } from './session-title'
 import { rankRolloutFiles } from './codex-rollout'
+import { cleanHistoryText } from './session-history-text'
 
 type ClaudeSessionDraft = {
   id: string
@@ -35,7 +36,6 @@ type CodexSessionDetails = {
 
 const MAX_SESSIONS = 80
 const CODEX_SESSION_DETAIL_READ_WINDOW = 1024 * 1024
-const HISTORY_TEXT_LIMIT = 6_000
 
 async function findJsonlFiles(root: string): Promise<string[]> {
   const files: string[] = []
@@ -186,43 +186,22 @@ type HistoryDraft = AssistantSessionHistoryEntry & {
   timestampMs: number
 }
 
-function historyText(text: string | null): string | null {
-  if (!text) return null
-  if (/<\/?(command-message|command-name|local-command-stdout|system-reminder)\b/i.test(text)) return null
-
-  let value = text
-    .replace(/\r/g, '')
-    .replace(/<environment_context>[\s\S]*?<\/environment_context>/gi, ' ')
-    .trim()
-
-  const requestMarker = value.match(/##\s*My request for (?:Codex|Claude(?: Code)?|ChatGPT):\s*([\s\S]*)/i)
-  if (requestMarker) value = requestMarker[1]
-
-  value = value
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/\s+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/[ \t]{2,}/g, ' ')
-    .trim()
-
-  if (!value) return null
-  return value.length > HISTORY_TEXT_LIMIT ? `${value.slice(0, HISTORY_TEXT_LIMIT - 3)}...` : value
-}
-
 function historyEntry({
   row,
   index,
   role,
   label,
-  text
+  text,
+  commandPrefix
 }: {
   row: { timestamp?: unknown }
   index: number
   role: HistoryDraft['role']
   label: string
   text: string | null
+  commandPrefix?: '$' | '/'
 }): HistoryDraft | null {
-  const cleanText = historyText(text)
+  const cleanText = cleanHistoryText(text, { commandPrefix })
   if (!cleanText) return null
   const timestampMs = rowTimestampMs(row, 0)
 
@@ -236,17 +215,57 @@ function historyEntry({
   }
 }
 
+function hasToolResultContent(content: unknown): boolean {
+  return Array.isArray(content) && content.some((item) => item?.type === 'tool_result')
+}
+
 function claudeHistoryEntry(row: any, index: number): HistoryDraft | null {
+  // Subagent turns (isSidechain) are internal scaffolding — the agent's task
+  // prompt and its step-by-step work — not part of the user's conversation.
+  if (row?.isSidechain === true) return null
+
   if (row?.type === 'queue-operation' && typeof row.content === 'string') {
-    return historyEntry({ row, index, role: 'user', label: 'Queued', text: row.content })
+    return historyEntry({ row, index, role: 'user', label: 'Queued', text: row.content, commandPrefix: '$' })
   }
 
   if (row?.type === 'user') {
-    return historyEntry({ row, index, role: 'user', label: 'User', text: contentText(row.message?.content) })
+    // Tool/MCP results return as synthetic user-role rows (toolUseResult / a
+    // tool_result content block) — never something the user typed. Drop them so
+    // they can't masquerade as a prompt.
+    if (row.toolUseResult || hasToolResultContent(row.message?.content)) return null
+
+    // Slash-command and skill expansions are injected as synthetic user turns
+    // (isMeta). Surface them as context, not as a prompt the user entered.
+    if (row.isMeta) {
+      return historyEntry({
+        row,
+        index,
+        role: 'system',
+        label: 'Context',
+        text: contentText(row.message?.content),
+        commandPrefix: '$'
+      })
+    }
+
+    return historyEntry({
+      row,
+      index,
+      role: 'user',
+      label: 'User',
+      text: contentText(row.message?.content),
+      commandPrefix: '$'
+    })
   }
 
   if (row?.type === 'assistant') {
-    return historyEntry({ row, index, role: 'assistant', label: 'Assistant', text: contentText(row.message?.content) })
+    return historyEntry({
+      row,
+      index,
+      role: 'assistant',
+      label: 'Assistant',
+      text: contentText(row.message?.content),
+      commandPrefix: '$'
+    })
   }
 
   return null
@@ -264,22 +283,37 @@ function codexHistoryEntry(row: any, index: number): HistoryDraft | null {
       index,
       role,
       label: role === 'assistant' ? 'Assistant' : 'User',
-      text: contentText(payload.content)
+      text: contentText(payload.content),
+      commandPrefix: '/'
     })
   }
 
   if (payload?.type === 'function_call' && typeof payload.name === 'string') {
     const args = typeof payload.arguments === 'string' ? payload.arguments : ''
-    return historyEntry({ row, index, role: 'tool', label: payload.name, text: args || 'Tool call' })
+    return historyEntry({ row, index, role: 'tool', label: payload.name, text: args || 'Tool call', commandPrefix: '/' })
   }
 
   return null
 }
 
 function finalizeHistoryEntries(entries: HistoryDraft[]): AssistantSessionHistoryEntry[] {
-  return entries
-    .sort((a, b) => a.timestampMs - b.timestampMs)
-    .map(({ timestampMs: _timestampMs, ...entry }) => entry)
+  const ordered = [...entries].sort((a, b) => a.timestampMs - b.timestampMs)
+
+  // The agent emits many intermediate messages while working (narration between
+  // tool calls). Once those tool rows are dropped, the assistant messages of one
+  // turn sit adjacent — collapse each consecutive run to just its final message
+  // so the transcript shows the completed answer, not every step taken.
+  const collapsed: HistoryDraft[] = []
+  for (const entry of ordered) {
+    const previous = collapsed[collapsed.length - 1]
+    if (entry.role === 'assistant' && previous?.role === 'assistant') {
+      collapsed[collapsed.length - 1] = entry
+      continue
+    }
+    collapsed.push(entry)
+  }
+
+  return collapsed.map(({ timestampMs: _timestampMs, ...entry }) => entry)
 }
 
 async function readCodexSessionDetails(path: string): Promise<CodexSessionDetails> {
@@ -591,6 +625,12 @@ async function getClaudeSessionFiles(sessionId: string): Promise<Array<{ path: s
   const matches: Array<{ path: string; raw: string }> = []
 
   for (const path of files) {
+    // Subagent (Task) transcripts are stored as agent-*.jsonl and reference the
+    // parent sessionId, so they'd otherwise be folded in here. Their turns are
+    // internal scaffolding (injected task prompts, step-by-step work), never part
+    // of the conversation the user had — skip them entirely.
+    if (basename(path).startsWith('agent-')) continue
+
     let raw = ''
     try {
       raw = await readFile(path, 'utf-8')

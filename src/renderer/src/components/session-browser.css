@@ -32,6 +32,11 @@
   background: var(--accent-hover);
 }
 
+.sidebar-action:active {
+  background: var(--accent);
+  color: var(--surface-0);
+}
+
 .session-start-action {
   padding: 3px 9px;
   border: 1px solid var(--border);
@@ -48,6 +53,12 @@
 .session-start-action:hover:not(:disabled) {
   border-color: var(--accent);
   background: var(--accent-dim);
+}
+
+.session-start-action:active:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text-1);
+  background: var(--accent-hover);
 }
 
 .session-start-action:disabled {
@@ -177,13 +188,13 @@
 
 .history-entry {
   display: grid;
-  gap: 6px;
-  padding: 11px 14px 13px;
+  grid-template-columns: 52px minmax(0, 1fr);
+  padding: 0;
   border-bottom: 1px solid var(--border-subtle);
 }
 
 .history-entry[data-role="user"] {
-  background: color-mix(in srgb, var(--accent-dim) 24%, var(--surface-0));
+  background: color-mix(in srgb, var(--accent-dim) 28%, var(--surface-0));
 }
 
 .history-entry[data-role="assistant"] {
@@ -192,6 +203,46 @@
 
 .history-entry[data-role="tool"] {
   background: var(--surface-1);
+}
+
+.history-entry[data-role="system"] {
+  background: var(--surface-1);
+}
+
+.history-entry-rail {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 13px;
+  border-right: 1px solid var(--border-subtle);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.history-entry[data-role="user"] .history-entry-rail {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent-dim) 18%, transparent);
+}
+
+.history-entry[data-role="assistant"] .history-entry-rail {
+  color: var(--text-2);
+  background: color-mix(in srgb, var(--surface-2) 36%, transparent);
+}
+
+.history-entry[data-role="tool"] .history-entry-rail,
+.history-entry[data-role="system"] .history-entry-rail {
+  color: var(--text-3);
+  background: color-mix(in srgb, var(--surface-2) 50%, transparent);
+}
+
+.history-entry-content {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px 14px;
 }
 
 .history-entry-meta {
@@ -204,9 +255,18 @@
   font-size: 10.5px;
 }
 
-.history-entry-meta span {
+.history-entry-speaker {
   color: var(--text-2);
   font-weight: 600;
+}
+
+.history-entry[data-role="user"] .history-entry-speaker {
+  color: var(--text-1);
+}
+
+.history-entry[data-role="tool"] .history-entry-speaker,
+.history-entry[data-role="system"] .history-entry-speaker {
+  color: var(--text-3);
 }
 
 .history-entry pre {
@@ -218,6 +278,138 @@
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.history-entry[data-role="tool"] pre,
+.history-entry[data-role="system"] pre {
+  max-height: 170px;
+  overflow: auto;
+  color: var(--text-2);
+}
+
+/* Rendered Markdown for user prompts and agent replies. Prose uses the UI font
+   for readability; only code stays monospace. */
+.history-md {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text-1);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.history-md .md-p {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.history-md .md-heading {
+  margin: 2px 0 0;
+  font-weight: 650;
+  line-height: 1.35;
+  color: var(--text-1);
+}
+
+.history-md .md-h1 { font-size: 14.5px; }
+.history-md .md-h2 { font-size: 13.5px; }
+.history-md .md-h3 { font-size: 12.5px; }
+.history-md .md-h4,
+.history-md .md-h5,
+.history-md .md-h6 {
+  font-size: 12px;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.history-md .md-list {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 3px;
+}
+
+.history-md .md-list li {
+  word-break: break-word;
+}
+
+.history-md .md-quote {
+  margin: 0;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--accent-dim);
+  color: var(--text-2);
+}
+
+.history-md .md-hr {
+  margin: 2px 0;
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.history-md strong { font-weight: 650; color: var(--text-1); }
+.history-md em { font-style: italic; }
+
+.history-md .md-link {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  cursor: default;
+}
+
+.history-md .md-inline-code {
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.history-md pre.md-code {
+  margin: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  background: var(--surface-1);
+  overflow: auto;
+  white-space: pre;
+}
+
+.history-md pre.md-code code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-1);
+}
+
+.history-md .md-table-wrap {
+  overflow: auto;
+}
+
+.history-md .md-table {
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+
+.history-md .md-table th,
+.history-md .md-table td {
+  padding: 4px 9px;
+  border: 1px solid var(--border-subtle);
+  text-align: left;
+  vertical-align: top;
+}
+
+.history-md .md-table th {
+  background: var(--surface-2);
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.history-md .md-table td {
+  color: var(--text-2);
 }
 
 .history-placeholder {

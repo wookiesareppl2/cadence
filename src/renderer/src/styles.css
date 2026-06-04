@@ -145,6 +145,8 @@ button {
 .primary-action:focus-visible,
 .secondary-action:focus-visible,
 .terminal-action:focus-visible,
+.sidebar-action:focus-visible,
+.session-start-action:focus-visible,
 .sidebar-search:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 2px;
@@ -171,7 +173,7 @@ button {
   background: transparent;
   color: var(--text-2);
   cursor: pointer;
-  font-family: var(--font-sans);
+  font-family: var(--font-ui);
   font-size: 18px;
   font-weight: 500;
   line-height: 1;
@@ -447,7 +449,7 @@ button {
   line-height: 1;
 }
 
-.usage-bar-card[data-tier="normal"] .usage-bar-pct { color: var(--success); }
+.usage-bar-card[data-tier="normal"] .usage-bar-pct { color: var(--accent); }
 .usage-bar-card[data-tier="warning"] .usage-bar-pct { color: var(--caution); }
 .usage-bar-card[data-tier="critical"] .usage-bar-pct { color: #c0392b; }
 
@@ -463,7 +465,7 @@ button {
   border-radius: 3px;
 }
 
-[data-tier="normal"] .usage-bar-fill { background: var(--success); }
+[data-tier="normal"] .usage-bar-fill { background: var(--accent); }
 [data-tier="warning"] .usage-bar-fill { background: var(--caution); }
 [data-tier="critical"] .usage-bar-fill { background: #c0392b; }
 
@@ -693,5 +695,16 @@ button {
   .main-stack {
     grid-column: 1;
     grid-row: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 1ms !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
   }
 }
