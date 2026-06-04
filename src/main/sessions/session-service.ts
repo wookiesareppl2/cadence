@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { open, readdir, readFile, stat } from 'node:fs/promises'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import type { AssistantSession, AssistantSessionHistory, AssistantSessionHistoryEntry } from '@shared/sessions'
 import type { PlatformId } from '@shared/platform'
 import { contentText, resolveSessionTitle, titleCandidate, type TitleMessage } from './session-title'
@@ -60,6 +60,19 @@ async function findJsonlFiles(root: string): Promise<string[]> {
 
   await visit(root)
   return files
+}
+
+// A genuine Claude Code transcript lives directly inside its project directory:
+// `<projects-root>/<project-dir>/<sessionId>.jsonl`. Everything deeper or hidden
+// is not a session and must be ignored, otherwise it surfaces as a phantom
+// project:
+//   - `.claude-flow/data/*.jsonl` (claude-flow telemetry) → a bogus "data" project
+//   - `<sessionId>/subagents/agent-*.jsonl` (subagent sidechains) → internal, not
+//     standalone sessions
+export function isClaudeTranscriptPath(root: string, path: string): boolean {
+  const parts = relative(root, path).split(/[\\/]/)
+  if (parts.length !== 2) return false
+  return !parts[0].startsWith('.')
 }
 
 function relativeAge(timestampMs: number): string {
@@ -534,7 +547,7 @@ function dedupeById(drafts: ClaudeSessionDraft[]): ClaudeSessionDraft[] {
 
 export async function getClaudeSessions(): Promise<AssistantSession[]> {
   const root = join(app.getPath('home'), '.claude', 'projects')
-  const files = await findJsonlFiles(root)
+  const files = (await findJsonlFiles(root)).filter((path) => isClaudeTranscriptPath(root, path))
   const sessions = await Promise.all(files.map(readClaudeSession))
 
   const drafts = sessions.filter((session): session is ClaudeSessionDraft => Boolean(session))
@@ -621,16 +634,14 @@ export async function getCodexSessions(): Promise<AssistantSession[]> {
 
 async function getClaudeSessionFiles(sessionId: string): Promise<Array<{ path: string; raw: string }>> {
   const root = join(app.getPath('home'), '.claude', 'projects')
-  const files = await findJsonlFiles(root)
+  // Only real transcripts. This excludes subagent sidechains
+  // (`<sessionId>/subagents/agent-*.jsonl`) and claude-flow telemetry
+  // (`.claude-flow/data/*.jsonl`) — the latter also carries real sessionIds, so
+  // it would otherwise be folded into a session's history as empty noise.
+  const files = (await findJsonlFiles(root)).filter((path) => isClaudeTranscriptPath(root, path))
   const matches: Array<{ path: string; raw: string }> = []
 
   for (const path of files) {
-    // Subagent (Task) transcripts are stored as agent-*.jsonl and reference the
-    // parent sessionId, so they'd otherwise be folded in here. Their turns are
-    // internal scaffolding (injected task prompts, step-by-step work), never part
-    // of the conversation the user had — skip them entirely.
-    if (basename(path).startsWith('agent-')) continue
-
     let raw = ''
     try {
       raw = await readFile(path, 'utf-8')
