@@ -7,3 +7,6 @@ allowBuilds:
   electron: true
   electron-winstaller: true
   esbuild: true
+
+patchedDependencies:
+  '@homebridge/node-pty-prebuilt-multiarch@0.13.1': patches/@homebridge__node-pty-prebuilt-multiarch@0.13.1.patch

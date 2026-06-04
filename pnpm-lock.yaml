@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@homebridge/node-pty-prebuilt-multiarch@0.13.1': 466ac04d83c7f751d363c169a37ecfb06b75640224274dba9f228abd7020ce01
+
 importers:
 
   .:
@@ -16,7 +19,7 @@ importers:
         version: 4.0.0(electron@39.8.10)
       '@homebridge/node-pty-prebuilt-multiarch':
         specifier: ^0.13.1
-        version: 0.13.1
+        version: 0.13.1(patch_hash=466ac04d83c7f751d363c169a37ecfb06b75640224274dba9f228abd7020ce01)
       '@xterm/addon-fit':
         specifier: ^0.11.0
         version: 0.11.0
@@ -2484,7 +2487,7 @@ snapshots:
   '@esbuild/win32-x64@0.27.7':
     optional: true
 
-  '@homebridge/node-pty-prebuilt-multiarch@0.13.1':
+  '@homebridge/node-pty-prebuilt-multiarch@0.13.1(patch_hash=466ac04d83c7f751d363c169a37ecfb06b75640224274dba9f228abd7020ce01)':
     dependencies:
       node-addon-api: 7.1.1
       prebuild-install: 7.1.3

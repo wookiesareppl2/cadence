@@ -1,9 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { JSX } from 'react'
-import { FitAddon } from '@xterm/addon-fit'
-import { Terminal } from '@xterm/xterm'
-import '@xterm/xterm/css/xterm.css'
 import {
+  NEW_SESSION_ID,
   ProjectSessionSidebar,
   SessionDetailDrawer,
   SessionHistoryPanel,
@@ -11,16 +9,13 @@ import {
   useSessionHistory
 } from '@renderer/components/session-browser'
 import type { ProjectSessionGroup } from '@renderer/components/session-browser'
+import { TerminalDeck, useTerminalDeck } from '@renderer/components/terminal-deck'
 import type { ClaudePlanUsage, PlanUsageRefreshMeta, UsageWindow } from '@shared/claude-plan-usage'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
-import type { TerminalPlatform, TerminalStartResult } from '@shared/terminal'
 
 const PLAN_POLL_INTERVAL_MS = 60_000
 
-// A bump in `nonce` re-triggers a terminal (re)start in `cwd`, even if the same
-// project is started twice in a row.
-type TerminalStartRequest = { cwd: string; nonce: number }
 type PlanUsageDisplay = {
   fiveHour: UsageWindow | null
   sevenDay: UsageWindow | null
@@ -273,10 +268,16 @@ function ClaudeWorkspace({
     onSelectedSessionIdChange
   })
   const historyState = useSessionHistory(sessionBrowser.selectedSession)
-  const [startRequest, setStartRequest] = useState<TerminalStartRequest | null>(null)
-  const startSession = useCallback((project: ProjectSessionGroup) => {
-    if (project.path) setStartRequest({ cwd: project.path, nonce: Date.now() })
-  }, [])
+  const { tabs, addTerminal, closeTerminal, resetTerminals } = useTerminalDeck('claude')
+  const newSession = selectedSessionId === NEW_SESSION_ID
+  const startSession = useCallback(
+    (project: ProjectSessionGroup) => {
+      if (!project.path) return
+      resetTerminals(project.path, project.name)
+      onSelectedSessionIdChange(NEW_SESSION_ID)
+    },
+    [resetTerminals, onSelectedSessionIdChange]
+  )
 
   const statusLabel = planError
     ? 'error'
@@ -305,15 +306,19 @@ function ClaudeWorkspace({
         />
 
         <div className="main-stack">
-          <SessionHistoryPanel session={sessionBrowser.selectedSession} historyState={historyState} />
-          <section className="panel terminal-panel claude-terminal-panel">
-            <TerminalPane
-              platform="claude"
-              title="Claude Terminal"
-              statusLabel={statusLabel}
-              startRequest={startRequest}
-            />
-          </section>
+          <SessionHistoryPanel
+            session={sessionBrowser.selectedSession}
+            historyState={historyState}
+            newSession={newSession}
+          />
+          <TerminalDeck
+            platform="claude"
+            tabs={tabs}
+            defaultCwd={sessionBrowser.selectedProject?.path ?? null}
+            statusLabel={statusLabel}
+            onAdd={addTerminal}
+            onClose={closeTerminal}
+          />
         </div>
         <SessionDetailDrawer
           session={sessionBrowser.selectedSession}
@@ -352,10 +357,16 @@ function CodexWorkspace({
     onSelectedSessionIdChange
   })
   const historyState = useSessionHistory(sessionBrowser.selectedSession)
-  const [startRequest, setStartRequest] = useState<TerminalStartRequest | null>(null)
-  const startSession = useCallback((project: ProjectSessionGroup) => {
-    if (project.path) setStartRequest({ cwd: project.path, nonce: Date.now() })
-  }, [])
+  const { tabs, addTerminal, closeTerminal, resetTerminals } = useTerminalDeck('codex')
+  const newSession = selectedSessionId === NEW_SESSION_ID
+  const startSession = useCallback(
+    (project: ProjectSessionGroup) => {
+      if (!project.path) return
+      resetTerminals(project.path, project.name)
+      onSelectedSessionIdChange(NEW_SESSION_ID)
+    },
+    [resetTerminals, onSelectedSessionIdChange]
+  )
   const statusLabel = planError ? 'usage error' : planUsage ? 'live' : 'connecting'
 
   return (
@@ -379,15 +390,19 @@ function CodexWorkspace({
         />
 
         <div className="main-stack">
-          <SessionHistoryPanel session={sessionBrowser.selectedSession} historyState={historyState} />
-          <section className="panel terminal-panel codex-terminal-panel">
-            <TerminalPane
-              platform="codex"
-              title="Codex Terminal"
-              statusLabel={statusLabel}
-              startRequest={startRequest}
-            />
-          </section>
+          <SessionHistoryPanel
+            session={sessionBrowser.selectedSession}
+            historyState={historyState}
+            newSession={newSession}
+          />
+          <TerminalDeck
+            platform="codex"
+            tabs={tabs}
+            defaultCwd={sessionBrowser.selectedProject?.path ?? null}
+            statusLabel={statusLabel}
+            onAdd={addTerminal}
+            onClose={closeTerminal}
+          />
         </div>
         <SessionDetailDrawer
           session={sessionBrowser.selectedSession}
@@ -397,167 +412,6 @@ function CodexWorkspace({
         />
       </section>
     </main>
-  )
-}
-
-function TerminalPane({
-  platform,
-  title,
-  statusLabel,
-  startRequest
-}: {
-  platform: TerminalPlatform
-  title: string
-  statusLabel: string
-  startRequest?: TerminalStartRequest | null
-}): JSX.Element {
-  const hostRef = useRef<HTMLDivElement | null>(null)
-  const terminalRef = useRef<Terminal | null>(null)
-  const fitAddonRef = useRef<FitAddon | null>(null)
-  const handledStartNonceRef = useRef<number | null>(null)
-  const [session, setSession] = useState<TerminalStartResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  const fitTerminal = useCallback(() => {
-    const terminal = terminalRef.current
-    const fitAddon = fitAddonRef.current
-    if (!terminal || !fitAddon) return
-
-    fitAddon.fit()
-    window.dashboard.terminal.resize(platform, terminal.cols, terminal.rows)
-  }, [platform])
-
-  const restartTerminal = useCallback(() => {
-    const terminal = terminalRef.current
-    if (!terminal) return
-
-    terminal.clear()
-    setError(null)
-    window.dashboard.terminal
-      .restart(platform)
-      .then((result) => {
-        setSession(result)
-        if (result.replay) terminal.write(result.replay)
-        fitTerminal()
-      })
-      .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : 'Terminal restart failed')
-      })
-  }, [fitTerminal, platform])
-
-  useEffect(() => {
-    if (!hostRef.current) return
-
-    const terminal = new Terminal({
-      allowProposedApi: false,
-      convertEol: false,
-      cursorBlink: true,
-      fontFamily: '"JetBrains Mono", "Cascadia Mono", Consolas, monospace',
-      fontSize: 12.5,
-      lineHeight: 1.35,
-      scrollback: 6000,
-      theme: {
-        background: '#191614',
-        foreground: '#e7ded7',
-        cursor: '#e07a5f',
-        selectionBackground: '#3b322d',
-        black: '#1e1b19',
-        blue: '#7aa2d6',
-        brightBlack: '#5e544d',
-        brightBlue: '#9dc1ee',
-        brightCyan: '#9ad7d4',
-        brightGreen: '#a7cbb8',
-        brightMagenta: '#d7a8c7',
-        brightRed: '#e07a5f',
-        brightWhite: '#f2ebe6',
-        brightYellow: '#e2c178',
-        cyan: '#81bfc0',
-        green: '#81b29a',
-        magenta: '#c793b7',
-        red: '#c95f4c',
-        white: '#e7ded7',
-        yellow: '#d5aa5f'
-      }
-    })
-    const fitAddon = new FitAddon()
-
-    terminal.loadAddon(fitAddon)
-    terminal.open(hostRef.current)
-    terminalRef.current = terminal
-    fitAddonRef.current = fitAddon
-
-    const dataDisposable = terminal.onData((data) => window.dashboard.terminal.input(platform, data))
-    const resizeDisposable = terminal.onResize(({ cols, rows }) => {
-      window.dashboard.terminal.resize(platform, cols, rows)
-    })
-    const removeDataListener = window.dashboard.terminal.onData((event) => {
-      if (event.platform === platform) terminal.write(event.data)
-    })
-    const observer = new ResizeObserver(() => window.requestAnimationFrame(fitTerminal))
-
-    observer.observe(hostRef.current)
-    window.requestAnimationFrame(fitTerminal)
-    window.dashboard.terminal
-      .start(platform)
-      .then((result) => {
-        setSession(result)
-        if (result.replay) terminal.write(result.replay)
-        fitTerminal()
-      })
-      .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : 'Terminal failed to start')
-      })
-
-    return () => {
-      observer.disconnect()
-      removeDataListener()
-      dataDisposable.dispose()
-      resizeDisposable.dispose()
-      terminal.dispose()
-      terminalRef.current = null
-      fitAddonRef.current = null
-    }
-  }, [fitTerminal, platform])
-
-  useEffect(() => {
-    if (!startRequest || handledStartNonceRef.current === startRequest.nonce) return
-    const terminal = terminalRef.current
-    if (!terminal) return
-
-    handledStartNonceRef.current = startRequest.nonce
-    setError(null)
-    terminal.reset()
-    window.dashboard.terminal
-      .start(platform, startRequest.cwd)
-      .then((result) => {
-        setSession(result)
-        if (result.replay) terminal.write(result.replay)
-        fitTerminal()
-      })
-      .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : 'Failed to start session')
-      })
-  }, [startRequest, platform, fitTerminal])
-
-  const shellLabel = session ? `${session.shell} pid ${session.pid}` : 'starting'
-
-  return (
-    <>
-      <div className="panel-header terminal-header">
-        <div className="terminal-heading">
-          <h1>{title}</h1>
-          <span>{shellLabel}</span>
-        </div>
-        <div className="terminal-actions">
-          <span className="status-pill">{error ? 'error' : statusLabel}</span>
-          <button type="button" className="terminal-action" onClick={restartTerminal}>
-            Restart
-          </button>
-        </div>
-      </div>
-      {error ? <div className="terminal-error">{error}</div> : null}
-      <div ref={hostRef} className="terminal-surface" aria-label={title} />
-    </>
   )
 }
 

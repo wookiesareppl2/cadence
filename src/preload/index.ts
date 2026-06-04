@@ -32,13 +32,14 @@ const api = {
     attach: (): Promise<Workspace | null> => ipcRenderer.invoke('workspaces:attach')
   },
   terminal: {
-    start: (platform: TerminalPlatform, cwd?: string): Promise<TerminalStartResult> =>
-      ipcRenderer.invoke('terminal:start', platform, cwd),
-    restart: (platform: TerminalPlatform): Promise<TerminalStartResult> => ipcRenderer.invoke('terminal:restart', platform),
-    input: (platform: TerminalPlatform, data: string): void => ipcRenderer.send('terminal:input', platform, data),
-    resize: (platform: TerminalPlatform, cols: number, rows: number): void => {
-      ipcRenderer.send('terminal:resize', platform, cols, rows)
+    start: (terminalId: string, platform: TerminalPlatform, cwd?: string): Promise<TerminalStartResult> =>
+      ipcRenderer.invoke('terminal:start', terminalId, platform, cwd),
+    restart: (terminalId: string): Promise<TerminalStartResult> => ipcRenderer.invoke('terminal:restart', terminalId),
+    input: (terminalId: string, data: string): void => ipcRenderer.send('terminal:input', terminalId, data),
+    resize: (terminalId: string, cols: number, rows: number): void => {
+      ipcRenderer.send('terminal:resize', terminalId, cols, rows)
     },
+    close: (terminalId: string): void => ipcRenderer.send('terminal:close', terminalId),
     onData: (callback: (event: TerminalDataEvent) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, payload: TerminalDataEvent): void => callback(payload)
       ipcRenderer.on('terminal:data', listener)

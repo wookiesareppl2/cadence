@@ -1,7 +1,6 @@
 const { basename } = require('node:path')
 const pty = require('@homebridge/node-pty-prebuilt-multiarch')
 
-const VALID_PLATFORMS = new Set(['claude', 'codex'])
 const BUFFER_LIMIT = 160000
 const sessions = new Map()
 
@@ -31,7 +30,7 @@ function rememberOutput(session, data) {
   }
 }
 
-function createSession(platform, requestedCwd) {
+function createSession(terminalId, platform, requestedCwd) {
   const cwd = requestedCwd || terminalCwd()
   const shell = shellCommand()
   const terminal = pty.spawn(shell.file, shell.args, {
@@ -43,6 +42,7 @@ function createSession(platform, requestedCwd) {
   })
 
   const session = {
+    terminalId,
     platform,
     pty: terminal,
     cwd,
@@ -52,45 +52,44 @@ function createSession(platform, requestedCwd) {
 
   terminal.onData((data) => {
     rememberOutput(session, data)
-    send({ type: 'data', platform, data })
+    send({ type: 'data', terminalId, platform, data })
   })
 
   terminal.onExit(({ exitCode, signal }) => {
-    // A session that has already been replaced (e.g. by starting a new workspace
-    // session) must not delete its successor or leak an exit notice into it.
-    if (sessions.get(platform) !== session) return
+    // A session that has already been replaced/closed must not delete its
+    // successor or leak an exit notice into it.
+    if (sessions.get(terminalId) !== session) return
     const suffix = signal ? ` signal=${signal}` : ''
     const data = `\r\n[terminal exited code=${exitCode}${suffix}]\r\n`
     rememberOutput(session, data)
-    send({ type: 'data', platform, data })
-    sessions.delete(platform)
+    send({ type: 'data', terminalId, platform, data })
+    sessions.delete(terminalId)
   })
 
-  sessions.set(platform, session)
+  sessions.set(terminalId, session)
   return session
 }
 
-function start(requestId, platform, requestedCwd) {
-  if (!VALID_PLATFORMS.has(platform)) {
-    send({ type: 'error', requestId, message: `Invalid terminal platform: ${platform}` })
+function start(requestId, terminalId, platform, requestedCwd) {
+  if (typeof terminalId !== 'string' || !terminalId) {
+    send({ type: 'error', requestId, message: 'Missing terminal id' })
     return
   }
 
-  let session = sessions.get(platform)
-  if (requestedCwd && (!session || session.cwd !== requestedCwd)) {
-    // Explicit workspace request: start a fresh session rooted in that folder,
-    // replacing any existing terminal for the platform.
-    if (session) session.pty.kill()
-    session = createSession(platform, requestedCwd)
-  } else if (!session) {
-    session = createSession(platform)
+  // The terminal id is the identity. If a pty already exists for it (e.g. after
+  // a renderer reload), reconnect and replay its scrollback rather than spawning
+  // a duplicate. cwd only matters when creating the session for the first time.
+  let session = sessions.get(terminalId)
+  if (!session) {
+    session = createSession(terminalId, platform, requestedCwd)
   }
 
   send({
     type: 'started',
     requestId,
     result: {
-      platform,
+      terminalId,
+      platform: session.platform,
       cwd: session.cwd,
       shell: session.shell,
       pid: session.pty.pid,
@@ -99,24 +98,32 @@ function start(requestId, platform, requestedCwd) {
   })
 }
 
-function restart(requestId, platform) {
-  const existing = sessions.get(platform)
+function restart(requestId, terminalId) {
+  const existing = sessions.get(terminalId)
+  const platform = existing ? existing.platform : undefined
   const cwd = existing ? existing.cwd : undefined
   if (existing) {
     existing.pty.kill()
-    sessions.delete(platform)
+    sessions.delete(terminalId)
   }
-  start(requestId, platform, cwd)
+  start(requestId, terminalId, platform, cwd)
 }
 
-function write(platform, data) {
+function write(terminalId, data) {
   if (typeof data !== 'string' || data.length > 20000) return
-  sessions.get(platform)?.pty.write(data)
+  sessions.get(terminalId)?.pty.write(data)
 }
 
-function resize(platform, cols, rows) {
+function resize(terminalId, cols, rows) {
   if (!Number.isInteger(cols) || !Number.isInteger(rows)) return
-  sessions.get(platform)?.pty.resize(cols, rows)
+  sessions.get(terminalId)?.pty.resize(cols, rows)
+}
+
+function close(terminalId) {
+  const session = sessions.get(terminalId)
+  if (!session) return
+  sessions.delete(terminalId)
+  session.pty.kill()
 }
 
 function closeAll() {
@@ -128,10 +135,11 @@ function closeAll() {
 
 process.on('message', (message) => {
   try {
-    if (message.type === 'start') start(message.requestId, message.platform, message.cwd)
-    if (message.type === 'restart') restart(message.requestId, message.platform)
-    if (message.type === 'input') write(message.platform, message.data)
-    if (message.type === 'resize') resize(message.platform, message.cols, message.rows)
+    if (message.type === 'start') start(message.requestId, message.terminalId, message.platform, message.cwd)
+    if (message.type === 'restart') restart(message.requestId, message.terminalId)
+    if (message.type === 'input') write(message.terminalId, message.data)
+    if (message.type === 'resize') resize(message.terminalId, message.cols, message.rows)
+    if (message.type === 'close') close(message.terminalId)
     if (message.type === 'closeAll') closeAll()
   } catch (error) {
     send({

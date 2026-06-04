@@ -13,6 +13,11 @@ import './session-browser.css'
 
 const SESSION_POLL_INTERVAL_MS = 60_000
 
+// Sentinel selection for a freshly started session: nothing exists on disk yet,
+// so the History panel is intentionally empty and no list row is highlighted
+// until the user's first prompt creates a real transcript the poll can pick up.
+export const NEW_SESSION_ID = '__new__'
+
 export type ProjectSessionGroup = AssistantProject & {
   sessions: AssistantSession[]
 }
@@ -86,7 +91,10 @@ export function useProjectSessionBrowserState({
   )
   const projectSessions = selectedProject?.sessions ?? []
   const selectedSession = useMemo(
-    () => projectSessions.find((session) => session.id === selectedSessionId) ?? projectSessions[0] ?? null,
+    () =>
+      selectedSessionId === NEW_SESSION_ID
+        ? null
+        : projectSessions.find((session) => session.id === selectedSessionId) ?? projectSessions[0] ?? null,
     [projectSessions, selectedSessionId]
   )
 
@@ -98,6 +106,8 @@ export function useProjectSessionBrowserState({
 
   useEffect(() => {
     if (loading) return
+    // A fresh session holds its empty selection until the user picks a real one.
+    if (selectedSessionId === NEW_SESSION_ID) return
     const nextSessionId = selectedSession?.id ?? null
     if (selectedSessionId !== nextSessionId) onSelectedSessionIdChange(nextSessionId)
   }, [loading, onSelectedSessionIdChange, selectedSession, selectedSessionId])
@@ -370,10 +380,12 @@ export function SessionDetailDrawer({
 
 export function SessionHistoryPanel({
   session,
-  historyState
+  historyState,
+  newSession = false
 }: {
   session: AssistantSession | null
   historyState: SessionHistoryState
+  newSession?: boolean
 }): JSX.Element {
   const { history, loading, error } = historyState
   const entryCount = history?.entries.length ?? 0
@@ -383,13 +395,18 @@ export function SessionHistoryPanel({
       <div className="panel-header history-header">
         <div className="history-heading">
           <h2>History</h2>
-          <span>{session ? session.title : 'No session selected'}</span>
+          <span>{session ? session.title : newSession ? 'New session' : 'No session selected'}</span>
         </div>
         {session ? (
           <span className="status-pill">{loading && !history ? 'loading' : `${entryCount} entries`}</span>
         ) : null}
       </div>
-      {!session ? (
+      {newSession && !session ? (
+        <div className="history-placeholder">
+          Fresh session — run your CLI in the terminal to begin. The transcript appears here, and the session joins the
+          list, once your first prompt is recorded.
+        </div>
+      ) : !session ? (
         <div className="history-placeholder">Select a project session to load its transcript.</div>
       ) : error && !history ? (
         <div className="history-placeholder error">{error}</div>

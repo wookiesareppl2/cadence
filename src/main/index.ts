@@ -1,7 +1,14 @@
 import { app, BrowserWindow, ipcMain, screen, type Rectangle, type WebContentsConsoleMessageEventParams } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { join } from 'node:path'
-import { closeAllTerminals, resizeTerminal, restartTerminal, startTerminal, writeTerminal } from './terminal/terminal-service'
+import {
+  closeAllTerminals,
+  closeTerminal,
+  resizeTerminal,
+  restartTerminal,
+  startTerminal,
+  writeTerminal
+} from './terminal/terminal-service'
 import { closeClaudeUsageStore, refreshClaudeUsageSummary } from './usage/claude-usage-service'
 import { getCachedClaudePlanUsage, getCachedCodexPlanUsage } from './usage/usage-plan-cache'
 import { getClaudeSessions, getCodexSessions, getSessionHistory } from './sessions/session-service'
@@ -107,12 +114,15 @@ app.whenReady().then(() => {
   ipcMain.handle('sessions:history', (_event, platform: PlatformId, sessionId: string) => getSessionHistory(platform, sessionId))
   ipcMain.handle('workspaces:list', () => listWorkspaces())
   ipcMain.handle('workspaces:attach', (event) => attachWorkspace(BrowserWindow.fromWebContents(event.sender)))
-  ipcMain.handle('terminal:start', (event, platform: string, cwd?: string) => startTerminal(platform, event.sender, cwd))
-  ipcMain.handle('terminal:restart', (event, platform: string) => restartTerminal(platform, event.sender))
-  ipcMain.on('terminal:input', (_event, platform: string, data: string) => writeTerminal(platform, data))
-  ipcMain.on('terminal:resize', (_event, platform: string, cols: number, rows: number) => {
-    resizeTerminal(platform, cols, rows)
+  ipcMain.handle('terminal:start', (event, terminalId: string, platform: string, cwd?: string) =>
+    startTerminal(terminalId, platform, event.sender, cwd)
+  )
+  ipcMain.handle('terminal:restart', (event, terminalId: string) => restartTerminal(terminalId, event.sender))
+  ipcMain.on('terminal:input', (_event, terminalId: string, data: string) => writeTerminal(terminalId, data))
+  ipcMain.on('terminal:resize', (_event, terminalId: string, cols: number, rows: number) => {
+    resizeTerminal(terminalId, cols, rows)
   })
+  ipcMain.on('terminal:close', (_event, terminalId: string) => closeTerminal(terminalId))
 
   createMainWindow()
 

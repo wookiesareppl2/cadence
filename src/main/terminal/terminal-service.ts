@@ -8,7 +8,8 @@ import type { TerminalPlatform, TerminalStartResult } from '@shared/terminal'
 
 type WorkerRequest = {
   requestId?: number
-  type: 'start' | 'restart' | 'input' | 'resize' | 'closeAll'
+  type: 'start' | 'restart' | 'input' | 'resize' | 'close' | 'closeAll'
+  terminalId?: string
   platform?: TerminalPlatform
   cwd?: string
   data?: string
@@ -19,7 +20,7 @@ type WorkerRequest = {
 type WorkerMessage =
   | { type: 'started'; requestId: number; result: TerminalStartResult }
   | { type: 'error'; requestId?: number; message: string }
-  | { type: 'data'; platform: TerminalPlatform; data: string }
+  | { type: 'data'; terminalId: string; platform: TerminalPlatform; data: string }
 
 type PendingRequest = {
   resolve: (value: TerminalStartResult) => void
@@ -31,12 +32,18 @@ const VALID_PLATFORMS = new Set<PlatformId>(['claude', 'codex'])
 let worker: ChildProcess | null = null
 let nextRequestId = 1
 const pendingRequests = new Map<number, PendingRequest>()
-const subscribers = new Map<TerminalPlatform, Set<WebContents>>()
+const subscribers = new Set<WebContents>()
 const subscribersWithCleanup = new WeakSet<WebContents>()
 
 function assertPlatform(platform: string): asserts platform is TerminalPlatform {
   if (!VALID_PLATFORMS.has(platform as PlatformId)) {
     throw new Error(`Invalid terminal platform: ${platform}`)
+  }
+}
+
+function assertTerminalId(terminalId: unknown): asserts terminalId is string {
+  if (typeof terminalId !== 'string' || !terminalId || terminalId.length > 128) {
+    throw new Error('Invalid terminal id')
   }
 }
 
@@ -50,25 +57,19 @@ function workerPath(): string {
   return join(__dirname, 'terminal-worker.cjs')
 }
 
-function subscribe(platform: TerminalPlatform, webContents: WebContents): void {
-  const platformSubscribers = subscribers.get(platform) ?? new Set<WebContents>()
-  platformSubscribers.add(webContents)
-  subscribers.set(platform, platformSubscribers)
+function subscribe(webContents: WebContents): void {
+  subscribers.add(webContents)
 
   if (!subscribersWithCleanup.has(webContents)) {
     subscribersWithCleanup.add(webContents)
-    webContents.once('destroyed', () => {
-      for (const platformSubscribers of subscribers.values()) {
-        platformSubscribers.delete(webContents)
-      }
-    })
+    webContents.once('destroyed', () => subscribers.delete(webContents))
   }
 }
 
-function relayData(platform: TerminalPlatform, data: string): void {
-  for (const webContents of subscribers.get(platform) ?? []) {
+function relayData(terminalId: string, platform: TerminalPlatform, data: string): void {
+  for (const webContents of subscribers) {
     if (!webContents.isDestroyed()) {
-      webContents.send('terminal:data', { platform, data })
+      webContents.send('terminal:data', { terminalId, platform, data })
     }
   }
 }
@@ -82,7 +83,7 @@ function rejectAllPending(error: Error): void {
 
 function handleWorkerMessage(message: WorkerMessage): void {
   if (message.type === 'data') {
-    relayData(message.platform, message.data)
+    relayData(message.terminalId, message.platform, message.data)
     return
   }
 
@@ -146,12 +147,14 @@ function sendWorkerRequest(request: WorkerRequest): Promise<TerminalStartResult>
 }
 
 export async function startTerminal(
+  terminalId: string,
   platform: string,
   webContents: WebContents,
   cwd?: string
 ): Promise<TerminalStartResult> {
+  assertTerminalId(terminalId)
   assertPlatform(platform)
-  subscribe(platform, webContents)
+  subscribe(webContents)
 
   let workspaceCwd: string | undefined
   if (typeof cwd === 'string' && cwd.trim()) {
@@ -159,27 +162,32 @@ export async function startTerminal(
     workspaceCwd = cwd
   }
 
-  return sendWorkerRequest({ type: 'start', platform, cwd: workspaceCwd })
+  return sendWorkerRequest({ type: 'start', terminalId, platform, cwd: workspaceCwd })
 }
 
-export function writeTerminal(platform: string, data: string): void {
-  assertPlatform(platform)
+export function writeTerminal(terminalId: string, data: string): void {
+  assertTerminalId(terminalId)
   if (typeof data !== 'string' || data.length > 20_000) return
-  ensureWorker().send?.({ type: 'input', platform, data } satisfies WorkerRequest)
+  ensureWorker().send?.({ type: 'input', terminalId, data } satisfies WorkerRequest)
 }
 
-export function resizeTerminal(platform: string, cols: number, rows: number): void {
-  assertPlatform(platform)
+export function resizeTerminal(terminalId: string, cols: number, rows: number): void {
+  assertTerminalId(terminalId)
   if (!Number.isInteger(cols) || !Number.isInteger(rows)) return
   const safeCols = Math.min(300, Math.max(20, cols))
   const safeRows = Math.min(120, Math.max(6, rows))
-  ensureWorker().send?.({ type: 'resize', platform, cols: safeCols, rows: safeRows } satisfies WorkerRequest)
+  ensureWorker().send?.({ type: 'resize', terminalId, cols: safeCols, rows: safeRows } satisfies WorkerRequest)
 }
 
-export async function restartTerminal(platform: string, webContents: WebContents): Promise<TerminalStartResult> {
-  assertPlatform(platform)
-  subscribe(platform, webContents)
-  return sendWorkerRequest({ type: 'restart', platform })
+export async function restartTerminal(terminalId: string, webContents: WebContents): Promise<TerminalStartResult> {
+  assertTerminalId(terminalId)
+  subscribe(webContents)
+  return sendWorkerRequest({ type: 'restart', terminalId })
+}
+
+export function closeTerminal(terminalId: string): void {
+  assertTerminalId(terminalId)
+  ensureWorker().send?.({ type: 'close', terminalId } satisfies WorkerRequest)
 }
 
 export function closeAllTerminals(): void {

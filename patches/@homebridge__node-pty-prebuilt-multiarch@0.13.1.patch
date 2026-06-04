@@ -1,0 +1,24 @@
+diff --git a/lib/conpty_console_list_agent.js b/lib/conpty_console_list_agent.js
+index e5217ef657b54b3c89e3ff55f893f60a53d4db61..168f04c793641ade4c922f50e715547b36bb5956 100644
+--- a/lib/conpty_console_list_agent.js
++++ b/lib/conpty_console_list_agent.js	
+@@ -14,7 +14,17 @@ catch (err) {
+     getConsoleProcessList = require('../build/Debug/conpty_console_list.node').getConsoleProcessList;
+ }
+ var shellPid = parseInt(process.argv[2], 10);
+-var consoleProcessList = getConsoleProcessList(shellPid);
+-process.send({ consoleProcessList: consoleProcessList });
++try {
++    var consoleProcessList = getConsoleProcessList(shellPid);
++    process.send({ consoleProcessList: consoleProcessList });
++}
++catch (err) {
++    // The shell's console can already be gone when its pty is killed (a race
++    // that is common when closing several terminals at once). AttachConsole then
++    // throws; fall back to just the shell pid -- matching node-pty's own timeout
++    // behaviour -- instead of crashing this helper with an unhandled exception
++    // whose stack trace leaks into a live terminal.
++    process.send({ consoleProcessList: [shellPid] });
++}
+ process.exit(0);
+ //# sourceMappingURL=conpty_console_list_agent.js.map
