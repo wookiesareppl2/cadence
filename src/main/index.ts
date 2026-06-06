@@ -11,6 +11,7 @@ import {
 } from './terminal/terminal-service'
 import { closeClaudeUsageStore, refreshClaudeUsageSummary } from './usage/claude-usage-service'
 import { getCachedClaudePlanUsage, getCachedCodexPlanUsage } from './usage/usage-plan-cache'
+import { notifyUsageThresholds } from './usage/usage-alerts'
 import { getClaudeSessions, getCodexSessions, getSessionHistory } from './sessions/session-service'
 import {
   getSessionMetadata,
@@ -113,8 +114,16 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('usage:claude-summary', () => refreshClaudeUsageSummary())
-  ipcMain.handle('usage:claude-plan', () => getCachedClaudePlanUsage())
-  ipcMain.handle('usage:codex-plan', () => getCachedCodexPlanUsage())
+  ipcMain.handle('usage:claude-plan', async () => {
+    const usage = await getCachedClaudePlanUsage()
+    notifyUsageThresholds('claude', usage.fiveHour, usage.sevenDay)
+    return usage
+  })
+  ipcMain.handle('usage:codex-plan', async () => {
+    const usage = await getCachedCodexPlanUsage()
+    notifyUsageThresholds('codex', usage.fiveHour, usage.sevenDay)
+    return usage
+  })
   ipcMain.handle('sessions:claude', () => getClaudeSessions())
   ipcMain.handle('sessions:codex', () => getCodexSessions())
   ipcMain.handle('sessions:history', (_event, platform: PlatformId, sessionId: string) => getSessionHistory(platform, sessionId))

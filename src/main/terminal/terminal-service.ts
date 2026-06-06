@@ -48,7 +48,10 @@ function assertTerminalId(terminalId: unknown): asserts terminalId is string {
 }
 
 function terminalCwd(): string {
-  return process.env.INIT_CWD || process.cwd() || homedir()
+  // Prefer INIT_CWD (the dir the app/dev server was launched from) but fall back
+  // to the home folder rather than process.cwd() — in a packaged build cwd is the
+  // install/resources dir, which is a confusing place to drop a fresh terminal.
+  return process.env.INIT_CWD || homedir()
 }
 
 function workerPath(): string {

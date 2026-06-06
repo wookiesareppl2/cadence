@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { JSX } from 'react'
+import type { Dispatch, JSX, SetStateAction } from 'react'
 import {
   NEW_SESSION_ID,
   ProjectSessionSidebar,
@@ -35,18 +35,23 @@ type PlanUsageStates = {
 export function App(): JSX.Element {
   const [platform, setPlatform] = useState<PlatformId>('claude')
   const planUsageStates = usePlanUsagePolling()
-  const [selectedSessionIds, setSelectedSessionIds] = useState<Record<PlatformId, string | null>>({
-    claude: null,
-    codex: null
-  })
-  const [selectedProjectIds, setSelectedProjectIds] = useState<Record<PlatformId, string | null>>({
-    claude: null,
-    codex: null
-  })
-  const [sessionDetailOpen, setSessionDetailOpen] = useState<Record<PlatformId, boolean>>({
-    claude: false,
-    codex: false
-  })
+  const [selectedSessionIds, setSelectedSessionIds] = usePersistentState<Record<PlatformId, string | null>>(
+    'selection:sessions:v1',
+    { claude: null, codex: null },
+    // Don't restore the transient "new session" sentinel — start clean instead.
+    (value) => ({
+      claude: value.claude === NEW_SESSION_ID ? null : value.claude,
+      codex: value.codex === NEW_SESSION_ID ? null : value.codex
+    })
+  )
+  const [selectedProjectIds, setSelectedProjectIds] = usePersistentState<Record<PlatformId, string | null>>(
+    'selection:projects:v1',
+    { claude: null, codex: null }
+  )
+  const [sessionDetailOpen, setSessionDetailOpen] = usePersistentState<Record<PlatformId, boolean>>(
+    'selection:detail:v1',
+    { claude: false, codex: false }
+  )
   const activePlatform = PLATFORM_CONFIG[platform]
 
   const selectClaudeSession = useCallback((sessionId: string | null) => {
@@ -151,6 +156,40 @@ function Titlebar({
       </div>
     </header>
   )
+}
+
+// Persist a small record of UI state to localStorage so the workspace reopens
+// where the user left it. Stored values are merged over the fallback (tolerates
+// shape changes) and an optional `revive` sanitizes the loaded value. Stale ids
+// are harmless: the session browser falls back to a valid selection when an id no
+// longer exists.
+function usePersistentState<T extends object>(
+  key: string,
+  fallback: T,
+  revive?: (value: T) => T
+): [T, Dispatch<SetStateAction<T>>] {
+  const [value, setValue] = useState<T>(() => {
+    try {
+      const raw = window.localStorage.getItem(key)
+      if (raw) {
+        const merged = { ...fallback, ...(JSON.parse(raw) as Partial<T>) } as T
+        return revive ? revive(merged) : merged
+      }
+    } catch {
+      // Corrupt/unavailable storage falls back to defaults.
+    }
+    return fallback
+  })
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(key, JSON.stringify(value))
+    } catch {
+      // Persistence is best-effort.
+    }
+  }, [key, value])
+
+  return [value, setValue]
 }
 
 function usePlanUsagePolling(): PlanUsageStates {
