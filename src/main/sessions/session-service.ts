@@ -37,7 +37,7 @@ type CodexSessionDetails = {
 const MAX_SESSIONS = 80
 const CODEX_SESSION_DETAIL_READ_WINDOW = 1024 * 1024
 
-async function findJsonlFiles(root: string): Promise<string[]> {
+export async function findJsonlFiles(root: string): Promise<string[]> {
   const files: string[] = []
 
   async function visit(dir: string): Promise<void> {
@@ -103,7 +103,7 @@ function codexProjectLabel(cwd: string | null): string {
   return cwd ? basename(cwd) : 'Unindexed'
 }
 
-function projectId(platform: PlatformId, cwd: string | null, fallbackPath?: string): string {
+export function projectId(platform: PlatformId, cwd: string | null, fallbackPath?: string): string {
   if (cwd) return `${platform}:${resolve(cwd).toLowerCase()}`
   if (fallbackPath) return `${platform}:${resolve(fallbackPath).toLowerCase()}`
   return `${platform}:unindexed`
@@ -329,7 +329,7 @@ function finalizeHistoryEntries(entries: HistoryDraft[]): AssistantSessionHistor
   return collapsed.map(({ timestampMs: _timestampMs, ...entry }) => entry)
 }
 
-async function readCodexSessionDetails(path: string): Promise<CodexSessionDetails> {
+export async function readCodexSessionDetails(path: string): Promise<CodexSessionDetails> {
   const details: CodexSessionDetails = { cwd: null, branch: null, titleMessages: [] }
 
   try {

@@ -12,6 +12,12 @@ import {
 import { closeClaudeUsageStore, refreshClaudeUsageSummary } from './usage/claude-usage-service'
 import { getCachedClaudePlanUsage, getCachedCodexPlanUsage } from './usage/usage-plan-cache'
 import { getClaudeSessions, getCodexSessions, getSessionHistory } from './sessions/session-service'
+import {
+  getSessionMetadata,
+  setProjectAlias,
+  setSessionAlias
+} from './sessions/session-metadata-service'
+import { deleteProject, deleteSession } from './sessions/session-delete-service'
 import { attachWorkspace, listWorkspaces } from './workspaces/workspace-service'
 import type { PlatformId } from '@shared/platform'
 
@@ -112,6 +118,19 @@ app.whenReady().then(() => {
   ipcMain.handle('sessions:claude', () => getClaudeSessions())
   ipcMain.handle('sessions:codex', () => getCodexSessions())
   ipcMain.handle('sessions:history', (_event, platform: PlatformId, sessionId: string) => getSessionHistory(platform, sessionId))
+  ipcMain.handle('sessions:metadata', () => getSessionMetadata())
+  ipcMain.handle('sessions:set-project-alias', (_event, projectId: string, name: string | null) =>
+    setProjectAlias(projectId, name)
+  )
+  ipcMain.handle('sessions:set-session-alias', (_event, platform: PlatformId, sessionId: string, title: string | null) =>
+    setSessionAlias(platform, sessionId, title)
+  )
+  ipcMain.handle('sessions:delete-session', (_event, platform: PlatformId, sessionId: string) =>
+    deleteSession(platform, sessionId)
+  )
+  ipcMain.handle('sessions:delete-project', (_event, platform: PlatformId, projectId: string) =>
+    deleteProject(platform, projectId)
+  )
   ipcMain.handle('workspaces:list', () => listWorkspaces())
   ipcMain.handle('workspaces:attach', (event) => attachWorkspace(BrowserWindow.fromWebContents(event.sender)))
   ipcMain.handle('terminal:start', (event, terminalId: string, platform: string, cwd?: string) =>

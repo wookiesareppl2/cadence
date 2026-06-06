@@ -27,6 +27,15 @@ export async function listWorkspaces(): Promise<Workspace[]> {
   return workspaces.sort((a, b) => b.addedAtMs - a.addedAtMs)
 }
 
+// Detach an attached workspace by id (the lowercased, resolved path). Used when a
+// project is deleted so an attached-but-empty project also disappears. A no-op if
+// the id isn't an attached workspace (e.g. a pure session-backed project).
+export async function removeWorkspace(id: string): Promise<void> {
+  const workspaces = await readStore()
+  const next = workspaces.filter((workspace) => workspace.id !== id)
+  if (next.length !== workspaces.length) await writeStore(next)
+}
+
 export async function attachWorkspace(window: BrowserWindow | null): Promise<Workspace | null> {
   const options: Electron.OpenDialogOptions = {
     title: 'Attach Workspace',

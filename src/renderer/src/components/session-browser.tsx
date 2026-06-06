@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, JSX, SetStateAction } from 'react'
 import type { PlatformId } from '@shared/platform'
 import type {
@@ -8,6 +8,8 @@ import type {
   AssistantSessionHistoryEntry
 } from '@shared/sessions'
 import type { Workspace } from '@shared/workspaces'
+import type { SessionMetadata } from '@shared/session-metadata'
+import { applyProjectAlias, applySessionAlias, emptyMetadata } from '@shared/session-metadata'
 import { HistoryMarkdown } from './history-markdown'
 import './session-browser.css'
 
@@ -46,6 +48,10 @@ export type ProjectSessionBrowserState = {
   selectProject: (projectId: string) => void
   selectSession: (sessionId: string) => void
   attachWorkspace: () => Promise<void>
+  renameProject: (projectId: string, name: string | null) => Promise<void>
+  renameSession: (sessionId: string, title: string | null) => Promise<void>
+  deleteProject: (projectId: string) => Promise<void>
+  deleteSession: (sessionId: string) => Promise<void>
 }
 
 export type SessionHistoryState = {
@@ -76,13 +82,28 @@ export function useProjectSessionBrowserState({
   onSelectedProjectIdChange,
   onSelectedSessionIdChange
 }: UseProjectSessionBrowserStateArgs): ProjectSessionBrowserState {
-  const { sessions, loading, error } = usePlatformSessions(platform)
+  const { sessions: rawSessions, loading, error, refresh: refreshSessions } = usePlatformSessions(platform)
   const { workspaces, refresh: refreshWorkspaces } = useWorkspaces()
+  const { metadata, refresh: refreshMetadata } = useSessionMetadata()
   const [query, setQuery] = useState('')
 
+  // Overlay user-set aliases on top of the inferred names. Done once here so the
+  // alias flows through the project grouping, session list, detail drawer and
+  // history header uniformly.
+  const sessions = useMemo(
+    () => rawSessions.map((session) => applySessionAlias(session, metadata.sessionAliases)),
+    [rawSessions, metadata.sessionAliases]
+  )
+
   const projects = useMemo(
-    () => mergeWorkspaceProjects(platform, groupSessionsByProject(platform, sessions), workspaces),
-    [platform, sessions, workspaces]
+    () =>
+      mergeWorkspaceProjects(
+        platform,
+        groupSessionsByProject(platform, sessions, metadata.projectAliases),
+        workspaces,
+        metadata.projectAliases
+      ),
+    [platform, sessions, workspaces, metadata.projectAliases]
   )
   const filteredProjects = useMemo(() => filterProjects(projects, query), [projects, query])
   const selectedProject = useMemo(
@@ -134,6 +155,51 @@ export function useProjectSessionBrowserState({
     onSelectedSessionIdChange(null)
   }, [onSelectedProjectIdChange, onSelectedSessionIdChange, platform, refreshWorkspaces])
 
+  const renameProject = useCallback(
+    async (projectId: string, name: string | null) => {
+      await window.dashboard?.sessions?.setProjectAlias(projectId, name)
+      await refreshMetadata()
+    },
+    [refreshMetadata]
+  )
+
+  const renameSession = useCallback(
+    async (sessionId: string, title: string | null) => {
+      await window.dashboard?.sessions?.setSessionAlias(platform, sessionId, title)
+      await refreshMetadata()
+    },
+    [platform, refreshMetadata]
+  )
+
+  const deleteSession = useCallback(
+    async (sessionId: string) => {
+      await window.dashboard?.sessions?.deleteSession(platform, sessionId)
+      if (selectedSessionId === sessionId) onSelectedSessionIdChange(null)
+      await Promise.all([refreshSessions(), refreshMetadata()])
+    },
+    [onSelectedSessionIdChange, platform, refreshMetadata, refreshSessions, selectedSessionId]
+  )
+
+  const deleteProject = useCallback(
+    async (projectId: string) => {
+      await window.dashboard?.sessions?.deleteProject(platform, projectId)
+      if (selectedProjectId === projectId) {
+        onSelectedProjectIdChange(null)
+        onSelectedSessionIdChange(null)
+      }
+      await Promise.all([refreshSessions(), refreshWorkspaces(), refreshMetadata()])
+    },
+    [
+      onSelectedProjectIdChange,
+      onSelectedSessionIdChange,
+      platform,
+      refreshMetadata,
+      refreshSessions,
+      refreshWorkspaces,
+      selectedProjectId
+    ]
+  )
+
   return {
     sessions,
     projects,
@@ -149,7 +215,11 @@ export function useProjectSessionBrowserState({
     setQuery,
     selectProject,
     selectSession,
-    attachWorkspace
+    attachWorkspace,
+    renameProject,
+    renameSession,
+    deleteProject,
+    deleteSession
   }
 }
 
@@ -171,6 +241,26 @@ function useWorkspaces(): { workspaces: Workspace[]; refresh: () => Promise<void
   }, [refresh])
 
   return { workspaces, refresh }
+}
+
+function useSessionMetadata(): { metadata: SessionMetadata; refresh: () => Promise<void> } {
+  const [metadata, setMetadata] = useState<SessionMetadata>(() => emptyMetadata())
+
+  const refresh = useCallback(async () => {
+    const load = window.dashboard?.sessions?.getMetadata
+    if (!load) return
+    try {
+      setMetadata(await load())
+    } catch {
+      setMetadata(emptyMetadata())
+    }
+  }, [])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+
+  return { metadata, refresh }
 }
 
 export function useSessionHistory(session: AssistantSession | null): SessionHistoryState {
@@ -277,6 +367,8 @@ export function ProjectSessionSidebar({
           emptyLabel={projectEmptyMessage}
           selectedProjectId={selectedProject?.id ?? null}
           onSelectProject={browser.selectProject}
+          onRenameProject={browser.renameProject}
+          onDeleteProject={browser.deleteProject}
         />
       </div>
       <div className="session-stack">
@@ -304,6 +396,8 @@ export function ProjectSessionSidebar({
             emptyLabel={selectedProject ? 'No sessions yet — start one' : 'Select a project'}
             selectedSessionId={browser.selectedSession?.id ?? null}
             onSelectSession={browser.selectSession}
+            onRenameSession={browser.renameSession}
+            onDeleteSession={browser.deleteSession}
           />
         </div>
       </div>
@@ -451,12 +545,13 @@ function usePlatformSessions(platform: PlatformId): {
   sessions: AssistantSession[]
   loading: boolean
   error: string | null
+  refresh: () => Promise<void>
 } {
   const [sessions, setSessions] = useState<AssistantSession[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const fetchSessions = useCallback(() => {
+  const fetchSessions = useCallback(async () => {
     const loader =
       platform === 'claude'
         ? window.dashboard?.sessions?.getClaudeSessions
@@ -468,13 +563,14 @@ function usePlatformSessions(platform: PlatformId): {
       return
     }
 
-    loader()
-      .then((nextSessions) => {
-        setSessions(nextSessions)
-        setError(null)
-      })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Session scan failed'))
-      .finally(() => setLoading(false))
+    try {
+      setSessions(await loader())
+      setError(null)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Session scan failed')
+    } finally {
+      setLoading(false)
+    }
   }, [platform])
 
   useEffect(() => {
@@ -484,7 +580,223 @@ function usePlatformSessions(platform: PlatformId): {
     return () => clearInterval(id)
   }, [fetchSessions])
 
-  return { sessions, loading, error }
+  return { sessions, loading, error, refresh: fetchSessions }
+}
+
+// Inline rename input. A done-guard stops the unmount-triggered blur from
+// double-firing after Enter (commit) or Esc (cancel).
+function RenameField({
+  initialValue,
+  ariaLabel,
+  onCommit,
+  onCancel
+}: {
+  initialValue: string
+  ariaLabel: string
+  onCommit: (value: string) => void
+  onCancel: () => void
+}): JSX.Element {
+  const [value, setValue] = useState(initialValue)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const doneRef = useRef(false)
+
+  useEffect(() => {
+    inputRef.current?.focus()
+    inputRef.current?.select()
+  }, [])
+
+  const commit = (): void => {
+    if (doneRef.current) return
+    doneRef.current = true
+    onCommit(value)
+  }
+  const cancel = (): void => {
+    if (doneRef.current) return
+    doneRef.current = true
+    onCancel()
+  }
+
+  return (
+    <input
+      ref={inputRef}
+      className="row-rename-input"
+      aria-label={ariaLabel}
+      value={value}
+      onChange={(event) => setValue(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          commit()
+        } else if (event.key === 'Escape') {
+          event.preventDefault()
+          cancel()
+        }
+      }}
+      onBlur={commit}
+    />
+  )
+}
+
+// Hover/focus-revealed rename + delete controls. Delete is a lightweight two-step
+// inline confirm rather than a blocking native dialog.
+function RowActions({
+  label,
+  onRename,
+  onDelete
+}: {
+  label: string
+  onRename: () => void
+  onDelete: () => void
+}): JSX.Element {
+  const [confirming, setConfirming] = useState(false)
+
+  if (confirming) {
+    return (
+      <div className="row-actions row-confirm" role="group" aria-label={`Confirm delete ${label}`}>
+        <span className="row-confirm-label">Delete?</span>
+        <button
+          type="button"
+          className="row-action danger"
+          aria-label={`Confirm delete ${label}`}
+          title="Move to Recycle Bin"
+          onClick={() => {
+            setConfirming(false)
+            onDelete()
+          }}
+        >
+          ✓
+        </button>
+        <button
+          type="button"
+          className="row-action"
+          aria-label="Cancel delete"
+          title="Cancel"
+          onClick={() => setConfirming(false)}
+        >
+          ✕
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="row-actions">
+      <button type="button" className="row-action" aria-label={`Rename ${label}`} title={`Rename ${label}`} onClick={onRename}>
+        ✎
+      </button>
+      <button
+        type="button"
+        className="row-action"
+        aria-label={`Delete ${label}`}
+        title={`Delete ${label}`}
+        onClick={() => setConfirming(true)}
+      >
+        🗑
+      </button>
+    </div>
+  )
+}
+
+function ProjectRow({
+  project,
+  isActive,
+  onSelect,
+  onRename,
+  onDelete
+}: {
+  project: ProjectSessionGroup
+  isActive: boolean
+  onSelect: () => void
+  onRename: (name: string | null) => void
+  onDelete: () => void
+}): JSX.Element {
+  const [editing, setEditing] = useState(false)
+
+  return (
+    <div className={`project-row ${isActive ? 'active' : ''}`}>
+      {editing ? (
+        <div className="project-item editing">
+          <RenameField
+            initialValue={project.name}
+            ariaLabel={`Rename project ${project.name}`}
+            onCommit={(value) => {
+              setEditing(false)
+              onRename(value.trim() ? value.trim() : null)
+            }}
+            onCancel={() => setEditing(false)}
+          />
+          {project.path ? <span className="project-path">{project.path}</span> : null}
+        </div>
+      ) : (
+        <button
+          type="button"
+          className={`project-item ${isActive ? 'active' : ''}`}
+          aria-current={isActive ? 'true' : undefined}
+          onClick={onSelect}
+        >
+          <span className="project-title">{project.name}</span>
+          {project.path ? <span className="project-path">{project.path}</span> : null}
+          <span className="project-meta">
+            <span>{project.sessionCount === 0 ? 'No sessions yet' : `${project.sessionCount} sessions`}</span>
+            <span>{project.sessionCount === 0 ? 'Attached' : `Updated ${project.age}`}</span>
+          </span>
+        </button>
+      )}
+      {editing ? null : (
+        <RowActions label={`project ${project.name}`} onRename={() => setEditing(true)} onDelete={onDelete} />
+      )}
+    </div>
+  )
+}
+
+function SessionRow({
+  session,
+  isActive,
+  onSelect,
+  onRename,
+  onDelete
+}: {
+  session: AssistantSession
+  isActive: boolean
+  onSelect: () => void
+  onRename: (title: string | null) => void
+  onDelete: () => void
+}): JSX.Element {
+  const [editing, setEditing] = useState(false)
+
+  return (
+    <div className={`session-row ${isActive ? 'active' : ''}`}>
+      {editing ? (
+        <div className="session-item editing">
+          <RenameField
+            initialValue={session.title}
+            ariaLabel={`Rename session ${session.title}`}
+            onCommit={(value) => {
+              setEditing(false)
+              onRename(value.trim() ? value.trim() : null)
+            }}
+            onCancel={() => setEditing(false)}
+          />
+        </div>
+      ) : (
+        <button
+          type="button"
+          className={`session-item ${isActive ? 'active' : ''}`}
+          aria-current={isActive ? 'true' : undefined}
+          onClick={onSelect}
+        >
+          <span className="session-title">{session.title}</span>
+          <span className="session-meta">
+            <span>{formatShortDate(session.updatedAt)}</span>
+            {session.branch && session.branch !== 'HEAD' ? <span>{session.branch}</span> : null}
+          </span>
+        </button>
+      )}
+      {editing ? null : (
+        <RowActions label={`session ${session.title}`} onRename={() => setEditing(true)} onDelete={onDelete} />
+      )}
+    </div>
+  )
 }
 
 function ProjectList({
@@ -493,7 +805,9 @@ function ProjectList({
   error,
   emptyLabel,
   selectedProjectId,
-  onSelectProject
+  onSelectProject,
+  onRenameProject,
+  onDeleteProject
 }: {
   projects: ProjectSessionGroup[]
   loading: boolean
@@ -501,6 +815,8 @@ function ProjectList({
   emptyLabel: string
   selectedProjectId: string | null
   onSelectProject: (projectId: string) => void
+  onRenameProject: (projectId: string, name: string | null) => Promise<void>
+  onDeleteProject: (projectId: string) => Promise<void>
 }): JSX.Element {
   if (loading) return <div className="session-placeholder">Scanning projects...</div>
   if (error) return <div className="session-placeholder error">{error}</div>
@@ -508,25 +824,16 @@ function ProjectList({
 
   return (
     <>
-      {projects.map((project) => {
-        const isActive = project.id === selectedProjectId
-        return (
-          <button
-            key={project.id}
-            type="button"
-            className={`project-item ${isActive ? 'active' : ''}`}
-            aria-current={isActive ? 'true' : undefined}
-            onClick={() => onSelectProject(project.id)}
-          >
-            <span className="project-title">{project.name}</span>
-            {project.path ? <span className="project-path">{project.path}</span> : null}
-            <span className="project-meta">
-              <span>{project.sessionCount === 0 ? 'No sessions yet' : `${project.sessionCount} sessions`}</span>
-              <span>{project.sessionCount === 0 ? 'Attached' : `Updated ${project.age}`}</span>
-            </span>
-          </button>
-        )
-      })}
+      {projects.map((project) => (
+        <ProjectRow
+          key={project.id}
+          project={project}
+          isActive={project.id === selectedProjectId}
+          onSelect={() => onSelectProject(project.id)}
+          onRename={(name) => onRenameProject(project.id, name)}
+          onDelete={() => onDeleteProject(project.id)}
+        />
+      ))}
     </>
   )
 }
@@ -537,7 +844,9 @@ function SessionList({
   error,
   emptyLabel,
   selectedSessionId,
-  onSelectSession
+  onSelectSession,
+  onRenameSession,
+  onDeleteSession
 }: {
   sessions: AssistantSession[]
   loading: boolean
@@ -545,6 +854,8 @@ function SessionList({
   emptyLabel: string
   selectedSessionId: string | null
   onSelectSession: (sessionId: string) => void
+  onRenameSession: (sessionId: string, title: string | null) => Promise<void>
+  onDeleteSession: (sessionId: string) => Promise<void>
 }): JSX.Element {
   if (loading) return <div className="session-placeholder">Scanning sessions...</div>
   if (error) return <div className="session-placeholder error">{error}</div>
@@ -552,24 +863,16 @@ function SessionList({
 
   return (
     <>
-      {sessions.map((session) => {
-        const isActive = session.id === selectedSessionId
-        return (
-          <button
-            key={`${session.platform}:${session.id}`}
-            type="button"
-            className={`session-item ${isActive ? 'active' : ''}`}
-            aria-current={isActive ? 'true' : undefined}
-            onClick={() => onSelectSession(session.id)}
-          >
-            <span className="session-title">{session.title}</span>
-            <span className="session-meta">
-              <span>{formatShortDate(session.updatedAt)}</span>
-              {session.branch && session.branch !== 'HEAD' ? <span>{session.branch}</span> : null}
-            </span>
-          </button>
-        )
-      })}
+      {sessions.map((session) => (
+        <SessionRow
+          key={`${session.platform}:${session.id}`}
+          session={session}
+          isActive={session.id === selectedSessionId}
+          onSelect={() => onSelectSession(session.id)}
+          onRename={(title) => onRenameSession(session.id, title)}
+          onDelete={() => onDeleteSession(session.id)}
+        />
+      ))}
     </>
   )
 }
@@ -583,7 +886,11 @@ function Fact({ label, value }: { label: string; value: string }): JSX.Element {
   )
 }
 
-function groupSessionsByProject(platform: PlatformId, sessions: AssistantSession[]): ProjectSessionGroup[] {
+function groupSessionsByProject(
+  platform: PlatformId,
+  sessions: AssistantSession[],
+  projectAliases: Record<string, string>
+): ProjectSessionGroup[] {
   const byProject = new Map<string, ProjectSessionGroup>()
 
   for (const session of sessions) {
@@ -602,7 +909,7 @@ function groupSessionsByProject(platform: PlatformId, sessions: AssistantSession
     byProject.set(session.projectId, {
       id: session.projectId,
       platform,
-      name: projectLabel(session),
+      name: applyProjectAlias(projectLabel(session), session.projectId, projectAliases),
       path: session.projectPath,
       branch: session.branch,
       sessionCount: 1,
@@ -633,7 +940,8 @@ function workspaceProjectKey(path: string): string {
 function mergeWorkspaceProjects(
   platform: PlatformId,
   projects: ProjectSessionGroup[],
-  workspaces: Workspace[]
+  workspaces: Workspace[],
+  projectAliases: Record<string, string>
 ): ProjectSessionGroup[] {
   const existing = new Set(projects.map((project) => project.id))
   const extras: ProjectSessionGroup[] = []
@@ -645,7 +953,7 @@ function mergeWorkspaceProjects(
     extras.push({
       id,
       platform,
-      name: workspace.name,
+      name: applyProjectAlias(workspace.name, id, projectAliases),
       path: workspace.path,
       branch: null,
       sessionCount: 0,
