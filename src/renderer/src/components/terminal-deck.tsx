@@ -63,14 +63,18 @@ function loadTabs(platform: TerminalPlatform): TerminalTab[] {
     const raw = window.localStorage.getItem(storageKey(platform))
     if (raw) {
       const parsed: unknown = JSON.parse(raw)
-      if (Array.isArray(parsed) && parsed.length > 0 && parsed.every(isTerminalTab)) {
-        return parsed.map((tab) => ({ id: tab.id, title: tab.title, cwd: tab.cwd ?? null }))
+      if (Array.isArray(parsed) && parsed.every(isTerminalTab)) {
+        // Terminals are only ever opened into a project folder, so restore just
+        // the project-scoped tabs and drop any legacy directoryless (home) shell.
+        return parsed
+          .filter((tab): tab is TerminalTab => typeof tab.cwd === 'string' && tab.cwd.length > 0)
+          .map((tab) => ({ id: tab.id, title: tab.title, cwd: tab.cwd }))
       }
     }
   } catch {
-    // Corrupt or unavailable storage falls back to a single fresh terminal.
+    // Corrupt or unavailable storage simply starts with no terminals.
   }
-  return [{ id: makeTerminalId(platform), title: 'Terminal 1', cwd: null }]
+  return []
 }
 
 function nextDefaultTitle(tabs: TerminalTab[]): string {
@@ -130,6 +134,7 @@ export function TerminalDeck({
   platform,
   tabs,
   defaultCwd,
+  projectName,
   statusLabel,
   onAdd,
   onClose
@@ -137,6 +142,7 @@ export function TerminalDeck({
   platform: TerminalPlatform
   tabs: TerminalTab[]
   defaultCwd: string | null
+  projectName?: string | null
   statusLabel: string
   onAdd: (cwd?: string | null, title?: string) => void
   onClose: (id: string) => void
@@ -154,7 +160,12 @@ export function TerminalDeck({
             type="button"
             className="terminal-action"
             onClick={() => onAdd(defaultCwd)}
-            title={defaultCwd ? `Open a new terminal in ${defaultCwd}` : 'Open a new terminal'}
+            disabled={!defaultCwd}
+            title={
+              defaultCwd
+                ? `Open a new terminal in ${defaultCwd}`
+                : 'Select a project to open a terminal'
+            }
           >
             + Add terminal
           </button>
@@ -162,10 +173,16 @@ export function TerminalDeck({
       </div>
       {tabs.length === 0 ? (
         <div className="terminal-empty">
-          <span>No terminals open.</span>
-          <button type="button" className="terminal-action" onClick={() => onAdd(defaultCwd)}>
-            + Add terminal
-          </button>
+          {defaultCwd ? (
+            <>
+              <span>No terminal open for {projectName ?? 'this project'}.</span>
+              <button type="button" className="terminal-action" onClick={() => onAdd(defaultCwd)}>
+                Open terminal in {projectName ?? 'project'}
+              </button>
+            </>
+          ) : (
+            <span>Select a project to open a terminal.</span>
+          )}
         </div>
       ) : (
         <div className="terminal-grid" data-count={tabs.length}>

@@ -20,6 +20,7 @@ import {
 } from './sessions/session-metadata-service'
 import { deleteProject, deleteSession } from './sessions/session-delete-service'
 import { attachWorkspace, listWorkspaces } from './workspaces/workspace-service'
+import { initAutoUpdates } from './updater'
 import type { PlatformId } from '@shared/platform'
 
 let restoreBounds: Rectangle | null = null
@@ -153,6 +154,9 @@ app.whenReady().then(() => {
   ipcMain.on('terminal:close', (_event, terminalId: string) => closeTerminal(terminalId))
 
   createMainWindow()
+
+  // Background auto-update — only meaningful in a packaged build.
+  if (app.isPackaged) initAutoUpdates()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow()

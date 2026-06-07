@@ -354,6 +354,7 @@ function ClaudeWorkspace({
             platform="claude"
             tabs={tabs}
             defaultCwd={sessionBrowser.selectedProject?.path ?? null}
+            projectName={sessionBrowser.selectedProject?.name ?? null}
             statusLabel={statusLabel}
             onAdd={addTerminal}
             onClose={closeTerminal}
@@ -438,6 +439,7 @@ function CodexWorkspace({
             platform="codex"
             tabs={tabs}
             defaultCwd={sessionBrowser.selectedProject?.path ?? null}
+            projectName={sessionBrowser.selectedProject?.name ?? null}
             statusLabel={statusLabel}
             onAdd={addTerminal}
             onClose={closeTerminal}

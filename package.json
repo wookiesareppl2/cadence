@@ -1,6 +1,6 @@
 {
   "name": "ai-dashboard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Desktop control room for AI coding assistants",
   "private": true,
   "packageManager": "pnpm@11.1.2",
@@ -15,8 +15,10 @@
     "rebuild:native:electron": "electron-rebuild -f -o better-sqlite3",
     "rebuild:native:node": "pnpm rebuild better-sqlite3 @homebridge/node-pty-prebuilt-multiarch",
     "preview": "electron-vite preview",
-    "package": "electron-vite build && node scripts/copy-terminal-worker.mjs && electron-builder --dir",
-    "dist": "electron-vite build && node scripts/copy-terminal-worker.mjs && electron-builder"
+    "compile": "pnpm run rebuild:native:electron && electron-vite build && node scripts/copy-terminal-worker.mjs",
+    "package": "pnpm run compile && electron-builder --dir",
+    "dist": "pnpm run compile && electron-builder",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
@@ -25,6 +27,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "better-sqlite3": "^12.10.0",
+    "electron-updater": "^6.8.9",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
@@ -43,6 +46,8 @@
     "vitest": "^4.1.6"
   },
   "build": {
+    "npmRebuild": false,
+    "asar": false,
     "appId": "dev.ai-dashboard.app",
     "productName": "AI Dashboard",
     "directories": {
@@ -51,6 +56,14 @@
     "files": [
       "out/**/*",
       "package.json"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "wookiesareppl2",
+        "repo": "ai-dashboard-releases",
+        "releaseType": "release"
+      }
     ],
     "linux": {
       "target": [
@@ -65,9 +78,19 @@
       "category": "public.app-category.developer-tools"
     },
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         "nsis"
       ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true
     }
   }
 }
