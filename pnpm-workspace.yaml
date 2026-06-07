@@ -1,6 +1,11 @@
 packages:
   - .
 
+# Flat node_modules so electron-builder reliably copies every transitive
+# dependency into the packaged app (the isolated/symlinked layout drops deep
+# deps like `ms`, which crashed the packaged main process at startup).
+nodeLinker: hoisted
+
 allowBuilds:
   '@homebridge/node-pty-prebuilt-multiarch': true
   better-sqlite3: true

@@ -13,7 +13,11 @@ export default defineConfig({
     resolve: {
       alias: aliases
     },
-    plugins: [externalizeDepsPlugin()]
+    // Bundle electron-updater (and its transitive deps such as debug/ms) into the
+    // main bundle. pnpm + electron-builder otherwise drop deep transitive deps
+    // from the packaged node_modules (e.g. `ms`), which crashes the packaged main
+    // process at startup with "Cannot find module 'ms'".
+    plugins: [externalizeDepsPlugin({ exclude: ['electron-updater'] })]
   },
   preload: {
     resolve: {
