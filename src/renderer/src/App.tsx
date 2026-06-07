@@ -127,8 +127,17 @@ function Titlebar({
   platform: PlatformId
   onPlatformChange: (platform: PlatformId) => void
 }): JSX.Element {
+  const [version, setVersion] = useState<string>('')
+  useEffect(() => {
+    window.dashboard?.app?.getVersion?.().then(setVersion).catch(() => undefined)
+  }, [])
   return (
     <header className="titlebar">
+      {version ? (
+        <span className="app-version" title={`AI Dashboard v${version}`}>
+          v{version}
+        </span>
+      ) : null}
       <div className="platform-switcher" role="tablist" aria-label="Platform">
         {Object.values(PLATFORM_CONFIG).map((item) => (
           <button

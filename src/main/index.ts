@@ -114,6 +114,8 @@ app.whenReady().then(() => {
     BrowserWindow.fromWebContents(event.sender)?.close()
   })
 
+  ipcMain.handle('app:version', () => app.getVersion())
+
   ipcMain.handle('usage:claude-summary', () => refreshClaudeUsageSummary())
   ipcMain.handle('usage:claude-plan', async () => {
     const usage = await getCachedClaudePlanUsage()

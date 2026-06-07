@@ -15,7 +15,8 @@ const api = {
     close: (): void => ipcRenderer.send('window:close')
   },
   app: {
-    platform: process.platform
+    platform: process.platform,
+    getVersion: (): Promise<string> => ipcRenderer.invoke('app:version')
   },
   usage: {
     getClaudeSummary: (): Promise<ClaudeUsageSummary> => ipcRenderer.invoke('usage:claude-summary'),
