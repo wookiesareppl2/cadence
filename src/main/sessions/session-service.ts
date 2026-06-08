@@ -4,7 +4,7 @@ import { basename, dirname, join, relative, resolve } from 'node:path'
 import type { AssistantSession, AssistantSessionHistory, AssistantSessionHistoryEntry } from '@shared/sessions'
 import type { PlatformId } from '@shared/platform'
 import { contentText, resolveSessionTitle, titleCandidate, type TitleMessage } from './session-title'
-import { rankRolloutFiles } from './codex-rollout'
+import { isCodexSubagentSessionMeta, rankRolloutFiles } from './codex-rollout'
 import { cleanHistoryText } from './session-history-text'
 
 type ClaudeSessionDraft = {
@@ -27,6 +27,7 @@ type CodexSessionDraft = {
   rawTitle: string | null
   titleMessages: TitleMessage[]
   updatedAtMs: number
+  isSubagent: boolean
 }
 
 type CodexSessionDetails = {
@@ -369,7 +370,8 @@ async function readCodexSession(path: string, fallbackUpdatedAtMs: number): Prom
     branch: null,
     rawTitle: null,
     titleMessages: [],
-    updatedAtMs: fallbackUpdatedAtMs
+    updatedAtMs: fallbackUpdatedAtMs,
+    isSubagent: false
   }
 
   let raw: string
@@ -384,6 +386,7 @@ async function readCodexSession(path: string, fallbackUpdatedAtMs: number): Prom
     try {
       const row = JSON.parse(line)
       if (row?.type === 'session_meta') {
+        if (isCodexSubagentSessionMeta(row.payload)) draft.isSubagent = true
         if (typeof row.payload?.id === 'string') draft.id = row.payload.id
         if (typeof row.payload?.cwd === 'string') draft.cwd = row.payload.cwd
         if (typeof row.payload?.git?.branch === 'string') draft.branch = row.payload.git.branch
@@ -609,9 +612,10 @@ export async function getCodexSessions(): Promise<AssistantSession[]> {
     Promise.all(ranked.map((ref) => readCodexSession(ref.path, ref.startedAtMs)))
   ])
 
-  const merged = dedupeCodexById(
-    drafts.filter((draft): draft is CodexSessionDraft => Boolean(draft))
-  ).sort((a, b) => b.updatedAtMs - a.updatedAtMs)
+  const visibleDrafts = drafts
+    .filter((draft): draft is CodexSessionDraft => Boolean(draft))
+    .filter((draft) => !draft.isSubagent)
+  const merged = dedupeCodexById(visibleDrafts).sort((a, b) => b.updatedAtMs - a.updatedAtMs)
 
   const branchByCwd = new Map<string, Promise<string | null>>()
 

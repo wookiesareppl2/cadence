@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { applyProjectAlias, applySessionAlias, emptyMetadata, sessionAliasKey } from '../src/shared/session-metadata'
+import {
+  applyProjectAlias,
+  applySessionAlias,
+  emptyMetadata,
+  isInternalSessionAlias,
+  sessionAliasKey
+} from '../src/shared/session-metadata'
 import type { AssistantSession } from '../src/shared/sessions'
 
 function makeSession(overrides: Partial<AssistantSession> = {}): AssistantSession {
@@ -56,6 +62,39 @@ describe('applySessionAlias', () => {
   it('keys aliases by platform so codex aliases do not leak into claude', () => {
     const session = makeSession({ platform: 'claude', id: 'shared-id' })
     expect(applySessionAlias(session, { 'codex:shared-id': 'Codex name' }).title).toBe('Inferred title')
+  })
+
+  it('ignores persisted subagent notification aliases', () => {
+    const session = makeSession({ platform: 'codex', id: '019e8b97-da3c-7420-b531-3896eafae88d' })
+    const result = applySessionAlias(session, {
+      'codex:019e8b97-da3c-7420-b531-3896eafae88d':
+        '{"agent_path":"019e8c08-a9c8-78e1-8b6e-6f276ef0665f","status":{"completed":"Done"}}'
+    })
+
+    expect(result).toBe(session)
+  })
+})
+
+describe('isInternalSessionAlias', () => {
+  it('flags subagent notification JSON aliases', () => {
+    expect(
+      isInternalSessionAlias(
+        '{"agent_path":"019e8c08-a9c8-78e1-8b6e-6f276ef0665f","status":{"completed":"Done"}}'
+      )
+    ).toBe(true)
+    expect(isInternalSessionAlias('{"agent_id":"019e8c08","status":{"completed":"Done"}}')).toBe(true)
+  })
+
+  it('flags tagged subagent notification aliases', () => {
+    expect(
+      isInternalSessionAlias(
+        '<subagent_notification>{"agent_path":"019e8c08","status":{"completed":"Done"}}</subagent_notification>'
+      )
+    ).toBe(true)
+  })
+
+  it('keeps normal user aliases', () => {
+    expect(isInternalSessionAlias('Review usage notification behavior')).toBe(false)
   })
 })
 

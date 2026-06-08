@@ -15,10 +15,11 @@ export function newlyCrossedThresholds(pct: number, alreadyFired: ReadonlySet<nu
 }
 
 type WindowKey = '5h' | '7d'
-type WindowState = { resetsAt: string | null; fired: Set<number> }
+type WindowState = { fired: Set<number> }
 
-// At most 4 entries (2 platforms x 2 windows); a changed resetsAt replaces the
-// entry, so this never grows unbounded.
+// At most 4 entries (2 platforms x 2 windows). Reset timestamps can drift on
+// rolling usage windows, so notification state is re-armed by utilization
+// dropping below the first alert tier rather than by exact resetsAt changes.
 const windowStates = new Map<string, WindowState>()
 
 function formatReset(resetsAt: string | null): string {
@@ -50,12 +51,16 @@ function processWindow(platform: PlatformId, key: WindowKey, label: string, wind
 
   const mapKey = `${platform}:${key}`
   let state = windowStates.get(mapKey)
-  if (!state || state.resetsAt !== window.resetsAt) {
-    state = { resetsAt: window.resetsAt, fired: new Set() }
+  if (!state) {
+    state = { fired: new Set() }
     windowStates.set(mapKey, state)
   }
 
   const pct = Math.round(window.utilization)
+  if (pct < USAGE_THRESHOLDS[0]) {
+    state.fired.clear()
+  }
+
   const newly = newlyCrossedThresholds(pct, state.fired)
   if (newly.length === 0) return
 
@@ -77,4 +82,8 @@ export function notifyUsageThresholds(
   } catch (error) {
     console.error('Usage alert failed', error)
   }
+}
+
+export function resetUsageAlertStateForTests(): void {
+  windowStates.clear()
 }

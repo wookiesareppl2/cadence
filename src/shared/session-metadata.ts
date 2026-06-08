@@ -20,6 +20,17 @@ export function sessionAliasKey(platform: PlatformId, sessionId: string): string
   return `${platform}:${sessionId}`
 }
 
+export function isInternalSessionAlias(value: string | null | undefined): boolean {
+  const normalized = value?.trim()
+  if (!normalized) return false
+  if (/<\/?subagent_notification\b/i.test(normalized)) return true
+  return (
+    normalized.startsWith('{') &&
+    /"agent_(?:id|path)"\s*:/.test(normalized) &&
+    /"status"\s*:/.test(normalized)
+  )
+}
+
 // Returns the alias-overridden session, or the original untouched when no alias
 // exists. A blank alias is treated as "no override" so a cleared name falls back
 // to the inferred title.
@@ -28,7 +39,7 @@ export function applySessionAlias(
   sessionAliases: Record<string, string>
 ): AssistantSession {
   const alias = sessionAliases[sessionAliasKey(session.platform, session.id)]
-  if (!alias || !alias.trim()) return session
+  if (!alias || !alias.trim() || isInternalSessionAlias(alias)) return session
   return { ...session, title: alias }
 }
 

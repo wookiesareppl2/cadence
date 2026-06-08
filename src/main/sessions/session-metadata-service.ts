@@ -2,7 +2,7 @@ import { app } from 'electron'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { PlatformId } from '@shared/platform'
-import { emptyMetadata, sessionAliasKey, type SessionMetadata } from '@shared/session-metadata'
+import { emptyMetadata, isInternalSessionAlias, sessionAliasKey, type SessionMetadata } from '@shared/session-metadata'
 
 // Display-name overrides for projects/sessions. Kept in the app's userData dir
 // (never inside ~/.claude or ~/.codex) so it can't be mistaken for CLI state and
@@ -11,11 +11,11 @@ function storePath(): string {
   return join(app.getPath('userData'), 'session-metadata.json')
 }
 
-function asStringRecord(value: unknown): Record<string, string> {
+function asStringRecord(value: unknown, reject?: (entry: string) => boolean): Record<string, string> {
   if (!value || typeof value !== 'object') return {}
   const out: Record<string, string> = {}
   for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof entry === 'string' && entry.trim()) out[key] = entry
+    if (typeof entry === 'string' && entry.trim() && !reject?.(entry)) out[key] = entry
   }
   return out
 }
@@ -31,7 +31,7 @@ function parseMetadata(raw: string): SessionMetadata {
   const record = parsed as Record<string, unknown>
   return {
     projectAliases: asStringRecord(record.projectAliases),
-    sessionAliases: asStringRecord(record.sessionAliases)
+    sessionAliases: asStringRecord(record.sessionAliases, isInternalSessionAlias)
   }
 }
 
@@ -74,7 +74,7 @@ export async function setSessionAlias(
   title: string | null
 ): Promise<SessionMetadata> {
   const metadata = await readStore()
-  setAlias(metadata.sessionAliases, sessionAliasKey(platform, sessionId), title)
+  setAlias(metadata.sessionAliases, sessionAliasKey(platform, sessionId), isInternalSessionAlias(title) ? null : title)
   await writeStore(metadata)
   return metadata
 }

@@ -63,4 +63,14 @@ describe('session history text cleanup', () => {
   it('drops command output when there is no user command to recover', () => {
     expect(cleanHistoryText('<local-command-stdout>Tool output only.</local-command-stdout>')).toBeNull()
   })
+
+  it('drops subagent notifications from history', () => {
+    const text = [
+      '<subagent_notification>',
+      '{"agent_path":"019e8c08-a9c8-78e1-8b6e-6f276ef0665f","status":{"completed":"Done"}}',
+      '</subagent_notification>'
+    ].join('\n')
+
+    expect(cleanHistoryText(text, { commandPrefix: '/' })).toBeNull()
+  })
 })

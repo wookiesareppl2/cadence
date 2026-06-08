@@ -1,4 +1,5 @@
 node_modules/
+.pnpm-store/
 dist/
 out/
 release/
@@ -8,5 +9,6 @@ coverage/
 .env
 .env.*
 !.env.example
+.claude/settings.local.json
 **/.coverage
 **/coverage-*.json

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseCodexRolloutFile, rankRolloutFiles } from '../src/main/sessions/codex-rollout'
+import { isCodexSubagentSessionMeta, parseCodexRolloutFile, rankRolloutFiles } from '../src/main/sessions/codex-rollout'
 
 const FILE_A =
   '/home/u/.codex/sessions/2026/06/02/rollout-2026-06-02T16-43-53-019e86a5-326e-7011-aaf3-f96de9f03e81.jsonl'
@@ -48,5 +48,34 @@ describe('rankRolloutFiles', () => {
     const ranked = rankRolloutFiles([FILE_A, '/home/u/.codex/session_index.jsonl'], 10)
     expect(ranked).toHaveLength(1)
     expect(ranked[0].id).toBe('019e86a5-326e-7011-aaf3-f96de9f03e81')
+  })
+})
+
+describe('isCodexSubagentSessionMeta', () => {
+  it('keeps normal CLI-originated Codex sessions', () => {
+    expect(isCodexSubagentSessionMeta({ source: 'cli' })).toBe(false)
+  })
+
+  it('flags spawned subagent sessions by source metadata', () => {
+    expect(
+      isCodexSubagentSessionMeta({
+        source: {
+          subagent: {
+            parent_thread_id: '019ea57d-0995-7ca2-bd88-fcbc426f3dfe',
+            depth: 1,
+            agent_nickname: 'Mendel'
+          }
+        }
+      })
+    ).toBe(true)
+  })
+
+  it('flags spawned subagent sessions by parent thread id', () => {
+    expect(
+      isCodexSubagentSessionMeta({
+        parent_thread_id: '019ea57d-0995-7ca2-bd88-fcbc426f3dfe',
+        source: 'cli'
+      })
+    ).toBe(true)
   })
 })

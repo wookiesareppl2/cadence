@@ -8,6 +8,7 @@ const DROP_BLOCK_TAGS = [
   'command-message',
   'command-name',
   'local-command-stdout',
+  'subagent_notification',
   'system-reminder'
 ]
 

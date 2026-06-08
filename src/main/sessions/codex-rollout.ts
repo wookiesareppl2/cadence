@@ -18,6 +18,10 @@ export type CodexRolloutRef = {
   startedAtMs: number
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
 export function parseCodexRolloutFile(path: string): CodexRolloutRef | null {
   const match = basename(path).match(ROLLOUT_FILENAME)
   if (!match) return null
@@ -37,4 +41,14 @@ export function rankRolloutFiles(paths: string[], limit: number): CodexRolloutRe
     .filter((ref): ref is CodexRolloutRef => ref !== null)
     .sort((a, b) => b.startedAtMs - a.startedAtMs)
     .slice(0, Math.max(0, limit))
+}
+
+export function isCodexSubagentSessionMeta(payload: unknown): boolean {
+  if (!isRecord(payload)) return false
+  if (typeof payload.parent_thread_id === 'string' && payload.parent_thread_id.length > 0) return true
+
+  const source = payload.source
+  if (!isRecord(source)) return false
+
+  return isRecord(source.subagent)
 }
