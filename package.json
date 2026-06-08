@@ -1,6 +1,6 @@
 {
   "name": "ai-dashboard",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Desktop control room for AI coding assistants",
   "private": true,
   "packageManager": "pnpm@11.1.2",
