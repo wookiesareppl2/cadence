@@ -16,6 +16,7 @@ type ClaudeSessionDraft = {
   titleMessages: TitleMessage[]
   updatedAtMs: number
   tokenTotal: number
+  entrypoint: string | null
 }
 
 type CodexSessionDraft = {
@@ -468,7 +469,8 @@ async function readClaudeSession(path: string): Promise<ClaudeSessionDraft | nul
     rawTitle: null,
     titleMessages: [],
     updatedAtMs: stats.mtimeMs,
-    tokenTotal: 0
+    tokenTotal: 0,
+    entrypoint: null
   }
 
   const raw = await readFile(path, 'utf-8')
@@ -480,6 +482,7 @@ async function readClaudeSession(path: string): Promise<ClaudeSessionDraft | nul
       if (typeof row.sessionId === 'string') draft.id = row.sessionId
       if (typeof row.cwd === 'string') draft.cwd = row.cwd
       if (typeof row.gitBranch === 'string') draft.branch = row.gitBranch
+      if (!draft.entrypoint && typeof row.entrypoint === 'string') draft.entrypoint = row.entrypoint
       if (row.type === 'user') {
         const text = titleCandidate(contentText(row.message?.content))
         if (text) {
@@ -530,6 +533,7 @@ function dedupeById(drafts: ClaudeSessionDraft[]): ClaudeSessionDraft[] {
 
     existing.tokenTotal += draft.tokenTotal
     existing.rawTitle = existing.rawTitle ?? draft.rawTitle
+    existing.entrypoint = existing.entrypoint ?? draft.entrypoint
     existing.titleMessages.push(...draft.titleMessages)
     if (draft.updatedAtMs >= existing.updatedAtMs) {
       existing.updatedAtMs = draft.updatedAtMs
@@ -545,6 +549,15 @@ function dedupeById(drafts: ClaudeSessionDraft[]): ClaudeSessionDraft[] {
   return [...byId.values()]
 }
 
+// Sessions whose originating entrypoint is the Claude Agent SDK (`sdk-py`,
+// `sdk-ts`, …) are automated, programmatic runs — e.g. security-review tooling
+// that injects prompts like "Review this change for security vulnerabilities".
+// They are not the user's interactive Claude Code (CLI/IDE) sessions, so exclude
+// them; otherwise they surface as phantom prompts the user never typed.
+export function isAutomatedSession(entrypoint: string | null): boolean {
+  return typeof entrypoint === 'string' && entrypoint.toLowerCase().startsWith('sdk')
+}
+
 export async function getClaudeSessions(): Promise<AssistantSession[]> {
   const root = join(app.getPath('home'), '.claude', 'projects')
   const files = (await findJsonlFiles(root)).filter((path) => isClaudeTranscriptPath(root, path))
@@ -553,6 +566,7 @@ export async function getClaudeSessions(): Promise<AssistantSession[]> {
   const drafts = sessions.filter((session): session is ClaudeSessionDraft => Boolean(session))
 
   return dedupeById(drafts)
+    .filter((session) => !isAutomatedSession(session.entrypoint))
     .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
     .slice(0, MAX_SESSIONS)
     .map((session) => {
