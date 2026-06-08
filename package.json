@@ -1,6 +1,6 @@
 {
   "name": "ai-dashboard",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Desktop control room for AI coding assistants",
   "private": true,
   "packageManager": "pnpm@11.1.2",
@@ -84,10 +84,8 @@
       ]
     },
     "nsis": {
-      "oneClick": false,
+      "oneClick": true,
       "perMachine": false,
-      "allowElevation": true,
-      "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "runAfterFinish": true
