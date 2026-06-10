@@ -218,6 +218,7 @@ function TerminalPane({
   const hostRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
+  const resizeFitTimerRef = useRef<number | null>(null)
   const [session, setSession] = useState<TerminalStartResult | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -232,6 +233,17 @@ function TerminalPane({
     fitAddon.fit()
     window.dashboard.terminal.resize(terminalId, terminal.cols, terminal.rows)
   }, [terminalId])
+
+  const scheduleResizeFit = useCallback(() => {
+    if (resizeFitTimerRef.current !== null) {
+      window.clearTimeout(resizeFitTimerRef.current)
+    }
+
+    resizeFitTimerRef.current = window.setTimeout(() => {
+      resizeFitTimerRef.current = null
+      window.requestAnimationFrame(fitTerminal)
+    }, 70)
+  }, [fitTerminal])
 
   const restartTerminal = useCallback(() => {
     const terminal = terminalRef.current
@@ -258,7 +270,7 @@ function TerminalPane({
       allowProposedApi: false,
       convertEol: false,
       cursorBlink: true,
-      fontFamily: '"JetBrains Mono", "Cascadia Mono", Consolas, monospace',
+      fontFamily: '"Cascadia Code", "Cascadia Mono", "JetBrains Mono", Consolas, monospace',
       fontSize: 12.5,
       lineHeight: 1.35,
       scrollback: 6000,
@@ -278,7 +290,7 @@ function TerminalPane({
     const removeDataListener = window.dashboard.terminal.onData((event) => {
       if (event.terminalId === terminalId) terminal.write(event.data)
     })
-    const observer = new ResizeObserver(() => window.requestAnimationFrame(fitTerminal))
+    const observer = new ResizeObserver(scheduleResizeFit)
 
     observer.observe(hostRef.current)
     window.requestAnimationFrame(fitTerminal)
@@ -295,6 +307,10 @@ function TerminalPane({
 
     return () => {
       observer.disconnect()
+      if (resizeFitTimerRef.current !== null) {
+        window.clearTimeout(resizeFitTimerRef.current)
+        resizeFitTimerRef.current = null
+      }
       removeDataListener()
       dataDisposable.dispose()
       resizeDisposable.dispose()
@@ -302,7 +318,7 @@ function TerminalPane({
       terminalRef.current = null
       fitAddonRef.current = null
     }
-  }, [terminalId, platform, cwd, fitTerminal])
+  }, [terminalId, platform, cwd, fitTerminal, scheduleResizeFit])
 
   const shellLabel = session ? `${session.shell} pid ${session.pid}` : 'starting'
 

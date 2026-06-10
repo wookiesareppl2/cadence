@@ -56,25 +56,25 @@ A full palette with two deliberate accent roles and a warm-tinted dark neutral f
 
 ## 3. Typography
 
-**Body/UI Font:** Inter (with system-ui, -apple-system fallback)
-**Data/Terminal Font:** JetBrains Mono (with Menlo, monospace fallback)
+**Body/UI Font:** Segoe UI Variable / Segoe UI (with system-ui, -apple-system fallback)
+**Data/Terminal Font:** Cascadia Code / Cascadia Mono (with JetBrains Mono, Consolas fallback)
 
-**Character:** Functional and dense. Inter provides clean, legible UI labeling at small sizes. JetBrains Mono dominates wherever data is displayed: token counts, session IDs, timestamps, terminal output. The pairing is workstation-native, not editorial.
+**Character:** Functional and dense, but easier on the eyes for long sessions. Segoe UI gives the Windows desktop shell a native feel with softer UI text. Cascadia dominates wherever data is displayed: token counts, session IDs, timestamps, terminal output. The pairing is workstation-native, not editorial.
 
 ### Hierarchy
 
-- **Display** (Inter 600, clamp(1.5rem, 2vw, 2rem), 1.1): rarely used. Section titles in expanded views only.
-- **Headline** (Inter 600, 1.125rem, 1.2): panel titles, view headers.
-- **Title** (Inter 500, 0.875rem, 1.3): card titles, session names, widget labels.
-- **Body** (Inter 400, 0.8125rem, 1.5): descriptions, metadata. Max line length 65-75ch.
-- **Label** (Inter 500, 0.6875rem, 1.2, uppercase tracking 0.05em): status badges, column headers, axis labels.
-- **Data** (JetBrains Mono 400, 0.8125rem, 1.4): token counts, percentages, session IDs, timestamps.
-- **Data Large** (JetBrains Mono 500, 1.25rem, 1.1): headline metrics in usage widgets.
-- **Terminal** (JetBrains Mono 400, 0.8125rem, 1.4): terminal output.
+- **Display** (Segoe UI 600, clamp(1.5rem, 2vw, 2rem), 1.1): rarely used. Section titles in expanded views only.
+- **Headline** (Segoe UI 600, 1.125rem, 1.2): panel titles, view headers.
+- **Title** (Segoe UI 500, 0.875rem, 1.3): card titles, session names, widget labels.
+- **Body** (Segoe UI 400, 0.8125rem, 1.5): descriptions, metadata. Max line length 65-75ch.
+- **Label** (Segoe UI 500, 0.6875rem, 1.2, uppercase tracking 0.05em): status badges, column headers, axis labels.
+- **Data** (Cascadia Code 400, 0.8125rem, 1.4): token counts, percentages, session IDs, timestamps.
+- **Data Large** (Cascadia Code 500, 1.25rem, 1.1): headline metrics in usage widgets.
+- **Terminal** (Cascadia Code 400, 0.8125rem, 1.4): terminal output.
 
 ### Named Rules
 
-**The Data-in-Mono Rule.** Any value that represents a measurement, count, identifier, or timestamp is rendered in JetBrains Mono. Inter is for labels and descriptions only. If a string could be copy-pasted into a terminal and make sense, it's mono.
+**The Data-in-Mono Rule.** Any value that represents a measurement, count, identifier, or timestamp is rendered in Cascadia Code / Cascadia Mono. Segoe UI is for labels and descriptions only. If a string could be copy-pasted into a terminal and make sense, it's mono.
 
 ## 4. Elevation
 
@@ -94,7 +94,7 @@ No box-shadows on resting elements. No decorative elevation. If a shadow ever ap
 
 ### Do:
 
-- **Do** use JetBrains Mono for all numeric data, token counts, and identifiers.
+- **Do** use Cascadia Code / Cascadia Mono for all numeric data, token counts, and identifiers.
 - **Do** tint every neutral toward the warm hue family. Test by desaturating to grayscale: if the neutral is indistinguishable from pure gray, add more chroma.
 - **Do** swap the entire chromatic identity when switching platforms. Every accent-colored element changes.
 - **Do** label estimates as estimates. "~62% (est.)" not "62%".

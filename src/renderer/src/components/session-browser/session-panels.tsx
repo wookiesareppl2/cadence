@@ -112,7 +112,7 @@ export function ProjectSessionSidebar({
   )
 }
 
-export function SessionDetailDrawer({
+export function SessionDetailAccordion({
   session,
   emptyLabel,
   open,
@@ -123,84 +123,109 @@ export function SessionDetailDrawer({
   open: boolean
   onToggle: () => void
 }): JSX.Element {
-  if (!open) {
-    return (
-      <button
-        type="button"
-        className="session-detail-toggle"
-        aria-label="Show session details"
-        aria-expanded={false}
-        onClick={onToggle}
-        title="Show session details"
-      >
-        ‹
-      </button>
-    )
-  }
-
   return (
-    <section className="panel session-detail-panel" aria-label="Session details">
+    <section
+      className={`panel session-detail-accordion ${open ? 'expanded' : 'collapsed'}`}
+      aria-label="Session details"
+    >
       <div className="panel-header session-detail-header">
-        <h2>Session Detail</h2>
-        <div className="session-detail-actions">
-          {session ? <span className="status-pill">Updated {session.age}</span> : null}
-          <button
-            type="button"
-            className="session-detail-toggle inline"
-            aria-label="Hide session details"
-            aria-expanded={true}
-            onClick={onToggle}
-            title="Hide session details"
-          >
-            ›
-          </button>
+        <div className="session-detail-heading">
+          <h2>Session Detail</h2>
+          {open ? <span>{session ? session.title : emptyLabel}</span> : null}
+        </div>
+        <button
+          type="button"
+          className="panel-collapse-toggle"
+          aria-label={open ? 'Collapse session details' : 'Expand session details'}
+          aria-expanded={open}
+          onClick={onToggle}
+          title={open ? 'Collapse session details' : 'Expand session details'}
+        >
+          {open ? '▴' : '▾'}
+        </button>
+      </div>
+      <div className="session-detail-content" aria-hidden={!open}>
+        <div className="session-detail-content-inner">
+          {!session ? (
+            <div className="session-detail-empty">{emptyLabel}</div>
+          ) : (
+            <div className="session-detail-body">
+              <div className="session-detail-summary">
+                <h3>{session.title}</h3>
+                {session.project && session.project !== session.title ? <p>{session.project}</p> : null}
+              </div>
+              <dl className="fact-list session-facts">
+                <Fact label="Project" value={projectLabel(session)} />
+                <Fact label="Path" value={session.projectPath ?? 'Unavailable'} />
+                <Fact label="Branch" value={branchLabel(session)} />
+                <Fact label="Updated" value={formatUpdatedAt(session.updatedAt)} />
+                {session.rawTitle && session.rawTitle !== session.title ? (
+                  <Fact label="Source" value={session.rawTitle} />
+                ) : null}
+              </dl>
+            </div>
+          )}
         </div>
       </div>
-      {!session ? (
-        <div className="session-detail-empty">{emptyLabel}</div>
-      ) : (
-        <div className="session-detail-body">
-          <div className="session-detail-summary">
-            <h3>{session.title}</h3>
-            {session.project && session.project !== session.title ? <p>{session.project}</p> : null}
-          </div>
-          <dl className="fact-list session-facts">
-            <Fact label="Project" value={projectLabel(session)} />
-            <Fact label="Path" value={session.projectPath ?? 'Unavailable'} />
-            <Fact label="Branch" value={branchLabel(session)} />
-            <Fact label="Updated" value={formatUpdatedAt(session.updatedAt)} />
-            {session.rawTitle && session.rawTitle !== session.title ? (
-              <Fact label="Source" value={session.rawTitle} />
-            ) : null}
-          </dl>
-        </div>
-      )}
     </section>
   )
 }
 
-export function SessionHistoryPanel({
+export function SessionHistorySidebar({
   session,
   historyState,
-  newSession = false
+  newSession = false,
+  open,
+  onToggle
 }: {
   session: AssistantSession | null
   historyState: SessionHistoryState
   newSession?: boolean
+  open: boolean
+  onToggle: () => void
 }): JSX.Element {
   const { history, loading, error } = historyState
   const entryCount = history?.entries.length ?? 0
 
   return (
-    <section className="panel history-panel" aria-label="Session history">
+    <aside className={`history-sidebar-shell ${open ? 'open' : 'closed'}`} aria-label="Session history">
+      <button
+        type="button"
+        className="history-sidebar-toggle"
+        aria-label="Show history"
+        aria-expanded={open}
+        onClick={onToggle}
+        tabIndex={open ? -1 : 0}
+        title="Show history"
+      >
+        <span className="history-sidebar-toggle-icon" aria-hidden="true">
+          ‹
+        </span>
+        <span className="history-sidebar-toggle-label">History</span>
+        <span className="history-sidebar-toggle-count">{loading && !history ? '...' : entryCount}</span>
+      </button>
+      <section className="panel history-panel history-sidebar-panel" aria-hidden={!open}>
       <div className="panel-header history-header">
         <div className="history-heading">
           <h2>History</h2>
           <span>{session ? session.title : newSession ? 'New session' : 'No session selected'}</span>
         </div>
-        {session ? (
-          <span className="status-pill">{loading && !history ? 'loading' : `${entryCount} entries`}</span>
-        ) : null}
+        <div className="history-actions">
+          {session ? (
+            <span className="status-pill">{loading && !history ? 'loading' : `${entryCount} entries`}</span>
+          ) : null}
+          <button
+            type="button"
+            className="panel-collapse-toggle"
+            aria-label="Hide history"
+            aria-expanded={true}
+            onClick={onToggle}
+            tabIndex={open ? 0 : -1}
+            title="Hide history"
+          >
+            ›
+          </button>
+        </div>
       </div>
       {newSession && !session ? (
         <div className="history-placeholder">
@@ -245,6 +270,7 @@ export function SessionHistoryPanel({
         </div>
       )}
     </section>
+    </aside>
   )
 }
 

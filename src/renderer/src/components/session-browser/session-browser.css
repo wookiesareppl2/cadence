@@ -159,6 +159,110 @@
   min-height: 0;
 }
 
+.history-sidebar-shell {
+  position: relative;
+  flex: 0 0 var(--history-sidebar-closed-width);
+  width: var(--history-sidebar-closed-width);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  contain: layout paint;
+  will-change: clip-path;
+}
+
+.history-sidebar-shell.open {
+  flex-basis: var(--history-sidebar-open-width);
+  width: var(--history-sidebar-open-width);
+}
+
+.history-sidebar-panel {
+  position: absolute;
+  inset: 0;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(18px) scaleX(0.985);
+  transform-origin: right center;
+  will-change: opacity, transform;
+  transition:
+    opacity 120ms ease,
+    transform var(--motion-sidebar) var(--ease-out-expo);
+}
+
+.history-sidebar-toggle {
+  position: absolute;
+  inset: 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-1);
+  color: var(--text-2);
+  cursor: pointer;
+  transition:
+    border-color 160ms var(--ease-out-expo),
+    color 160ms var(--ease-out-expo),
+    background-color 160ms var(--ease-out-expo),
+    box-shadow 160ms var(--ease-out-expo),
+    opacity 90ms ease,
+    transform var(--motion-sidebar) var(--ease-out-expo);
+  z-index: 2;
+}
+
+.history-sidebar-toggle:hover {
+  border-color: var(--accent);
+  color: var(--text-1);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.history-sidebar-shell.open .history-sidebar-toggle {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-12px) scaleX(0.75);
+}
+
+.history-sidebar-shell.open .history-sidebar-panel {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0) scaleX(1);
+  transition-delay: 0ms;
+}
+
+.history-sidebar-toggle:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.history-sidebar-toggle-icon {
+  font-family: var(--font-mono);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.history-sidebar-toggle-label {
+  writing-mode: vertical-rl;
+  color: var(--text-2);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.history-sidebar-toggle-count {
+  margin-top: auto;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
 .history-header {
   min-height: 46px;
 }
@@ -179,6 +283,12 @@
   white-space: nowrap;
 }
 
+.history-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .history-feed {
   min-height: 0;
   flex: 1;
@@ -191,6 +301,10 @@
   grid-template-columns: 52px minmax(0, 1fr);
   padding: 0;
   border-bottom: 1px solid var(--border-subtle);
+}
+
+.history-sidebar-panel .history-entry {
+  grid-template-columns: 42px minmax(0, 1fr);
 }
 
 .history-entry[data-role="user"] {
@@ -429,29 +543,66 @@
   border-color: color-mix(in srgb, var(--caution) 45%, var(--border));
 }
 
-.session-detail-panel {
-  grid-column: 2;
-  grid-row: 2;
+.session-detail-accordion {
+  min-height: 0;
+  flex: 0 0 auto;
+  transition:
+    border-color 180ms var(--ease-out-expo),
+    background-color 180ms var(--ease-out-expo);
 }
 
 .session-detail-header {
-  min-height: 46px;
-  padding-right: 10px;
+  min-height: 42px;
+  padding: 8px 14px;
 }
 
-.session-detail-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.session-detail-heading {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.session-detail-heading span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-detail-content {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(-3px);
+  transition:
+    grid-template-rows var(--motion-panel) var(--ease-out-expo),
+    opacity 150ms ease,
+    transform var(--motion-panel) var(--ease-out-expo);
+}
+
+.session-detail-accordion.expanded .session-detail-content {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.session-detail-content-inner {
+  min-height: 0;
+  overflow: hidden;
 }
 
 .session-detail-body {
   min-height: 0;
+  max-height: min(34vh, 330px);
   display: grid;
   align-content: start;
   gap: 12px;
   padding: 14px;
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 
 .session-detail-summary {
@@ -498,40 +649,36 @@
   background: var(--border-subtle);
 }
 
-.session-detail-toggle {
-  grid-column: 2;
-  grid-row: 2;
-  align-self: start;
-  justify-self: stretch;
-  width: 28px;
-  min-height: 46px;
+.panel-collapse-toggle {
+  flex: 0 0 auto;
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface-1);
+  border-radius: 4px;
+  background: var(--surface-2);
   color: var(--text-2);
   cursor: pointer;
   font-family: var(--font-mono);
-  font-size: 18px;
+  font-size: 15px;
   line-height: 1;
+  transition:
+    border-color 160ms var(--ease-out-expo),
+    color 160ms var(--ease-out-expo),
+    background-color 160ms var(--ease-out-expo),
+    transform var(--motion-panel) var(--ease-out-expo);
 }
 
-.session-detail-toggle:hover {
+.panel-collapse-toggle:hover {
   border-color: var(--accent);
   color: var(--text-1);
+  background: var(--accent-dim);
+  transform: translateY(-1px);
 }
 
-.session-detail-toggle:focus-visible {
+.panel-collapse-toggle:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 2px;
-}
-
-.session-detail-toggle.inline {
-  grid-column: auto;
-  grid-row: auto;
-  width: 24px;
-  min-height: 24px;
-  border-radius: 4px;
-  font-size: 16px;
 }
 
 /* Row-level rename/delete controls for project and session rows. The row wraps
@@ -658,14 +805,29 @@
     flex-basis: 40%;
   }
 
-  .session-detail-panel {
-    grid-column: 1;
-    grid-row: auto;
+  .history-sidebar-shell,
+  .history-sidebar-shell.open {
+    flex-basis: 44px;
+    width: 100%;
   }
 
-  .session-detail-toggle {
-    grid-column: 1;
-    grid-row: auto;
-    justify-self: end;
+  .history-sidebar-toggle {
+    min-height: 44px;
+    flex-direction: row;
+    justify-content: center;
+    padding: 8px 12px;
+  }
+
+  .history-sidebar-shell.open {
+    flex-basis: 320px;
+  }
+
+  .history-sidebar-toggle-label {
+    writing-mode: initial;
+  }
+
+  .history-sidebar-toggle-count {
+    margin-top: 0;
+    margin-left: auto;
   }
 }

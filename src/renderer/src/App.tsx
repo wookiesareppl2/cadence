@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, JSX, SetStateAction } from 'react'
 import {
   NEW_SESSION_ID,
+  SessionDetailAccordion,
+  SessionHistorySidebar,
   ProjectSessionSidebar,
-  SessionDetailDrawer,
-  SessionHistoryPanel,
   useProjectSessionBrowserState,
   useSessionHistory
 } from '@renderer/components/session-browser'
@@ -15,6 +15,9 @@ import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
 
 const PLAN_POLL_INTERVAL_MS = 60_000
+const HISTORY_SIDEBAR_CLOSED_WIDTH = 32
+const HISTORY_SIDEBAR_MOTION_MS = 180
+const HISTORY_SIDEBAR_EASING = 'cubic-bezier(0.16, 1, 0.3, 1)'
 
 type PlanUsageDisplay = {
   fiveHour: UsageWindow | null
@@ -49,7 +52,11 @@ export function App(): JSX.Element {
     { claude: null, codex: null }
   )
   const [sessionDetailOpen, setSessionDetailOpen] = usePersistentState<Record<PlatformId, boolean>>(
-    'selection:detail:v1',
+    'selection:session-detail-accordion:v1',
+    { claude: false, codex: false }
+  )
+  const [historySidebarOpen, setHistorySidebarOpen] = usePersistentState<Record<PlatformId, boolean>>(
+    'selection:history-sidebar:v1',
     { claude: false, codex: false }
   )
   const activePlatform = PLATFORM_CONFIG[platform]
@@ -82,6 +89,14 @@ export function App(): JSX.Element {
     setSessionDetailOpen((current) => ({ ...current, codex: !current.codex }))
   }, [])
 
+  const toggleClaudeHistorySidebar = useCallback(() => {
+    setHistorySidebarOpen((current) => ({ ...current, claude: !current.claude }))
+  }, [])
+
+  const toggleCodexHistorySidebar = useCallback(() => {
+    setHistorySidebarOpen((current) => ({ ...current, codex: !current.codex }))
+  }, [])
+
   const cssVars = useMemo(
     () =>
       ({
@@ -101,9 +116,11 @@ export function App(): JSX.Element {
           selectedProjectId={selectedProjectIds.claude}
           selectedSessionId={selectedSessionIds.claude}
           sessionDetailOpen={sessionDetailOpen.claude}
+          historySidebarOpen={historySidebarOpen.claude}
           onSelectedProjectIdChange={selectClaudeProject}
           onSelectedSessionIdChange={selectClaudeSession}
           onToggleSessionDetail={toggleClaudeSessionDetail}
+          onToggleHistorySidebar={toggleClaudeHistorySidebar}
         />
       ) : (
         <CodexWorkspace
@@ -111,9 +128,11 @@ export function App(): JSX.Element {
           selectedProjectId={selectedProjectIds.codex}
           selectedSessionId={selectedSessionIds.codex}
           sessionDetailOpen={sessionDetailOpen.codex}
+          historySidebarOpen={historySidebarOpen.codex}
           onSelectedProjectIdChange={selectCodexProject}
           onSelectedSessionIdChange={selectCodexSession}
           onToggleSessionDetail={toggleCodexSessionDetail}
+          onToggleHistorySidebar={toggleCodexHistorySidebar}
         />
       )}
     </div>
@@ -290,22 +309,134 @@ function barTier(pct: number): string {
   return 'normal'
 }
 
+function useHistorySidebarMotion(
+  open: boolean,
+  onToggle: () => void
+): {
+  contentBodyRef: React.RefObject<HTMLDivElement | null>
+  toggleHistorySidebar: () => void
+} {
+  const contentBodyRef = useRef<HTMLDivElement | null>(null)
+  const animationsRef = useRef<Animation[]>([])
+
+  const clearAnimations = useCallback(() => {
+    for (const animation of animationsRef.current) {
+      animation.cancel()
+    }
+    animationsRef.current = []
+  }, [])
+
+  useEffect(() => clearAnimations, [clearAnimations])
+
+  const toggleHistorySidebar = useCallback(() => {
+    const body = contentBodyRef.current
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (!body || reducedMotion) {
+      onToggle()
+      return
+    }
+
+    const mainStack = body.querySelector<HTMLElement>('.main-stack')
+    const historyShell = body.querySelector<HTMLElement>('.history-sidebar-shell')
+    if (!mainStack || !historyShell) {
+      onToggle()
+      return
+    }
+
+    clearAnimations()
+
+    if (!open) {
+      const firstMain = mainStack.getBoundingClientRect()
+      const firstShell = historyShell.getBoundingClientRect()
+      onToggle()
+
+      window.requestAnimationFrame(() => {
+        const lastMain = mainStack.getBoundingClientRect()
+        const lastShell = historyShell.getBoundingClientRect()
+        const mainScale = firstMain.width / Math.max(lastMain.width, 1)
+        const shellClip = Math.max(lastShell.width - firstShell.width, 0)
+
+        animationsRef.current = [
+          mainStack.animate(
+            [{ transform: `scaleX(${mainScale})` }, { transform: 'scaleX(1)' }],
+            {
+              duration: HISTORY_SIDEBAR_MOTION_MS,
+              easing: HISTORY_SIDEBAR_EASING
+            }
+          ),
+          historyShell.animate(
+            [{ clipPath: `inset(0 0 0 ${shellClip}px)` }, { clipPath: 'inset(0 0 0 0)' }],
+            {
+              duration: HISTORY_SIDEBAR_MOTION_MS,
+              easing: HISTORY_SIDEBAR_EASING
+            }
+          )
+        ]
+      })
+      return
+    }
+
+    const bodyRect = body.getBoundingClientRect()
+    const mainRect = mainStack.getBoundingClientRect()
+    const shellRect = historyShell.getBoundingClientRect()
+    const bodyStyles = window.getComputedStyle(body)
+    const gap = Number.parseFloat(bodyStyles.columnGap || bodyStyles.gap || '0') || 0
+    const finalMainWidth = Math.max(
+      bodyRect.width - gap - HISTORY_SIDEBAR_CLOSED_WIDTH,
+      mainRect.width
+    )
+    const mainScale = finalMainWidth / Math.max(mainRect.width, 1)
+    const shellClip = Math.max(shellRect.width - HISTORY_SIDEBAR_CLOSED_WIDTH, 0)
+
+    const mainAnimation = mainStack.animate(
+      [{ transform: 'scaleX(1)' }, { transform: `scaleX(${mainScale})` }],
+      {
+        duration: HISTORY_SIDEBAR_MOTION_MS,
+        easing: HISTORY_SIDEBAR_EASING,
+        fill: 'forwards'
+      }
+    )
+    const shellAnimation = historyShell.animate(
+      [{ clipPath: 'inset(0 0 0 0)' }, { clipPath: `inset(0 0 0 ${shellClip}px)` }],
+      {
+        duration: HISTORY_SIDEBAR_MOTION_MS,
+        easing: HISTORY_SIDEBAR_EASING,
+        fill: 'forwards'
+      }
+    )
+    animationsRef.current = [mainAnimation, shellAnimation]
+
+    shellAnimation.finished
+      .then(() => {
+        onToggle()
+        window.requestAnimationFrame(clearAnimations)
+      })
+      .catch(() => undefined)
+  }, [clearAnimations, onToggle, open])
+
+  return { contentBodyRef, toggleHistorySidebar }
+}
+
 function ClaudeWorkspace({
   usageState,
   selectedProjectId,
   selectedSessionId,
   sessionDetailOpen,
+  historySidebarOpen,
   onSelectedProjectIdChange,
   onSelectedSessionIdChange,
-  onToggleSessionDetail
+  onToggleSessionDetail,
+  onToggleHistorySidebar
 }: {
   usageState: PlanUsageState<ClaudePlanUsage>
   selectedProjectId: string | null
   selectedSessionId: string | null
   sessionDetailOpen: boolean
+  historySidebarOpen: boolean
   onSelectedProjectIdChange: (projectId: string | null) => void
   onSelectedSessionIdChange: (sessionId: string | null) => void
   onToggleSessionDetail: () => void
+  onToggleHistorySidebar: () => void
 }): JSX.Element {
   const { planUsage, planError } = usageState
   const sessionBrowser = useProjectSessionBrowserState({
@@ -317,6 +448,10 @@ function ClaudeWorkspace({
   })
   const historyState = useSessionHistory(sessionBrowser.selectedSession)
   const { tabs, addTerminal, closeTerminal, resetTerminals } = useTerminalDeck('claude')
+  const { contentBodyRef, toggleHistorySidebar } = useHistorySidebarMotion(
+    historySidebarOpen,
+    onToggleHistorySidebar
+  )
   const newSession = selectedSessionId === NEW_SESSION_ID
   const startSession = useCallback(
     (project: ProjectSessionGroup) => {
@@ -343,38 +478,42 @@ function ClaudeWorkspace({
         onStartSession={startSession}
       />
 
-      <section
-        className={`content-grid ${sessionDetailOpen ? 'detail-open' : 'detail-closed'}`}
-        aria-label="Claude Code dashboard"
-      >
+      <section className="content-grid" aria-label="Claude Code dashboard">
         <UsageStrip
           planUsage={planUsage}
           planError={planError}
           loadingLabel="Fetching Claude usage"
         />
 
-        <div className="main-stack">
-          <SessionHistoryPanel
+        <div
+          ref={contentBodyRef}
+          className={`content-body ${historySidebarOpen ? 'history-open' : 'history-closed'}`}
+        >
+          <div className="main-stack">
+            <SessionDetailAccordion
+              session={sessionBrowser.selectedSession}
+              emptyLabel="No Claude session selected"
+              open={sessionDetailOpen}
+              onToggle={onToggleSessionDetail}
+            />
+            <TerminalDeck
+              platform="claude"
+              tabs={tabs}
+              defaultCwd={sessionBrowser.selectedProject?.path ?? null}
+              projectName={sessionBrowser.selectedProject?.name ?? null}
+              statusLabel={statusLabel}
+              onAdd={addTerminal}
+              onClose={closeTerminal}
+            />
+          </div>
+          <SessionHistorySidebar
             session={sessionBrowser.selectedSession}
             historyState={historyState}
             newSession={newSession}
-          />
-          <TerminalDeck
-            platform="claude"
-            tabs={tabs}
-            defaultCwd={sessionBrowser.selectedProject?.path ?? null}
-            projectName={sessionBrowser.selectedProject?.name ?? null}
-            statusLabel={statusLabel}
-            onAdd={addTerminal}
-            onClose={closeTerminal}
+            open={historySidebarOpen}
+            onToggle={toggleHistorySidebar}
           />
         </div>
-        <SessionDetailDrawer
-          session={sessionBrowser.selectedSession}
-          emptyLabel="No Claude session selected"
-          open={sessionDetailOpen}
-          onToggle={onToggleSessionDetail}
-        />
       </section>
     </main>
   )
@@ -385,17 +524,21 @@ function CodexWorkspace({
   selectedProjectId,
   selectedSessionId,
   sessionDetailOpen,
+  historySidebarOpen,
   onSelectedProjectIdChange,
   onSelectedSessionIdChange,
-  onToggleSessionDetail
+  onToggleSessionDetail,
+  onToggleHistorySidebar
 }: {
   usageState: PlanUsageState<CodexPlanUsage>
   selectedProjectId: string | null
   selectedSessionId: string | null
   sessionDetailOpen: boolean
+  historySidebarOpen: boolean
   onSelectedProjectIdChange: (projectId: string | null) => void
   onSelectedSessionIdChange: (sessionId: string | null) => void
   onToggleSessionDetail: () => void
+  onToggleHistorySidebar: () => void
 }): JSX.Element {
   const { planUsage, planError } = usageState
   const sessionBrowser = useProjectSessionBrowserState({
@@ -407,6 +550,10 @@ function CodexWorkspace({
   })
   const historyState = useSessionHistory(sessionBrowser.selectedSession)
   const { tabs, addTerminal, closeTerminal, resetTerminals } = useTerminalDeck('codex')
+  const { contentBodyRef, toggleHistorySidebar } = useHistorySidebarMotion(
+    historySidebarOpen,
+    onToggleHistorySidebar
+  )
   const newSession = selectedSessionId === NEW_SESSION_ID
   const startSession = useCallback(
     (project: ProjectSessionGroup) => {
@@ -428,38 +575,42 @@ function CodexWorkspace({
         onStartSession={startSession}
       />
 
-      <section
-        className={`content-grid ${sessionDetailOpen ? 'detail-open' : 'detail-closed'}`}
-        aria-label="Codex dashboard"
-      >
+      <section className="content-grid" aria-label="Codex dashboard">
         <UsageStrip
           planUsage={planUsage}
           planError={planError}
           loadingLabel="Fetching Codex usage"
         />
 
-        <div className="main-stack">
-          <SessionHistoryPanel
+        <div
+          ref={contentBodyRef}
+          className={`content-body ${historySidebarOpen ? 'history-open' : 'history-closed'}`}
+        >
+          <div className="main-stack">
+            <SessionDetailAccordion
+              session={sessionBrowser.selectedSession}
+              emptyLabel="No Codex session selected"
+              open={sessionDetailOpen}
+              onToggle={onToggleSessionDetail}
+            />
+            <TerminalDeck
+              platform="codex"
+              tabs={tabs}
+              defaultCwd={sessionBrowser.selectedProject?.path ?? null}
+              projectName={sessionBrowser.selectedProject?.name ?? null}
+              statusLabel={statusLabel}
+              onAdd={addTerminal}
+              onClose={closeTerminal}
+            />
+          </div>
+          <SessionHistorySidebar
             session={sessionBrowser.selectedSession}
             historyState={historyState}
             newSession={newSession}
-          />
-          <TerminalDeck
-            platform="codex"
-            tabs={tabs}
-            defaultCwd={sessionBrowser.selectedProject?.path ?? null}
-            projectName={sessionBrowser.selectedProject?.name ?? null}
-            statusLabel={statusLabel}
-            onAdd={addTerminal}
-            onClose={closeTerminal}
+            open={historySidebarOpen}
+            onToggle={toggleHistorySidebar}
           />
         </div>
-        <SessionDetailDrawer
-          session={sessionBrowser.selectedSession}
-          emptyLabel="No Codex session selected"
-          open={sessionDetailOpen}
-          onToggle={onToggleSessionDetail}
-        />
       </section>
     </main>
   )
