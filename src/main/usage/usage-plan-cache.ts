@@ -101,6 +101,10 @@ export function createCachedPlanUsage<T extends PlanUsageWithRefresh>(
       })
     }
 
+    if (!state.value && state.lastError && nowMs < state.nextFetchAtMs) {
+      throw new Error(state.lastError)
+    }
+
     return refresh(nowMs)
   }
 }

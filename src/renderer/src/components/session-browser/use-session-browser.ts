@@ -190,27 +190,50 @@ export function useProjectSessionBrowserState({
     ]
   )
 
-  return {
-    sessions,
-    projects,
-    filteredProjects,
-    selectedProject,
-    selectedSession,
-    selectedProjectId,
-    selectedSessionId,
-    projectSessions,
-    loading,
-    error,
-    query,
-    setQuery,
-    selectProject,
-    selectSession,
-    attachWorkspace,
-    renameProject,
-    renameSession,
-    deleteProject,
-    deleteSession
-  }
+  return useMemo(
+    () => ({
+      sessions,
+      projects,
+      filteredProjects,
+      selectedProject,
+      selectedSession,
+      selectedProjectId,
+      selectedSessionId,
+      projectSessions,
+      loading,
+      error,
+      query,
+      setQuery,
+      selectProject,
+      selectSession,
+      attachWorkspace,
+      renameProject,
+      renameSession,
+      deleteProject,
+      deleteSession
+    }),
+    [
+      sessions,
+      projects,
+      filteredProjects,
+      selectedProject,
+      selectedSession,
+      selectedProjectId,
+      selectedSessionId,
+      projectSessions,
+      loading,
+      error,
+      query,
+      setQuery,
+      selectProject,
+      selectSession,
+      attachWorkspace,
+      renameProject,
+      renameSession,
+      deleteProject,
+      deleteSession
+    ]
+  )
 }
 
 function useWorkspaces(): { workspaces: Workspace[]; refresh: () => Promise<void> } {

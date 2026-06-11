@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { fetchClaudePlanUsage } from '../src/main/usage/claude-plan-usage-service'
+import { __testing, fetchClaudePlanUsage } from '../src/main/usage/claude-plan-usage-service'
 import { UsageRateLimitError } from '../src/main/usage/usage-rate-limit'
 
 const usageResponse = (
@@ -21,6 +21,16 @@ const usageBody = {
 }
 
 describe('Claude plan usage service', () => {
+  it('builds a direct refresh command that preserves prompt and empty tools arguments', () => {
+    const command = __testing.claudeRefreshCommand()
+    const toolsIndex = command.args.indexOf('--tools')
+
+    expect(command.file).toBe('claude')
+    expect(command.args).toContain('Respond with exactly: pong')
+    expect(toolsIndex).toBeGreaterThan(-1)
+    expect(command.args[toolsIndex + 1]).toBe('')
+  })
+
   it('refreshes credentials and retries once after an expired access token', async () => {
     const readToken = vi.fn()
       .mockReturnValueOnce('expired-token')

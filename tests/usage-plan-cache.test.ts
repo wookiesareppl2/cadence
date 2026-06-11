@@ -72,4 +72,26 @@ describe('createCachedPlanUsage', () => {
     expect(fetcher).toHaveBeenCalledTimes(3)
     expect(refreshed.fiveHour?.utilization).toBe(45)
   })
+
+  it('throttles repeated failures even before a first usage value is cached', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-06-03T00:00:00.000Z'))
+
+    const fetcher = vi
+      .fn<() => Promise<ClaudePlanUsage>>()
+      .mockRejectedValueOnce(new Error('credentials expired'))
+      .mockResolvedValueOnce(usage('2026-06-03T00:02:00.000Z', 25))
+    const getUsage = createCachedPlanUsage('Test', fetcher)
+
+    await expect(getUsage()).rejects.toThrow('credentials expired')
+    await expect(getUsage()).rejects.toThrow('credentials expired')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(2 * 60_000)
+    const refreshed = await getUsage()
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(refreshed.refresh?.state).toBe('fresh')
+    expect(refreshed.fiveHour?.utilization).toBe(25)
+  })
 })

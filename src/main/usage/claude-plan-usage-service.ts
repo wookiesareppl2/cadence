@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
+import { spawn } from 'node:child_process'
 import { app } from 'electron'
 import type { ClaudePlanUsage, ExtraUsage, UsageWindow } from '@shared/claude-plan-usage'
 import { retryAfterHeaderMs, UsageRateLimitError } from './usage-rate-limit'
@@ -10,7 +9,7 @@ const API_BASE = 'https://api.anthropic.com/api/oauth'
 const USER_AGENT = 'claude-code/2.1.152'
 const BETA_HEADER = 'oauth-2025-04-20'
 const REFRESH_TIMEOUT_MS = 45_000
-const execFileAsync = promisify(execFile)
+const REFRESH_MAX_BUFFER = 1024 * 1024
 let refreshPromise: Promise<void> | null = null
 
 function readAccessToken(): string {
@@ -72,37 +71,94 @@ async function fetchUsageWithToken(token: string): Promise<UsageResponse> {
   })
 }
 
-function claudeRefreshCommand(): { file: string; args: string[] } {
+type RefreshCommand = { file: string; args: string[] }
+
+function claudeRefreshCommand(): RefreshCommand {
   const prompt = 'Respond with exactly: pong'
-  const printArgs = [
-    '-p',
-    prompt,
-    '--output-format',
-    'json',
-    '--no-session-persistence',
-    '--max-budget-usd',
-    '0.01',
-    '--permission-mode',
-    'dontAsk',
-    '--disable-slash-commands',
-    '--tools',
-    ''
-  ]
-
-  if (process.platform !== 'win32') {
-    return { file: 'claude', args: printArgs }
+  return {
+    file: 'claude',
+    args: [
+      '-p',
+      prompt,
+      '--output-format',
+      'json',
+      '--no-session-persistence',
+      '--max-budget-usd',
+      '0.01',
+      '--permission-mode',
+      'dontAsk',
+      '--disable-slash-commands',
+      '--tools',
+      ''
+    ]
   }
+}
 
-  return { file: 'cmd.exe', args: ['/d', '/s', '/c', 'claude', ...printArgs] }
+function commandLabel({ file, args }: RefreshCommand): string {
+  return [file, ...args]
+    .map((arg) => {
+      if (arg === '') return '""'
+      return /\s/.test(arg) ? `"${arg.replaceAll('"', '\\"')}"` : arg
+    })
+    .join(' ')
+}
+
+function appendOutput(buffer: string, chunk: Buffer | string): string {
+  if (buffer.length >= REFRESH_MAX_BUFFER) return buffer
+  return (buffer + chunk.toString()).slice(0, REFRESH_MAX_BUFFER)
+}
+
+async function runRefreshProcess(command: RefreshCommand): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(command.file, command.args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    })
+    let stdout = ''
+    let stderr = ''
+    let settled = false
+    let timeout: NodeJS.Timeout
+
+    const settle = (error?: Error) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      if (error) reject(error)
+      else resolve()
+    }
+
+    timeout = setTimeout(() => {
+      child.kill()
+      settle(new Error(`${commandLabel(command)} timed out after ${REFRESH_TIMEOUT_MS}ms`))
+    }, REFRESH_TIMEOUT_MS)
+
+    child.stdout?.on('data', (chunk: Buffer | string) => {
+      stdout = appendOutput(stdout, chunk)
+    })
+    child.stderr?.on('data', (chunk: Buffer | string) => {
+      stderr = appendOutput(stderr, chunk)
+    })
+    child.on('error', (error) => settle(error))
+    child.on('close', (code, signal) => {
+      if (code === 0) {
+        settle()
+        return
+      }
+
+      const output = [stderr.trim(), stdout.trim()].filter(Boolean).join('\n')
+      const suffix = output ? `: ${output}` : ''
+      const status = signal ? `signal ${signal}` : `exit code ${code ?? 'unknown'}`
+      settle(new Error(`${commandLabel(command)} failed with ${status}${suffix}`))
+    })
+  })
 }
 
 async function runClaudeRefreshCommand(): Promise<void> {
-  const { file, args } = claudeRefreshCommand()
-  await execFileAsync(file, args, {
-    timeout: REFRESH_TIMEOUT_MS,
-    windowsHide: true,
-    maxBuffer: 1024 * 1024
-  })
+  await runRefreshProcess(claudeRefreshCommand())
+}
+
+export const __testing = {
+  claudeRefreshCommand
 }
 
 async function refreshClaudeCredentials(): Promise<void> {

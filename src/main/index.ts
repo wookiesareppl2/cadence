@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen, type Rectangle, type WebContentsConsoleMessageEventParams } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, screen, type Rectangle, type WebContentsConsoleMessageEventParams } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { join } from 'node:path'
 import {
@@ -21,13 +21,20 @@ import {
 import { deleteProject, deleteSession } from './sessions/session-delete-service'
 import { attachWorkspace, listWorkspaces } from './workspaces/workspace-service'
 import { initAutoUpdates } from './updater'
+import { DEFAULT_WINDOW_BOUNDS } from './window-state-utils'
+import { readWindowState, registerWindowStatePersistence } from './window-state'
 import type { PlatformId } from '@shared/platform'
 
 let restoreBounds: Rectangle | null = null
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
 if (process.platform === 'linux') {
   app.disableHardwareAcceleration()
   app.commandLine.appendSwitch('disable-gpu')
+}
+
+if (!hasSingleInstanceLock) {
+  app.quit()
 }
 
 function shouldForwardRendererConsole({ message, sourceId }: WebContentsConsoleMessageEventParams): boolean {
@@ -37,9 +44,10 @@ function shouldForwardRendererConsole({ message, sourceId }: WebContentsConsoleM
 }
 
 function createMainWindow(): BrowserWindow {
+  const savedWindowState = readWindowState()
+  const initialBounds = savedWindowState?.bounds ?? DEFAULT_WINDOW_BOUNDS
   const mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    ...initialBounds,
     minWidth: 1180,
     minHeight: 720,
     show: false,
@@ -54,9 +62,17 @@ function createMainWindow(): BrowserWindow {
     }
   })
 
+  if (savedWindowState?.isFullScreen) {
+    mainWindow.setFullScreen(true)
+  } else if (savedWindowState?.isMaximized) {
+    mainWindow.maximize()
+  }
+
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
   })
+
+  registerWindowStatePersistence(mainWindow)
 
   mainWindow.webContents.on('console-message', (details) => {
     if (!shouldForwardRendererConsole(details)) return
@@ -76,7 +92,36 @@ function createMainWindow(): BrowserWindow {
   return mainWindow
 }
 
-app.whenReady().then(() => {
+function focusExistingWindow(): BrowserWindow | null {
+  const mainWindow = BrowserWindow.getAllWindows()[0] ?? null
+  if (!mainWindow) return null
+
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  if (!mainWindow.isVisible()) mainWindow.show()
+  mainWindow.focus()
+
+  return mainWindow
+}
+
+if (hasSingleInstanceLock) {
+  app.on('second-instance', () => {
+    const mainWindow = focusExistingWindow()
+    const options = {
+      type: 'info' as const,
+      title: 'AI Dashboard is already running',
+      message: 'AI Dashboard is already running.',
+      detail: 'Use the existing window instead of launching another instance.',
+      buttons: ['OK'],
+      defaultId: 0,
+      noLink: true
+    }
+
+    const notice = mainWindow ? dialog.showMessageBox(mainWindow, options) : dialog.showMessageBox(options)
+    notice.catch(() => undefined)
+  })
+}
+
+if (hasSingleInstanceLock) app.whenReady().then(() => {
   electronApp.setAppUserModelId('dev.ai-dashboard.app')
 
   app.on('browser-window-created', (_, window) => {

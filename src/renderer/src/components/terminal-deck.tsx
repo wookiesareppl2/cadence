@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
@@ -130,7 +130,7 @@ export function useTerminalDeck(platform: TerminalPlatform): TerminalDeckState {
   return { tabs, addTerminal, closeTerminal, resetTerminals }
 }
 
-export function TerminalDeck({
+export const TerminalDeck = memo(function TerminalDeck({
   platform,
   tabs,
   defaultCwd,
@@ -200,7 +200,7 @@ export function TerminalDeck({
       )}
     </section>
   )
-}
+})
 
 function TerminalPane({
   terminalId,

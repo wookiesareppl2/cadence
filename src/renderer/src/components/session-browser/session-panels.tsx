@@ -1,3 +1,4 @@
+import { memo, useMemo } from 'react'
 import type { JSX } from 'react'
 import type {
   AssistantSession,
@@ -28,7 +29,7 @@ function historyRoleCode(role: AssistantSessionHistoryEntry['role']): string {
   return 'CTX'
 }
 
-export function ProjectSessionSidebar({
+export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
   title,
   ariaLabel,
   emptyLabel,
@@ -110,9 +111,9 @@ export function ProjectSessionSidebar({
       </div>
     </aside>
   )
-}
+})
 
-export function SessionDetailAccordion({
+export const SessionDetailAccordion = memo(function SessionDetailAccordion({
   session,
   emptyLabel,
   open,
@@ -169,7 +170,7 @@ export function SessionDetailAccordion({
       </div>
     </section>
   )
-}
+})
 
 export function SessionHistorySidebar({
   session,
@@ -186,6 +187,35 @@ export function SessionHistorySidebar({
 }): JSX.Element {
   const { history, loading, error } = historyState
   const entryCount = history?.entries.length ?? 0
+  const historyEntries = useMemo(() => {
+    if (!history || history.entries.length === 0) return null
+
+    return [...history.entries].reverse().map((entry) => {
+      const speaker = historySpeakerLabel(entry)
+      const showMeta = Boolean(speaker || entry.timestamp)
+
+      return (
+        <article key={entry.id} className="history-entry" data-role={entry.role}>
+          <div className="history-entry-rail" aria-hidden="true">
+            {historyRoleCode(entry.role)}
+          </div>
+          <div className="history-entry-content">
+            {showMeta ? (
+              <div className="history-entry-meta">
+                {speaker ? <span className="history-entry-speaker">{speaker}</span> : null}
+                {entry.timestamp ? <time>{formatEntryTimestamp(entry.timestamp)}</time> : null}
+              </div>
+            ) : null}
+            {entry.role === 'user' || entry.role === 'assistant' ? (
+              <HistoryMarkdown text={entry.text} />
+            ) : (
+              <pre>{entry.text}</pre>
+            )}
+          </div>
+        </article>
+      )
+    })
+  }, [history])
 
   return (
     <aside className={`history-sidebar-shell ${open ? 'open' : 'closed'}`} aria-label="Session history">
@@ -241,33 +271,7 @@ export function SessionHistorySidebar({
       ) : !history || history.entries.length === 0 ? (
         <div className="history-placeholder">No readable transcript entries found.</div>
       ) : (
-        <div className="history-feed">
-          {[...history.entries].reverse().map((entry) => {
-            const speaker = historySpeakerLabel(entry)
-            const showMeta = Boolean(speaker || entry.timestamp)
-
-            return (
-              <article key={entry.id} className="history-entry" data-role={entry.role}>
-                <div className="history-entry-rail" aria-hidden="true">
-                  {historyRoleCode(entry.role)}
-                </div>
-                <div className="history-entry-content">
-                  {showMeta ? (
-                    <div className="history-entry-meta">
-                      {speaker ? <span className="history-entry-speaker">{speaker}</span> : null}
-                      {entry.timestamp ? <time>{formatEntryTimestamp(entry.timestamp)}</time> : null}
-                    </div>
-                  ) : null}
-                  {entry.role === 'user' || entry.role === 'assistant' ? (
-                    <HistoryMarkdown text={entry.text} />
-                  ) : (
-                    <pre>{entry.text}</pre>
-                  )}
-                </div>
-              </article>
-            )
-          })}
-        </div>
+        <div className="history-feed">{historyEntries}</div>
       )}
     </section>
     </aside>

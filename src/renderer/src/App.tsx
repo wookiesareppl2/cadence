@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, JSX, SetStateAction } from 'react'
+import { flushSync } from 'react-dom'
 import {
   NEW_SESSION_ID,
   SessionDetailAccordion,
@@ -17,6 +18,7 @@ import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
 const PLAN_POLL_INTERVAL_MS = 60_000
 const HISTORY_SIDEBAR_CLOSED_WIDTH = 32
 const HISTORY_SIDEBAR_MOTION_MS = 180
+const HISTORY_SIDEBAR_START_OFFSET_MS = -24
 const HISTORY_SIDEBAR_EASING = 'cubic-bezier(0.16, 1, 0.3, 1)'
 
 type PlanUsageDisplay = {
@@ -55,10 +57,6 @@ export function App(): JSX.Element {
     'selection:session-detail-accordion:v1',
     { claude: false, codex: false }
   )
-  const [historySidebarOpen, setHistorySidebarOpen] = usePersistentState<Record<PlatformId, boolean>>(
-    'selection:history-sidebar:v1',
-    { claude: false, codex: false }
-  )
   const activePlatform = PLATFORM_CONFIG[platform]
 
   const selectClaudeSession = useCallback((sessionId: string | null) => {
@@ -89,14 +87,6 @@ export function App(): JSX.Element {
     setSessionDetailOpen((current) => ({ ...current, codex: !current.codex }))
   }, [])
 
-  const toggleClaudeHistorySidebar = useCallback(() => {
-    setHistorySidebarOpen((current) => ({ ...current, claude: !current.claude }))
-  }, [])
-
-  const toggleCodexHistorySidebar = useCallback(() => {
-    setHistorySidebarOpen((current) => ({ ...current, codex: !current.codex }))
-  }, [])
-
   const cssVars = useMemo(
     () =>
       ({
@@ -116,11 +106,9 @@ export function App(): JSX.Element {
           selectedProjectId={selectedProjectIds.claude}
           selectedSessionId={selectedSessionIds.claude}
           sessionDetailOpen={sessionDetailOpen.claude}
-          historySidebarOpen={historySidebarOpen.claude}
           onSelectedProjectIdChange={selectClaudeProject}
           onSelectedSessionIdChange={selectClaudeSession}
           onToggleSessionDetail={toggleClaudeSessionDetail}
-          onToggleHistorySidebar={toggleClaudeHistorySidebar}
         />
       ) : (
         <CodexWorkspace
@@ -128,11 +116,9 @@ export function App(): JSX.Element {
           selectedProjectId={selectedProjectIds.codex}
           selectedSessionId={selectedSessionIds.codex}
           sessionDetailOpen={sessionDetailOpen.codex}
-          historySidebarOpen={historySidebarOpen.codex}
           onSelectedProjectIdChange={selectCodexProject}
           onSelectedSessionIdChange={selectCodexSession}
           onToggleSessionDetail={toggleCodexSessionDetail}
-          onToggleHistorySidebar={toggleCodexHistorySidebar}
         />
       )}
     </div>
@@ -220,6 +206,22 @@ function usePersistentState<T extends object>(
   return [value, setValue]
 }
 
+function usePersistentPlatformFlag(
+  key: string,
+  platform: PlatformId,
+  fallback = false
+): [boolean, () => void] {
+  const [value, setValue] = usePersistentState<Record<PlatformId, boolean>>(key, {
+    claude: fallback,
+    codex: fallback
+  })
+  const toggle = useCallback(() => {
+    setValue((current) => ({ ...current, [platform]: !current[platform] }))
+  }, [platform, setValue])
+
+  return [value[platform], toggle]
+}
+
 function usePlanUsagePolling(): PlanUsageStates {
   const [states, setStates] = useState<PlanUsageStates>({
     claude: { planUsage: null, planError: null, refreshing: false },
@@ -296,9 +298,11 @@ function useCountdown(resetsAt: string | null): string {
   if (diffMs <= 0) return 'Resetting...'
 
   const totalMin = Math.floor(diffMs / 60_000)
-  const hours = Math.floor(totalMin / 60)
+  const days = Math.floor(totalMin / 1_440)
+  const hours = Math.floor((totalMin % 1_440) / 60)
   const mins = totalMin % 60
 
+  if (days > 0) return `Resets in ${days} ${days === 1 ? 'day' : 'days'} ${hours} hr ${mins} min`
   if (hours > 0) return `Resets in ${hours} hr ${mins} min`
   return `Resets in ${mins} min`
 }
@@ -318,101 +322,140 @@ function useHistorySidebarMotion(
 } {
   const contentBodyRef = useRef<HTMLDivElement | null>(null)
   const animationsRef = useRef<Animation[]>([])
+  const closingGhostRef = useRef<HTMLElement | null>(null)
 
-  const clearAnimations = useCallback(() => {
+  const cancelAnimations = useCallback(() => {
     for (const animation of animationsRef.current) {
       animation.cancel()
     }
     animationsRef.current = []
   }, [])
 
-  useEffect(() => clearAnimations, [clearAnimations])
+  const removeClosingGhost = useCallback(() => {
+    closingGhostRef.current?.remove()
+    closingGhostRef.current = null
+  }, [])
+
+  const setMotionPhase = useCallback((phase: string | null) => {
+    const body = contentBodyRef.current
+    if (!body) return
+
+    if (phase) body.dataset.historyMotion = phase
+    else delete body.dataset.historyMotion
+  }, [])
+
+  const resetMotionState = useCallback(() => {
+    cancelAnimations()
+    removeClosingGhost()
+    setMotionPhase(null)
+  }, [cancelAnimations, removeClosingGhost, setMotionPhase])
+
+  useEffect(() => resetMotionState, [resetMotionState])
 
   const toggleHistorySidebar = useCallback(() => {
     const body = contentBodyRef.current
     const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     if (!body || reducedMotion) {
-      onToggle()
+      flushSync(onToggle)
       return
     }
 
     const mainStack = body.querySelector<HTMLElement>('.main-stack')
     const historyShell = body.querySelector<HTMLElement>('.history-sidebar-shell')
     if (!mainStack || !historyShell) {
-      onToggle()
+      flushSync(onToggle)
       return
     }
 
-    clearAnimations()
+    resetMotionState()
 
     if (!open) {
       const firstMain = mainStack.getBoundingClientRect()
       const firstShell = historyShell.getBoundingClientRect()
-      onToggle()
+      flushSync(onToggle)
 
-      window.requestAnimationFrame(() => {
-        const lastMain = mainStack.getBoundingClientRect()
-        const lastShell = historyShell.getBoundingClientRect()
-        const mainScale = firstMain.width / Math.max(lastMain.width, 1)
-        const shellClip = Math.max(lastShell.width - firstShell.width, 0)
+      const lastMain = mainStack.getBoundingClientRect()
+      const lastShell = historyShell.getBoundingClientRect()
+      const mainScale = firstMain.width / Math.max(lastMain.width, 1)
+      const shellClip = Math.max(lastShell.width - firstShell.width, 0)
 
-        animationsRef.current = [
-          mainStack.animate(
-            [{ transform: `scaleX(${mainScale})` }, { transform: 'scaleX(1)' }],
-            {
-              duration: HISTORY_SIDEBAR_MOTION_MS,
-              easing: HISTORY_SIDEBAR_EASING
-            }
-          ),
-          historyShell.animate(
-            [{ clipPath: `inset(0 0 0 ${shellClip}px)` }, { clipPath: 'inset(0 0 0 0)' }],
-            {
-              duration: HISTORY_SIDEBAR_MOTION_MS,
-              easing: HISTORY_SIDEBAR_EASING
-            }
-          )
-        ]
-      })
+      animationsRef.current = [
+        mainStack.animate(
+          [{ transform: `scaleX(${mainScale})` }, { transform: 'scaleX(1)' }],
+          {
+            duration: HISTORY_SIDEBAR_MOTION_MS,
+            delay: HISTORY_SIDEBAR_START_OFFSET_MS,
+            easing: HISTORY_SIDEBAR_EASING
+          }
+        ),
+        historyShell.animate(
+          [{ clipPath: `inset(0 0 0 ${shellClip}px)` }, { clipPath: 'inset(0 0 0 0)' }],
+          {
+            duration: HISTORY_SIDEBAR_MOTION_MS,
+            delay: HISTORY_SIDEBAR_START_OFFSET_MS,
+            easing: HISTORY_SIDEBAR_EASING
+          }
+        )
+      ]
       return
     }
 
-    const bodyRect = body.getBoundingClientRect()
-    const mainRect = mainStack.getBoundingClientRect()
+    const firstMain = mainStack.getBoundingClientRect()
     const shellRect = historyShell.getBoundingClientRect()
-    const bodyStyles = window.getComputedStyle(body)
-    const gap = Number.parseFloat(bodyStyles.columnGap || bodyStyles.gap || '0') || 0
-    const finalMainWidth = Math.max(
-      bodyRect.width - gap - HISTORY_SIDEBAR_CLOSED_WIDTH,
-      mainRect.width
-    )
-    const mainScale = finalMainWidth / Math.max(mainRect.width, 1)
     const shellClip = Math.max(shellRect.width - HISTORY_SIDEBAR_CLOSED_WIDTH, 0)
 
+    const closingGhost = document.createElement('aside')
+    closingGhostRef.current = closingGhost
+    closingGhost.classList.add('history-sidebar-closing-ghost')
+    closingGhost.setAttribute('aria-hidden', 'true')
+    Object.assign(closingGhost.style, {
+      left: `${shellRect.left}px`,
+      top: `${shellRect.top}px`,
+      width: `${shellRect.width}px`,
+      height: `${shellRect.height}px`
+    })
+    ;(body.closest('.app-shell') ?? document.body).appendChild(closingGhost)
+
+    setMotionPhase('closing')
+    flushSync(onToggle)
+
+    const lastMain = mainStack.getBoundingClientRect()
+    const mainScale = firstMain.width / Math.max(lastMain.width, 1)
+
     const mainAnimation = mainStack.animate(
-      [{ transform: 'scaleX(1)' }, { transform: `scaleX(${mainScale})` }],
+      [{ transform: `scaleX(${mainScale})` }, { transform: 'scaleX(1)' }],
       {
         duration: HISTORY_SIDEBAR_MOTION_MS,
-        easing: HISTORY_SIDEBAR_EASING,
-        fill: 'forwards'
+        delay: HISTORY_SIDEBAR_START_OFFSET_MS,
+        easing: HISTORY_SIDEBAR_EASING
       }
     )
-    const shellAnimation = historyShell.animate(
+    const ghostAnimation = closingGhost.animate(
       [{ clipPath: 'inset(0 0 0 0)' }, { clipPath: `inset(0 0 0 ${shellClip}px)` }],
       {
         duration: HISTORY_SIDEBAR_MOTION_MS,
-        easing: HISTORY_SIDEBAR_EASING,
-        fill: 'forwards'
+        delay: HISTORY_SIDEBAR_START_OFFSET_MS,
+        easing: HISTORY_SIDEBAR_EASING
       }
     )
-    animationsRef.current = [mainAnimation, shellAnimation]
+    animationsRef.current = [mainAnimation, ghostAnimation]
 
-    shellAnimation.finished
+    ghostAnimation.finished
       .then(() => {
-        onToggle()
-        window.requestAnimationFrame(clearAnimations)
+        removeClosingGhost()
+        animationsRef.current = []
+        setMotionPhase(null)
       })
       .catch(() => undefined)
-  }, [clearAnimations, onToggle, open])
+
+    window.setTimeout(() => {
+      if (closingGhostRef.current === closingGhost) {
+        removeClosingGhost()
+        animationsRef.current = []
+        setMotionPhase(null)
+      }
+    }, HISTORY_SIDEBAR_MOTION_MS + 80)
+  }, [onToggle, open, removeClosingGhost, resetMotionState, setMotionPhase])
 
   return { contentBodyRef, toggleHistorySidebar }
 }
@@ -422,21 +465,17 @@ function ClaudeWorkspace({
   selectedProjectId,
   selectedSessionId,
   sessionDetailOpen,
-  historySidebarOpen,
   onSelectedProjectIdChange,
   onSelectedSessionIdChange,
-  onToggleSessionDetail,
-  onToggleHistorySidebar
+  onToggleSessionDetail
 }: {
   usageState: PlanUsageState<ClaudePlanUsage>
   selectedProjectId: string | null
   selectedSessionId: string | null
   sessionDetailOpen: boolean
-  historySidebarOpen: boolean
   onSelectedProjectIdChange: (projectId: string | null) => void
   onSelectedSessionIdChange: (sessionId: string | null) => void
   onToggleSessionDetail: () => void
-  onToggleHistorySidebar: () => void
 }): JSX.Element {
   const { planUsage, planError } = usageState
   const sessionBrowser = useProjectSessionBrowserState({
@@ -448,9 +487,13 @@ function ClaudeWorkspace({
   })
   const historyState = useSessionHistory(sessionBrowser.selectedSession)
   const { tabs, addTerminal, closeTerminal, resetTerminals } = useTerminalDeck('claude')
+  const [historySidebarOpen, toggleHistorySidebarState] = usePersistentPlatformFlag(
+    'selection:history-sidebar:v1',
+    'claude'
+  )
   const { contentBodyRef, toggleHistorySidebar } = useHistorySidebarMotion(
     historySidebarOpen,
-    onToggleHistorySidebar
+    toggleHistorySidebarState
   )
   const newSession = selectedSessionId === NEW_SESSION_ID
   const startSession = useCallback(
@@ -524,21 +567,17 @@ function CodexWorkspace({
   selectedProjectId,
   selectedSessionId,
   sessionDetailOpen,
-  historySidebarOpen,
   onSelectedProjectIdChange,
   onSelectedSessionIdChange,
-  onToggleSessionDetail,
-  onToggleHistorySidebar
+  onToggleSessionDetail
 }: {
   usageState: PlanUsageState<CodexPlanUsage>
   selectedProjectId: string | null
   selectedSessionId: string | null
   sessionDetailOpen: boolean
-  historySidebarOpen: boolean
   onSelectedProjectIdChange: (projectId: string | null) => void
   onSelectedSessionIdChange: (sessionId: string | null) => void
   onToggleSessionDetail: () => void
-  onToggleHistorySidebar: () => void
 }): JSX.Element {
   const { planUsage, planError } = usageState
   const sessionBrowser = useProjectSessionBrowserState({
@@ -550,9 +589,13 @@ function CodexWorkspace({
   })
   const historyState = useSessionHistory(sessionBrowser.selectedSession)
   const { tabs, addTerminal, closeTerminal, resetTerminals } = useTerminalDeck('codex')
+  const [historySidebarOpen, toggleHistorySidebarState] = usePersistentPlatformFlag(
+    'selection:history-sidebar:v1',
+    'codex'
+  )
   const { contentBodyRef, toggleHistorySidebar } = useHistorySidebarMotion(
     historySidebarOpen,
-    onToggleHistorySidebar
+    toggleHistorySidebarState
   )
   const newSession = selectedSessionId === NEW_SESSION_ID
   const startSession = useCallback(
