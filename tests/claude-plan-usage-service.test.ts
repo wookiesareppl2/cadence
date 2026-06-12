@@ -24,11 +24,17 @@ describe('Claude plan usage service', () => {
   it('builds a direct refresh command that preserves prompt and empty tools arguments', () => {
     const command = __testing.claudeRefreshCommand()
     const toolsIndex = command.args.indexOf('--tools')
+    const modelIndex = command.args.indexOf('--model')
+    const budgetIndex = command.args.indexOf('--max-budget-usd')
 
     expect(command.file).toBe('claude')
     expect(command.args).toContain('Respond with exactly: pong')
     expect(toolsIndex).toBeGreaterThan(-1)
     expect(command.args[toolsIndex + 1]).toBe('')
+    // Pin a cheap model and keep the budget above one Haiku turn so the refresh
+    // ping exits 0 (rotating the token) instead of tripping error_max_budget_usd.
+    expect(command.args[modelIndex + 1]).toBe('claude-haiku-4-5')
+    expect(Number(command.args[budgetIndex + 1])).toBeGreaterThanOrEqual(0.05)
   })
 
   it('refreshes credentials and retries once after an expired access token', async () => {
@@ -40,7 +46,12 @@ describe('Claude plan usage service', () => {
       .mockResolvedValueOnce(usageResponse(401))
       .mockResolvedValueOnce(usageResponse(200, usageBody))
 
-    const result = await fetchClaudePlanUsage({ fetchUsage, readToken, refreshCredentials })
+    const result = await fetchClaudePlanUsage({
+      fetchUsage,
+      readToken,
+      refreshCredentials,
+      readTokenExpiry: () => null
+    })
 
     expect(refreshCredentials).toHaveBeenCalledTimes(1)
     expect(readToken).toHaveBeenCalledTimes(2)
@@ -55,11 +66,86 @@ describe('Claude plan usage service', () => {
     const refreshCredentials = vi.fn().mockResolvedValue(undefined)
     const fetchUsage = vi.fn().mockResolvedValue(usageResponse(200, usageBody))
 
-    await fetchClaudePlanUsage({ fetchUsage, readToken, refreshCredentials })
+    await fetchClaudePlanUsage({ fetchUsage, readToken, refreshCredentials, readTokenExpiry: () => null })
 
     expect(refreshCredentials).not.toHaveBeenCalled()
     expect(readToken).toHaveBeenCalledTimes(1)
     expect(fetchUsage).toHaveBeenCalledWith('valid-token')
+  })
+
+  it('refreshes proactively before the first request when the stored token is expired', async () => {
+    const readToken = vi.fn().mockReturnValue('fresh-token')
+    const refreshCredentials = vi.fn().mockResolvedValue(undefined)
+    const fetchUsage = vi.fn().mockResolvedValue(usageResponse(200, usageBody))
+    const now = 1_000_000
+
+    const result = await fetchClaudePlanUsage({
+      fetchUsage,
+      readToken,
+      refreshCredentials,
+      readTokenExpiry: () => now - 1, // already past expiry
+      now: () => now
+    })
+
+    expect(refreshCredentials).toHaveBeenCalledTimes(1)
+    expect(fetchUsage).toHaveBeenCalledTimes(1)
+    expect(fetchUsage).toHaveBeenCalledWith('fresh-token')
+    expect(result.fiveHour?.utilization).toBe(42)
+  })
+
+  it('refreshes proactively within the skew window before expiry', async () => {
+    const readToken = vi.fn().mockReturnValue('fresh-token')
+    const refreshCredentials = vi.fn().mockResolvedValue(undefined)
+    const fetchUsage = vi.fn().mockResolvedValue(usageResponse(200, usageBody))
+    const now = 1_000_000
+
+    await fetchClaudePlanUsage({
+      fetchUsage,
+      readToken,
+      refreshCredentials,
+      readTokenExpiry: () => now + 30_000, // expires in 30s, inside the 60s skew
+      now: () => now
+    })
+
+    expect(refreshCredentials).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not refresh again when a proactive refresh still returns 401', async () => {
+    const readToken = vi.fn().mockReturnValue('still-bad-token')
+    const refreshCredentials = vi.fn().mockResolvedValue(undefined)
+    const fetchUsage = vi.fn().mockResolvedValue(usageResponse(401))
+    const now = 1_000_000
+
+    await expect(
+      fetchClaudePlanUsage({
+        fetchUsage,
+        readToken,
+        refreshCredentials,
+        readTokenExpiry: () => now - 1,
+        now: () => now
+      })
+    ).rejects.toThrow('did not produce a valid access token')
+
+    expect(refreshCredentials).toHaveBeenCalledTimes(1)
+    expect(fetchUsage).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not refresh proactively when the token has ample time left', async () => {
+    const readToken = vi.fn().mockReturnValue('valid-token')
+    const refreshCredentials = vi.fn().mockResolvedValue(undefined)
+    const fetchUsage = vi.fn().mockResolvedValue(usageResponse(200, usageBody))
+    const now = 1_000_000
+
+    await fetchClaudePlanUsage({
+      fetchUsage,
+      readToken,
+      refreshCredentials,
+      readTokenExpiry: () => now + 10 * 60_000, // 10 minutes out
+      now: () => now
+    })
+
+    expect(refreshCredentials).not.toHaveBeenCalled()
+    expect(fetchUsage).toHaveBeenCalledTimes(1)
   })
 
   it('surfaces 429 responses with retry-after timing', async () => {
@@ -67,7 +153,9 @@ describe('Claude plan usage service', () => {
     const refreshCredentials = vi.fn().mockResolvedValue(undefined)
     const fetchUsage = vi.fn().mockResolvedValue(usageResponse(429, {}, '120'))
 
-    await expect(fetchClaudePlanUsage({ fetchUsage, readToken, refreshCredentials })).rejects.toMatchObject({
+    await expect(
+      fetchClaudePlanUsage({ fetchUsage, readToken, refreshCredentials, readTokenExpiry: () => null })
+    ).rejects.toMatchObject({
       name: 'UsageRateLimitError',
       retryAfterMs: 120_000
     } satisfies Partial<UsageRateLimitError>)

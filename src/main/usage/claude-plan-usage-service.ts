@@ -12,15 +12,39 @@ const REFRESH_TIMEOUT_MS = 45_000
 const REFRESH_MAX_BUFFER = 1024 * 1024
 let refreshPromise: Promise<void> | null = null
 
+// Refresh slightly before the token actually lapses so we never spend a
+// guaranteed-401 request on the boundary.
+const EXPIRY_SKEW_MS = 60_000
+
+function credentialsPath(): string {
+  return join(app.getPath('home'), '.claude', '.credentials.json')
+}
+
 function readAccessToken(): string {
-  const credPath = join(app.getPath('home'), '.claude', '.credentials.json')
-  const raw = readFileSync(credPath, 'utf-8')
+  const raw = readFileSync(credentialsPath(), 'utf-8')
   const creds = JSON.parse(raw)
   const token = creds?.claudeAiOauth?.accessToken
   if (!token || typeof token !== 'string') {
     throw new Error('No Claude OAuth access token found in ~/.claude/.credentials.json')
   }
   return token
+}
+
+// Best-effort: returns the stored token's expiry (ms epoch), or null when it
+// can't be determined (file missing, unparseable, or field absent). A null
+// expiry skips the proactive refresh and falls back to the reactive 401 path.
+function readTokenExpiry(): number | null {
+  try {
+    const creds = JSON.parse(readFileSync(credentialsPath(), 'utf-8'))
+    const expiresAt = creds?.claudeAiOauth?.expiresAt
+    return typeof expiresAt === 'number' ? expiresAt : null
+  } catch {
+    return null
+  }
+}
+
+function isTokenExpired(expiresAt: number | null, nowMs: number): boolean {
+  return expiresAt !== null && nowMs >= expiresAt - EXPIRY_SKEW_MS
 }
 
 type RawWindow = { utilization: number; resets_at: string | null } | null
@@ -40,7 +64,9 @@ type FetchUsage = (token: string) => Promise<UsageResponse>
 type ClaudePlanUsageDeps = {
   fetchUsage?: FetchUsage
   readToken?: () => string
+  readTokenExpiry?: () => number | null
   refreshCredentials?: () => Promise<void>
+  now?: () => number
 }
 
 function parseWindow(raw: RawWindow): UsageWindow | null {
@@ -80,11 +106,18 @@ function claudeRefreshCommand(): RefreshCommand {
     args: [
       '-p',
       prompt,
+      // Pin Haiku so the throwaway refresh ping has a predictable, tiny cost
+      // regardless of the user's default model. Inheriting Opus made a single
+      // turn (system-prompt cache creation) cost ~$0.05 and trip the budget.
+      '--model',
+      'claude-haiku-4-5',
       '--output-format',
       'json',
       '--no-session-persistence',
+      // Headroom above one Haiku turn (~$0.011) so the command exits 0 and
+      // rotates the OAuth token instead of aborting with error_max_budget_usd.
       '--max-budget-usd',
-      '0.01',
+      '0.05',
       '--permission-mode',
       'dontAsk',
       '--disable-slash-commands',
@@ -168,23 +201,47 @@ async function refreshClaudeCredentials(): Promise<void> {
   return refreshPromise
 }
 
-async function fetchWithOptionalCredentialRefresh(
-  fetchUsage: FetchUsage,
-  readToken: () => string,
-  refreshCredentials: () => Promise<void>
-): Promise<UsageResponse> {
-  let res = await fetchUsage(readToken())
-
-  if (res.status !== 401) {
-    return res
-  }
-
+async function refreshOrThrow(refreshCredentials: () => Promise<void>): Promise<void> {
   try {
     await refreshCredentials()
   } catch (error) {
     const detail = error instanceof Error ? error.message : 'unknown error'
     throw new Error(`Claude credentials expired and automatic refresh failed: ${detail}`)
   }
+}
+
+type RefreshFlowDeps = {
+  fetchUsage: FetchUsage
+  readToken: () => string
+  readTokenExpiry: () => number | null
+  refreshCredentials: () => Promise<void>
+  now: () => number
+}
+
+async function fetchWithOptionalCredentialRefresh(deps: RefreshFlowDeps): Promise<UsageResponse> {
+  const { fetchUsage, readToken, readTokenExpiry, refreshCredentials, now } = deps
+
+  // Proactive: refresh up front when the stored token is already expired so the
+  // first request isn't a guaranteed 401. Skipped when expiry is unknown.
+  let alreadyRefreshed = false
+  if (isTokenExpired(readTokenExpiry(), now())) {
+    await refreshOrThrow(refreshCredentials)
+    alreadyRefreshed = true
+  }
+
+  let res = await fetchUsage(readToken())
+
+  if (res.status !== 401) {
+    return res
+  }
+
+  // Already refreshed but still rejected — refreshing again won't help.
+  if (alreadyRefreshed) {
+    throw new Error('Claude credentials expired and automatic refresh did not produce a valid access token')
+  }
+
+  // Reactive fallback: token was rejected despite not looking expired.
+  await refreshOrThrow(refreshCredentials)
 
   res = await fetchUsage(readToken())
 
@@ -196,11 +253,13 @@ async function fetchWithOptionalCredentialRefresh(
 }
 
 export async function fetchClaudePlanUsage(deps: ClaudePlanUsageDeps = {}): Promise<ClaudePlanUsage> {
-  const res = await fetchWithOptionalCredentialRefresh(
-    deps.fetchUsage ?? fetchUsageWithToken,
-    deps.readToken ?? readAccessToken,
-    deps.refreshCredentials ?? refreshClaudeCredentials
-  )
+  const res = await fetchWithOptionalCredentialRefresh({
+    fetchUsage: deps.fetchUsage ?? fetchUsageWithToken,
+    readToken: deps.readToken ?? readAccessToken,
+    readTokenExpiry: deps.readTokenExpiry ?? readTokenExpiry,
+    refreshCredentials: deps.refreshCredentials ?? refreshClaudeCredentials,
+    now: deps.now ?? Date.now
+  })
 
   if (res.status === 401) {
     throw new Error('Claude credentials expired — run any `claude` command to refresh')
