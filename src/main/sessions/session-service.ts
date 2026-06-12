@@ -234,6 +234,15 @@ function hasToolResultContent(content: unknown): boolean {
   return Array.isArray(content) && content.some((item) => item?.type === 'tool_result')
 }
 
+// Synthetic `user`-role rows that the user never typed: tool/MCP results, and
+// slash-command/skill expansions (isMeta) like the /start skill body. These must
+// never seed a session title — otherwise the skill's own instructions ("Base
+// directory for this skill…", "Pass this prompt to the agent…") leak in as the
+// title. The history view already excludes these via claudeHistoryEntry.
+export function isSyntheticUserRow(row: any): boolean {
+  return Boolean(row?.isMeta) || Boolean(row?.toolUseResult) || hasToolResultContent(row?.message?.content)
+}
+
 function claudeHistoryEntry(row: any, index: number): HistoryDraft | null {
   // Subagent turns (isSidechain) are internal scaffolding — the agent's task
   // prompt and its step-by-step work — not part of the user's conversation.
@@ -486,7 +495,7 @@ async function readClaudeSession(path: string): Promise<ClaudeSessionDraft | nul
       if (typeof row.cwd === 'string') draft.cwd = row.cwd
       if (typeof row.gitBranch === 'string') draft.branch = row.gitBranch
       if (!draft.entrypoint && typeof row.entrypoint === 'string') draft.entrypoint = row.entrypoint
-      if (row.type === 'user') {
+      if (row.type === 'user' && !isSyntheticUserRow(row)) {
         const text = titleCandidate(contentText(row.message?.content))
         if (text) {
           draft.titleMessages.push({ text, timestampMs })

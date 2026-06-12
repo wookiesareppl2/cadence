@@ -14,6 +14,15 @@ const MAX_TITLE_WORDS = 7
 
 const GENERAL_IMPROVEMENTS_TITLE = 'General Improvements'
 
+// Sessions that are nothing but a /start or /save skill run carry no real user
+// request to infer from. Rather than the bare provider fallback, label them by
+// the workflow that produced them. Markers run over lowercased, backtick-stripped
+// text — and only when no substantive request exists, so genuine work is unaffected.
+const START_SESSION_TITLE = 'Session Start'
+const SAVE_SESSION_TITLE = 'Save Session'
+const START_SESSION_MARKER = /\bstart[-\s](?:skill|session)\b|(?:^|\s)[$/]start\b/
+const SAVE_SESSION_MARKER = /\bsave[-\s](?:skill|session|worker|operation)\b|(?:^|\s)[$/]save\b/
+
 type TopicGroup = 'debug' | 'memory' | 'release' | 'security' | 'sessions' | 'terminal' | 'usage' | 'visual'
 
 type TopicDefinition = {
@@ -226,7 +235,15 @@ export function contentText(value: unknown): string | null {
 
 export function titleCandidate(text: string | null): string | null {
   if (!text) return null
-  if (/<\/?(command-message|command-name|local-command-stdout|subagent_notification|system-reminder)\b/i.test(text)) {
+  // Reject injected, non-user content. Beyond command/system markers, this covers
+  // Codex's environment preamble (`<environment_context>` — cwd/shell/date, whose
+  // inner text would otherwise leak as the title) and skill/instruction
+  // expansions (`<skill>`, `<user_instructions>`) that the user never typed.
+  if (
+    /<\/?(command-message|command-name|local-command-stdout|subagent_notification|system-reminder|environment_context|skill|user_instructions)\b/i.test(
+      text
+    )
+  ) {
     return null
   }
 
@@ -245,13 +262,45 @@ export function resolveSessionTitle({
 }): ResolvedSessionTitle {
   const readableRawTitle = readableRawSessionTitle(rawTitle)
   const inferredTitle = inferSessionTitle(messages)
-  const title = inferredTitle ?? readableRawTitle ?? fallbackTitle
+  // Only when there's no real inferred title and no usable provider title do we
+  // fall to a workflow label, so a meaningful raw title still wins.
+  const workflowTitle = inferredTitle || readableRawTitle ? null : workflowSessionTitle(messages)
+  const title = inferredTitle ?? readableRawTitle ?? workflowTitle ?? fallbackTitle
 
   return {
     title: readableTitle(title, fallbackTitle) ?? fallbackTitle,
     rawTitle: readableRawTitle,
     inferredTitle
   }
+}
+
+// Classify a request-less session as a pure /start or /save skill run. The long
+// worker prompts reference both skills, so we count marker hits and take the
+// dominant workflow; on a tie the workflow whose marker appears first (the
+// opening command/instruction) wins. Returns null only when neither appears.
+function workflowSessionTitle(messages: TitleMessage[]): string | null {
+  const startRe = new RegExp(START_SESSION_MARKER.source, 'g')
+  const saveRe = new RegExp(SAVE_SESSION_MARKER.source, 'g')
+  let start = 0
+  let save = 0
+  let first: typeof START_SESSION_TITLE | typeof SAVE_SESSION_TITLE | null = null
+
+  for (const { text } of messages) {
+    const lower = text.toLowerCase().replace(/`/g, '')
+    start += lower.match(startRe)?.length ?? 0
+    save += lower.match(saveRe)?.length ?? 0
+
+    if (first === null) {
+      const startAt = lower.search(START_SESSION_MARKER)
+      const saveAt = lower.search(SAVE_SESSION_MARKER)
+      if (startAt !== -1 && (saveAt === -1 || startAt <= saveAt)) first = START_SESSION_TITLE
+      else if (saveAt !== -1) first = SAVE_SESSION_TITLE
+    }
+  }
+
+  if (start === 0 && save === 0) return null
+  if (start !== save) return start > save ? START_SESSION_TITLE : SAVE_SESSION_TITLE
+  return first
 }
 
 function inferSessionTitle(messages: TitleMessage[]): string | null {
@@ -429,6 +478,14 @@ function isSubstantive(text: string): boolean {
   if (normalized.includes('active file:') && normalized.includes('open tabs:') && !normalized.includes('my request')) {
     return false
   }
+  // Codex's /start and /save skills expand into long delegated-worker prompts
+  // sent as plain user messages ("You are the single delegated worker…", "Run
+  // the save skill…"). They are orchestration scaffolding, not the user's
+  // request, and otherwise drown out the real intent during inference. (IDE
+  // context blocks are handled above — they embed the real "My request" text.)
+  if (/^you are (?:the|a)\s+(?:single|sole|only|mandatory|delegated)\b/.test(normalized)) return false
+  if (/^(?:run|execute|use|perform)\s+the\s+`?\/?(?:start|save)\b/.test(normalized)) return false
+  if (/^run\s+the\s+start[- ]session\b/.test(normalized)) return false
 
   return normalized.length >= 12
 }

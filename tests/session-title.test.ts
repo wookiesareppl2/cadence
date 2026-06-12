@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveSessionTitle } from '../src/main/sessions/session-title'
+import { resolveSessionTitle, titleCandidate } from '../src/main/sessions/session-title'
 
 describe('session title resolver', () => {
   it('uses a focused theme when one session area dominates', () => {
@@ -147,7 +147,7 @@ describe('session title resolver', () => {
     const result = resolveSessionTitle({
       rawTitle: 'Once I am done implementing various fixes,',
       fallbackTitle: 'Claude session',
-      messages: [{ text: '/start', timestampMs: 1 }]
+      messages: [{ text: 'Proceed as suggested', timestampMs: 1 }]
     })
 
     expect(result.title).toBe('Claude session')
@@ -159,11 +159,94 @@ describe('session title resolver', () => {
     const result = resolveSessionTitle({
       rawTitle: "I don't want to address any",
       fallbackTitle: 'Claude session',
-      messages: [{ text: '/start', timestampMs: 1 }]
+      messages: [{ text: 'Proceed as suggested', timestampMs: 1 }]
     })
 
     expect(result.title).toBe('Claude session')
     expect(result.rawTitle).toBeNull()
     expect(result.inferredTitle).toBeNull()
+  })
+
+  it('rejects injected environment, skill, and instruction blocks as title candidates', () => {
+    expect(titleCandidate('<environment_context>\n  <cwd>C:\\repo</cwd>\n</environment_context>')).toBeNull()
+    expect(titleCandidate('<skill>\n<name>start</name>\n<path>SKILL.md</path>\n</skill>')).toBeNull()
+    expect(titleCandidate('<user_instructions>do the thing</user_instructions>')).toBeNull()
+    // A genuine prompt is still accepted.
+    expect(titleCandidate('Please theme the terminal scrollbars')).toBe('Please theme the terminal scrollbars')
+  })
+
+  it('labels a pure save-skill session "Save Session"', () => {
+    const result = resolveSessionTitle({
+      rawTitle: null,
+      fallbackTitle: 'Codex 019ab123',
+      messages: [
+        { text: 'You are the single delegated worker required by the save skill. Do not deviate.', timestampMs: 1 },
+        { text: 'Run the `save` skill in Memory Bank mode for this repo exactly as specified.', timestampMs: 2 }
+      ]
+    })
+
+    expect(result.title).toBe('Save Session')
+    expect(result.inferredTitle).toBeNull()
+  })
+
+  it('labels a pure start-skill session "Session Start"', () => {
+    const result = resolveSessionTitle({
+      rawTitle: null,
+      fallbackTitle: 'Codex 019ab123',
+      messages: [
+        { text: '$start', timestampMs: 1 },
+        { text: 'You are the single delegated worker for the `start` skill. Workspace root: c:/repo', timestampMs: 2 }
+      ]
+    })
+
+    expect(result.title).toBe('Session Start')
+    expect(result.inferredTitle).toBeNull()
+  })
+
+  it('keeps a meaningful provider title over a workflow label', () => {
+    const result = resolveSessionTitle({
+      rawTitle: 'Investigate flaky deploy',
+      fallbackTitle: 'Codex 019ab123',
+      messages: [{ text: '$save', timestampMs: 1 }]
+    })
+
+    expect(result.title).toBe('Investigate flaky deploy')
+  })
+
+  it('breaks a start/save tie by the workflow that appears first', () => {
+    const result = resolveSessionTitle({
+      rawTitle: null,
+      fallbackTitle: 'Codex 019ab123',
+      messages: [
+        { text: '$start', timestampMs: 1 },
+        { text: 'Run the save skill for this repo', timestampMs: 2 }
+      ]
+    })
+
+    expect(result.title).toBe('Session Start')
+  })
+
+  it('still falls back to provider id when no workflow markers are present', () => {
+    const result = resolveSessionTitle({
+      rawTitle: null,
+      fallbackTitle: 'Codex 019ab123',
+      messages: [{ text: 'Proceed as suggested', timestampMs: 1 }]
+    })
+
+    expect(result.title).toBe('Codex 019ab123')
+  })
+
+  it('surfaces the real request even when a skill worker prompt precedes it', () => {
+    const result = resolveSessionTitle({
+      rawTitle: null,
+      fallbackTitle: 'Codex 019ab123',
+      messages: [
+        { text: 'You are the single delegated worker for the /start skill. Workspace root: c:/repo', timestampMs: 1 },
+        { text: 'Please improve the usage bars and usage display meters on the dashboard.', timestampMs: 2 }
+      ]
+    })
+
+    expect(result.title).toBe('Usage Display Improvements')
+    expect(result.inferredTitle).toBe('Usage Display Improvements')
   })
 })
