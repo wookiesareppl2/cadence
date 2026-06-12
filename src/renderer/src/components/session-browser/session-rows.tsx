@@ -231,7 +231,13 @@ function SessionRow({
             ariaLabel={`Rename session ${session.title}`}
             onCommit={(value) => {
               setEditing(false)
-              onRename(value.trim() ? value.trim() : null)
+              const next = value.trim()
+              // Committing the pre-filled value unchanged must NOT persist an
+              // alias — otherwise the current (possibly inferred) title gets
+              // frozen and stops tracking title improvements. Only an actual
+              // edit sets an alias; clearing the field reverts to inferred.
+              if (next === session.title) return
+              onRename(next ? next : null)
             }}
             onCancel={() => setEditing(false)}
           />

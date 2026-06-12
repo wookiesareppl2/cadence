@@ -28,7 +28,11 @@ export function initAutoUpdates(): void {
     promptToInstall(info.version)
   })
 
-  autoUpdater.checkForUpdatesAndNotify().catch((err) => console.error('[auto-update] check failed', err))
+  // Use checkForUpdates (not checkForUpdatesAndNotify): with autoDownload on, the
+  // update still downloads and fires `update-downloaded`, but we avoid the native
+  // notification whose default text ("…will be automatically installed on exit")
+  // contradicts our prompt-to-install flow.
+  autoUpdater.checkForUpdates().catch((err) => console.error('[auto-update] check failed', err))
 }
 
 function promptToInstall(version: string): void {
