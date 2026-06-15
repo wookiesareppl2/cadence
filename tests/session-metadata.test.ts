@@ -16,6 +16,10 @@ function makeSession(overrides: Partial<AssistantSession> = {}): AssistantSessio
     title: 'Inferred title',
     rawTitle: null,
     inferredTitle: null,
+    generatedTitle: null,
+    titleSource: 'heuristic',
+    titleStatus: 'ready',
+    titleUpdatedAt: null,
     project: 'app',
     projectPath: 'C:/projects/app',
     branch: null,
@@ -45,6 +49,8 @@ describe('applySessionAlias', () => {
     const session = makeSession()
     const result = applySessionAlias(session, { 'claude:sess-1': 'My name' })
     expect(result.title).toBe('My name')
+    expect(result.titleSource).toBe('manual')
+    expect(result.titleStatus).toBe('ready')
     expect(result).not.toBe(session) // returns a copy, does not mutate
     expect(session.title).toBe('Inferred title')
   })

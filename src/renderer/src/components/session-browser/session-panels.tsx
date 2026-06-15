@@ -81,7 +81,10 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
       </div>
       <div className="session-stack">
         <div className="session-stack-header">
-          <span>Sessions</span>
+          <span className="session-stack-title">
+            Sessions
+            <TitleGenerationStatus browser={browser} />
+          </span>
           <button
             type="button"
             className="session-start-action"
@@ -112,6 +115,32 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
     </aside>
   )
 })
+
+function TitleGenerationStatus({ browser }: { browser: ProjectSessionBrowserState }): JSX.Element | null {
+  const status = browser.titleGenerationStatus
+  if (!status) return null
+  if (status.running || status.pending > 0) {
+    return (
+      <span
+        className="title-generation-dot updating"
+        role="status"
+        aria-label="Updating titles"
+        title="Updating titles"
+      />
+    )
+  }
+  if (status.lastError) {
+    return (
+      <span
+        className="title-generation-dot error"
+        role="status"
+        aria-label={`Title update failed: ${status.lastError}`}
+        title={`Title update failed: ${status.lastError}`}
+      />
+    )
+  }
+  return null
+}
 
 export const SessionDetailAccordion = memo(function SessionDetailAccordion({
   session,
@@ -160,6 +189,7 @@ export const SessionDetailAccordion = memo(function SessionDetailAccordion({
                 <Fact label="Path" value={session.projectPath ?? 'Unavailable'} />
                 <Fact label="Branch" value={branchLabel(session)} />
                 <Fact label="Updated" value={formatUpdatedAt(session.updatedAt)} />
+                <Fact label="Title" value={titleSourceLabel(session)} />
                 {session.rawTitle && session.rawTitle !== session.title ? (
                   <Fact label="Source" value={session.rawTitle} />
                 ) : null}
@@ -290,6 +320,19 @@ function Fact({ label, value }: { label: string; value: string }): JSX.Element {
 function branchLabel(session: AssistantSession): string {
   if (!session.branch || session.branch === 'HEAD') return 'Unavailable'
   return session.branch
+}
+
+function titleSourceLabel(session: AssistantSession): string {
+  if (session.titleSource === 'manual') return 'Manual override'
+  if (session.titleSource === 'generated') {
+    if (session.titleStatus === 'stale') return 'AI generated, updating'
+    if (session.titleStatus === 'failed') return 'AI generated, update failed'
+    return 'AI generated'
+  }
+  if (session.titleStatus === 'pending') return 'Heuristic, AI pending'
+  if (session.titleStatus === 'disabled') return 'Heuristic, AI disabled'
+  if (session.titleSource === 'raw') return 'Provider title'
+  return 'Heuristic'
 }
 
 function formatUpdatedAt(value: string | null): string {

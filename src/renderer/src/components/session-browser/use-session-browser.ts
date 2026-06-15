@@ -4,7 +4,8 @@ import type { PlatformId } from '@shared/platform'
 import type {
   AssistantProject,
   AssistantSession,
-  AssistantSessionHistory
+  AssistantSessionHistory,
+  SessionTitleGenerationStatus
 } from '@shared/sessions'
 import type { Workspace } from '@shared/workspaces'
 import type { SessionMetadata } from '@shared/session-metadata'
@@ -40,6 +41,7 @@ export type ProjectSessionBrowserState = {
   projectSessions: AssistantSession[]
   loading: boolean
   error: string | null
+  titleGenerationStatus: SessionTitleGenerationStatus | null
   query: string
   setQuery: Dispatch<SetStateAction<string>>
   selectProject: (projectId: string) => void
@@ -64,7 +66,13 @@ export function useProjectSessionBrowserState({
   onSelectedProjectIdChange,
   onSelectedSessionIdChange
 }: UseProjectSessionBrowserStateArgs): ProjectSessionBrowserState {
-  const { sessions: rawSessions, loading, error, refresh: refreshSessions } = usePlatformSessions(platform)
+  const {
+    sessions: rawSessions,
+    loading,
+    error,
+    titleGenerationStatus,
+    refresh: refreshSessions
+  } = usePlatformSessions(platform)
   const { workspaces, refresh: refreshWorkspaces } = useWorkspaces()
   const { metadata, refresh: refreshMetadata } = useSessionMetadata()
   const [query, setQuery] = useState('')
@@ -202,6 +210,7 @@ export function useProjectSessionBrowserState({
       projectSessions,
       loading,
       error,
+      titleGenerationStatus,
       query,
       setQuery,
       selectProject,
@@ -223,6 +232,7 @@ export function useProjectSessionBrowserState({
       projectSessions,
       loading,
       error,
+      titleGenerationStatus,
       query,
       setQuery,
       selectProject,
@@ -338,11 +348,13 @@ function usePlatformSessions(platform: PlatformId): {
   sessions: AssistantSession[]
   loading: boolean
   error: string | null
+  titleGenerationStatus: SessionTitleGenerationStatus | null
   refresh: () => Promise<void>
 } {
   const [sessions, setSessions] = useState<AssistantSession[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [titleGenerationStatus, setTitleGenerationStatus] = useState<SessionTitleGenerationStatus | null>(null)
 
   const fetchSessions = useCallback(async () => {
     const loader =
@@ -358,6 +370,7 @@ function usePlatformSessions(platform: PlatformId): {
 
     try {
       setSessions(await loader())
+      setTitleGenerationStatus((await window.dashboard?.sessions?.getTitleGenerationStatus?.()) ?? null)
       setError(null)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Session scan failed')
@@ -373,7 +386,7 @@ function usePlatformSessions(platform: PlatformId): {
     return () => clearInterval(id)
   }, [fetchSessions])
 
-  return { sessions, loading, error, refresh: fetchSessions }
+  return { sessions, loading, error, titleGenerationStatus, refresh: fetchSessions }
 }
 
 function groupSessionsByProject(

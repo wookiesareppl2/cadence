@@ -13,6 +13,7 @@ import { closeClaudeUsageStore, refreshClaudeUsageSummary } from './usage/claude
 import { getCachedClaudePlanUsage, getCachedCodexPlanUsage } from './usage/usage-plan-cache'
 import { notifyUsageThresholds } from './usage/usage-alerts'
 import { getClaudeSessions, getCodexSessions, getSessionHistory } from './sessions/session-service'
+import { getSessionTitleGenerationStatus } from './sessions/session-title-generation-service'
 import {
   getSessionMetadata,
   setProjectAlias,
@@ -175,6 +176,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   ipcMain.handle('sessions:claude', () => getClaudeSessions())
   ipcMain.handle('sessions:codex', () => getCodexSessions())
   ipcMain.handle('sessions:history', (_event, platform: PlatformId, sessionId: string) => getSessionHistory(platform, sessionId))
+  ipcMain.handle('sessions:title-generation-status', () => getSessionTitleGenerationStatus())
   ipcMain.handle('sessions:metadata', () => getSessionMetadata())
   ipcMain.handle('sessions:set-project-alias', (_event, projectId: string, name: string | null) =>
     setProjectAlias(projectId, name)
