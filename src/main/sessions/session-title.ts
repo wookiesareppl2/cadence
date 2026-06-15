@@ -23,7 +23,7 @@ const SAVE_SESSION_TITLE = 'Save Session'
 const START_SESSION_MARKER = /\bstart[-\s](?:skill|session)\b|(?:^|\s)[$/]start\b/
 const SAVE_SESSION_MARKER = /\bsave[-\s](?:skill|session|worker|operation)\b|(?:^|\s)[$/]save\b/
 
-type TopicGroup = 'debug' | 'memory' | 'release' | 'security' | 'sessions' | 'terminal' | 'usage' | 'visual'
+type TopicGroup = 'debug' | 'docs' | 'memory' | 'release' | 'security' | 'sessions' | 'terminal' | 'usage' | 'visual'
 
 type TopicDefinition = {
   key: string
@@ -67,6 +67,13 @@ type GroupScore = {
   topics: Map<string, TopicScore>
 }
 
+type ArtifactTitleCandidate = {
+  phrase: string
+  score: number
+  latestMs: number
+  docLike: boolean
+}
+
 const TOPIC_DEFINITIONS: TopicDefinition[] = [
   {
     key: 'session-display',
@@ -95,6 +102,28 @@ const TOPIC_DEFINITIONS: TopicDefinition[] = [
       /\bproject[- ]first\b/i,
       /\battach(?:ed)?\s+workspace\b/i,
       /\bnew\s+session\b/i
+    ]
+  },
+  {
+    key: 'google-docs-connector',
+    group: 'docs',
+    title: 'Google Docs Connector Access',
+    score: 1.5,
+    patterns: [
+      /\bgoogle docs?\b.*\b(?:connector|comments?|access|shared doc|drive)\b/i,
+      /\bgoogle drive\b.*\b(?:connector|comments?|access|shared doc)\b/i,
+      /\bcomments?\b.*\bgoogle docs?\b/i
+    ]
+  },
+  {
+    key: 'scope-questionnaire',
+    group: 'docs',
+    title: 'Scope Questionnaire Review',
+    score: 2,
+    patterns: [
+      /\bscope[\s_-]+questionnaire\b/i,
+      /\bquestionnaire\b.*\b(?:document|improvements?|proposal|scope|review)\b/i,
+      /\b(?:document|improvements?|proposal|scope|review)\b.*\bquestionnaire\b/i
     ]
   },
   {
@@ -214,7 +243,51 @@ const EXACT_TITLES: ExactTitle[] = [
 ]
 
 const ACTION_WORDS =
-  /\b(add|adapt|build|clean|collapse|compact|create|debug|derive|display|explain|fix|generate|hide|implement|improve|investigate|move|parse|polish|remove|rename|review|show|support|update|wire)\b/i
+  /\b(add|adapt|build|check|clean|collapse|compact|confirm|create|debug|derive|display|explain|fix|generate|hide|implement|improve|investigate|move|parse|polish|remove|rename|review|show|support|update|verify|wire)\b/i
+
+const GENERIC_TOPIC_TITLE_WORDS = new Set([
+  'access',
+  'cleanup',
+  'display',
+  'fixes',
+  'improvements',
+  'management',
+  'review',
+  'workflow'
+])
+
+const ARTIFACT_STOP_WORDS = new Set([
+  'copy',
+  'current',
+  'draft',
+  'file',
+  'final',
+  'handoff',
+  'phase',
+  'project',
+  'updated',
+  'version'
+])
+
+const DOC_ARTIFACT_WORDS = new Set([
+  'annexure',
+  'audit',
+  'brief',
+  'checklist',
+  'document',
+  'flow',
+  'guide',
+  'plan',
+  'policy',
+  'proposal',
+  'questionnaire',
+  'report',
+  'requirements',
+  'roadmap',
+  'schedule',
+  'scope',
+  'specification'
+])
 
 export function contentText(value: unknown): string | null {
   if (typeof value === 'string') return value
@@ -235,19 +308,20 @@ export function contentText(value: unknown): string | null {
 
 export function titleCandidate(text: string | null): string | null {
   if (!text) return null
+  const normalized = normalizeCommandLinks(text)
   // Reject injected, non-user content. Beyond command/system markers, this covers
   // Codex's environment preamble (`<environment_context>` — cwd/shell/date, whose
   // inner text would otherwise leak as the title) and skill/instruction
   // expansions (`<skill>`, `<user_instructions>`) that the user never typed.
   if (
     /<\/?(command-message|command-name|local-command-stdout|subagent_notification|system-reminder|environment_context|skill|user_instructions)\b/i.test(
-      text
+      normalized
     )
   ) {
     return null
   }
 
-  const stripped = cleanMarkup(text)
+  const stripped = cleanMarkup(normalized)
   return stripped || null
 }
 
@@ -286,7 +360,7 @@ function workflowSessionTitle(messages: TitleMessage[]): string | null {
   let first: typeof START_SESSION_TITLE | typeof SAVE_SESSION_TITLE | null = null
 
   for (const { text } of messages) {
-    const lower = text.toLowerCase().replace(/`/g, '')
+    const lower = normalizeCommandLinks(text).toLowerCase().replace(/`/g, '')
     start += lower.match(startRe)?.length ?? 0
     save += lower.match(saveRe)?.length ?? 0
 
@@ -306,6 +380,9 @@ function workflowSessionTitle(messages: TitleMessage[]): string | null {
 function inferSessionTitle(messages: TitleMessage[]): string | null {
   const requests = collectTitleRequests(messages)
   const analyses = requests.map(analyzeRequest)
+  const artifactTitle = workstreamArtifactTitle(messages)
+  if (artifactTitle) return artifactTitle
+
   const groups = rankGroups(analyses)
 
   if (groups.length > 0) {
@@ -335,16 +412,25 @@ function collectTitleRequests(messages: TitleMessage[]): TitleRequest[] {
 }
 
 function analyzeRequest(request: TitleRequest): RequestAnalysis {
-  const topics = TOPIC_DEFINITIONS.filter((definition) => definition.patterns.some((pattern) => pattern.test(request.text))).map(
-    (definition) => ({
+  const topics = TOPIC_DEFINITIONS.map((definition) => {
+    const score = topicDefinitionScore(definition, request.text)
+    return score > 0
+      ? {
       definition,
-      score: definition.score ?? 1
-    })
-  )
+          score
+        }
+      : null
+  }).filter((topic): topic is TopicHit => topic !== null)
 
   const exactTitles = EXACT_TITLES.filter((exact) => exact.pattern.test(request.text))
 
   return { ...request, exactTitles, topics }
+}
+
+function topicDefinitionScore(definition: TopicDefinition, text: string): number {
+  const baseScore = definition.score ?? 1
+  if (definition.patterns.some((pattern) => pattern.test(text))) return baseScore
+  return fuzzyTitleTokenMatch(definition.title, text) ? baseScore * 1.1 : 0
 }
 
 function rankGroups(analyses: RequestAnalysis[]): GroupScore[] {
@@ -441,7 +527,7 @@ function focusedGroupTitle(group: GroupScore, analyses: RequestAnalysis[]): stri
 }
 
 function normalizeRequestText(text: string): string {
-  let value = text
+  let value = normalizeCommandLinks(text)
     .replace(/\r/g, '')
     .replace(/<subagent_notification>[\s\S]*?<\/subagent_notification>/gi, ' ')
     .replace(/<environment_context>[\s\S]*?<\/environment_context>/gi, ' ')
@@ -466,6 +552,140 @@ function cleanMarkup(text: string): string {
     .trim()
 }
 
+function normalizeCommandLinks(text: string): string {
+  return text.replace(/\[\s*([$\/]?\s*(?:start|save))\s*\]\([^)]+\)/gi, (_match, command: string) => {
+    const normalized = command.replace(/\s+/g, '').toLowerCase()
+    return normalized.startsWith('$') || normalized.startsWith('/') ? normalized : `$${normalized}`
+  })
+}
+
+function workstreamArtifactTitle(messages: TitleMessage[]): string | null {
+  const candidates = new Map<string, ArtifactTitleCandidate>()
+
+  for (const message of messages) {
+    const phrases = new Set(extractArtifactPhrases(message.text))
+    for (const phrase of phrases) {
+      const key = phrase.toLowerCase()
+      const existing = candidates.get(key)
+      const docLike = phraseWords(phrase).some((word) => DOC_ARTIFACT_WORDS.has(word))
+      if (existing) {
+        existing.score += 1
+        existing.latestMs = Math.max(existing.latestMs, message.timestampMs)
+        existing.docLike = existing.docLike || docLike
+      } else {
+        candidates.set(key, { phrase, score: 1, latestMs: message.timestampMs, docLike })
+      }
+    }
+  }
+
+  const best = [...candidates.values()]
+    .filter((candidate) => candidate.score >= 2 && (candidate.docLike || phraseWords(candidate.phrase).length >= 3))
+    .sort((a, b) => b.score - a.score || Number(b.docLike) - Number(a.docLike) || b.latestMs - a.latestMs)[0]
+
+  if (!best) return null
+  return artifactActionTitle(best.phrase, messages)
+}
+
+function extractArtifactPhrases(text: string): string[] {
+  const matches = text.match(/[A-Za-z0-9][A-Za-z0-9 _.-]{2,}\.(?:csv|docx?|json|mdx?|pdf|tsx?|txt|xlsx?)/gi) ?? []
+  return matches.map(artifactPhraseFromFilename).filter((phrase): phrase is string => Boolean(phrase))
+}
+
+function artifactPhraseFromFilename(filename: string): string | null {
+  const basename = filename
+    .split(/[\\/]/)
+    .pop()
+    ?.replace(/\.[^.]+$/, '')
+  if (!basename) return null
+
+  const rawTokens = basename
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .split(/[\s_.-]+/)
+    .filter(Boolean)
+
+  if (rawTokens.length === 0) return null
+  if (
+    rawTokens.length >= 4 &&
+    /^[A-Z]{4,}$/.test(rawTokens[0]) &&
+    rawTokens.slice(1).some((token) => DOC_ARTIFACT_WORDS.has(token.toLowerCase()))
+  ) {
+    rawTokens.shift()
+  }
+
+  const words = rawTokens
+    .map((token) => token.toLowerCase())
+    .filter((token) => token.length >= 3)
+    .filter((token) => !/^\d+$/.test(token))
+    .filter((token) => !/^v\d+$/i.test(token))
+    .filter((token) => !ARTIFACT_STOP_WORDS.has(token))
+
+  if (words.length < 2) return null
+  if (!words.some((word) => DOC_ARTIFACT_WORDS.has(word)) && words.length < 3) return null
+
+  return words.slice(0, 4).map(capitalizeFirst).join(' ')
+}
+
+function artifactActionTitle(phrase: string, messages: TitleMessage[]): string {
+  if (/\b(?:audit|checklist|flow|guide|plan|policy|report|review|roadmap|schedule)\b$/i.test(phrase)) return phrase
+
+  const text = messages.map((message) => message.text).join(' ')
+  if (/\b(?:audit|check|comments?|ensure|gaps?|proposal readiness|review|validate)\b/i.test(text)) {
+    return `${phrase} Review`
+  }
+  if (/\b(?:create|improve|polish|revise|rewrite|update)\b/i.test(text)) {
+    return `${phrase} Improvements`
+  }
+  return phrase
+}
+
+function fuzzyTitleTokenMatch(title: string, text: string): boolean {
+  const titleTokens = phraseWords(title).filter((word) => !GENERIC_TOPIC_TITLE_WORDS.has(word))
+  if (titleTokens.length < 2) return false
+
+  const textWords = phraseWords(text)
+  let matches = 0
+  for (const token of titleTokens) {
+    if (textWords.some((word) => approximatelyEqualWord(word, token))) matches += 1
+  }
+
+  return matches >= Math.min(titleTokens.length, 3)
+}
+
+function phraseWords(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length >= 3)
+}
+
+function approximatelyEqualWord(actual: string, expected: string): boolean {
+  if (actual === expected) return true
+  if (expected.length < 6 || actual.length < 6) return false
+  const distance = levenshteinDistance(actual, expected, expected.length >= 9 ? 2 : 1)
+  return distance <= (expected.length >= 9 ? 2 : 1)
+}
+
+function levenshteinDistance(a: string, b: string, maxDistance: number): number {
+  if (Math.abs(a.length - b.length) > maxDistance) return maxDistance + 1
+
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index)
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i]
+    let rowMin = current[0]
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1
+      const value = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + cost)
+      current[j] = value
+      rowMin = Math.min(rowMin, value)
+    }
+    if (rowMin > maxDistance) return maxDistance + 1
+    previous = current
+  }
+
+  return previous[b.length]
+}
+
 function isSubstantive(text: string): boolean {
   const normalized = text.toLowerCase().trim()
   if (!normalized) return false
@@ -484,7 +704,7 @@ function isSubstantive(text: string): boolean {
   // request, and otherwise drown out the real intent during inference. (IDE
   // context blocks are handled above — they embed the real "My request" text.)
   if (/^you are (?:the|a)\s+(?:single|sole|only|mandatory|delegated)\b/.test(normalized)) return false
-  if (/^(?:run|execute|use|perform)\s+the\s+`?\/?(?:start|save)\b/.test(normalized)) return false
+  if (/^(?:run|execute|use|perform)\s+(?:the\s+)?`?[$/]?(?:start|save)\b/.test(normalized)) return false
   if (/^run\s+the\s+start[- ]session\b/.test(normalized)) return false
 
   return normalized.length >= 12
@@ -515,7 +735,25 @@ function chooseActionSentence(text: string): string | null {
     .map((part) => part.trim())
     .filter(Boolean)
 
-  return sentences.find((sentence) => ACTION_WORDS.test(sentence)) ?? sentences[0] ?? null
+  return (
+    sentences.find((sentence) => isDirectiveSentence(sentence) && !isStatusPreamble(sentence)) ??
+    sentences.find((sentence) => ACTION_WORDS.test(sentence) && !isStatusPreamble(sentence)) ??
+    sentences.find((sentence) => !isStatusPreamble(sentence)) ??
+    sentences[0] ??
+    null
+  )
+}
+
+function isDirectiveSentence(sentence: string): boolean {
+  return /\b(?:please|can|could|would|should|how|what|where|when|why)\b/i.test(sentence) || ACTION_WORDS.test(sentence)
+}
+
+function isStatusPreamble(sentence: string): boolean {
+  const lower = sentence.toLowerCase().trim()
+  return (
+    /^i(?:'ve| have)\s+(?:reviewed|checked|finished|completed|done)\b/.test(lower) ||
+    /^i(?:'m| am)\s+(?:ready|done|finished)\b/.test(lower)
+  )
 }
 
 function limitWords(text: string): string {
@@ -549,6 +787,9 @@ function isWeakTitle(text: string): boolean {
   if (/[,;:]$/.test(normalized)) return true
   if (/^(once|when|while|because|since|if)\b/.test(lower)) return true
   if (/^(ok|okay|thanks|thank you)\b/.test(lower)) return true
+  if (/^[$/]?(start|save)\b/.test(lower)) return true
+  if (/^(?:run|execute|use|perform)\s+(?:the\s+)?[$/]?(?:start|save)\b/.test(lower)) return true
+  if (/^i(?:'ve| have)\s+(?:reviewed|checked|finished|completed|done)\b/.test(lower)) return true
   if (/^i\s+(?:do not|don'?t)\s+(?:want|need|like|think|address)\b/.test(lower)) return true
   if (/^i\s+(?:am|'m)\s+(?:not sure|unable|done|happy)\b/.test(lower)) return true
   if (/\bimplementing various fixes\b/i.test(normalized)) return true

@@ -6,6 +6,11 @@ import type { PlatformId } from '@shared/platform'
 import { contentText, resolveSessionTitle, titleCandidate, type TitleMessage } from './session-title'
 import { isCodexSubagentSessionMeta, rankRolloutFiles } from './codex-rollout'
 import { cleanHistoryText } from './session-history-text'
+import {
+  resolveGeneratedSessionTitle,
+  sourceFromPath,
+  type SessionTranscriptSource
+} from './session-title-generation-service'
 
 type ClaudeSessionDraft = {
   id: string
@@ -17,6 +22,7 @@ type ClaudeSessionDraft = {
   updatedAtMs: number
   tokenTotal: number
   entrypoint: string | null
+  sources: SessionTranscriptSource[]
 }
 
 type CodexSessionDraft = {
@@ -28,12 +34,14 @@ type CodexSessionDraft = {
   titleMessages: TitleMessage[]
   updatedAtMs: number
   isSubagent: boolean
+  sources: SessionTranscriptSource[]
 }
 
 type CodexSessionDetails = {
   cwd: string | null
   branch: string | null
   titleMessages: TitleMessage[]
+  updatedAtMs: number
 }
 
 const MAX_SESSIONS = 80
@@ -341,7 +349,8 @@ function finalizeHistoryEntries(entries: HistoryDraft[]): AssistantSessionHistor
 }
 
 export async function readCodexSessionDetails(path: string): Promise<CodexSessionDetails> {
-  const details: CodexSessionDetails = { cwd: null, branch: null, titleMessages: [] }
+  const source = await sourceFromPath(path)
+  const details: CodexSessionDetails = { cwd: null, branch: null, titleMessages: [], updatedAtMs: source?.mtimeMs ?? 0 }
 
   try {
     const raw = await readFileSample(path)
@@ -354,8 +363,10 @@ export async function readCodexSessionDetails(path: string): Promise<CodexSessio
           if (typeof row.payload?.git?.branch === 'string') details.branch = row.payload.git.branch
         }
 
+        const timestampMs = rowTimestampMs(row, 0)
+        if (timestampMs > 0) details.updatedAtMs = Math.max(details.updatedAtMs, timestampMs)
         const text = codexTitleMessage(row)
-        if (text) details.titleMessages.push({ text, timestampMs: rowTimestampMs(row, 0) })
+        if (text) details.titleMessages.push({ text, timestampMs })
       } catch {
         // Tail samples can start mid-line. Ignore partial or malformed rows.
       }
@@ -372,6 +383,9 @@ export async function readCodexSessionDetails(path: string): Promise<CodexSessio
 // (cwd/branch) and the earliest user messages used to infer a title, while the
 // tail carries the most recent row timestamp used for recency.
 async function readCodexSession(path: string, fallbackUpdatedAtMs: number): Promise<CodexSessionDraft | null> {
+  const source = await sourceFromPath(path)
+  if (!source) return null
+
   const draft: CodexSessionDraft = {
     id: basename(path, '.jsonl'),
     sourcePath: path,
@@ -380,7 +394,8 @@ async function readCodexSession(path: string, fallbackUpdatedAtMs: number): Prom
     rawTitle: null,
     titleMessages: [],
     updatedAtMs: fallbackUpdatedAtMs,
-    isSubagent: false
+    isSubagent: false,
+    sources: [source]
   }
 
   let raw: string
@@ -452,11 +467,12 @@ function dedupeCodexById(drafts: CodexSessionDraft[]): CodexSessionDraft[] {
   for (const draft of drafts) {
     const existing = byId.get(draft.id)
     if (!existing) {
-      byId.set(draft.id, { ...draft, titleMessages: [...draft.titleMessages] })
+      byId.set(draft.id, { ...draft, titleMessages: [...draft.titleMessages], sources: [...draft.sources] })
       continue
     }
 
     existing.titleMessages.push(...draft.titleMessages)
+    existing.sources.push(...draft.sources)
     if (draft.updatedAtMs >= existing.updatedAtMs) {
       existing.updatedAtMs = draft.updatedAtMs
       existing.sourcePath = draft.sourcePath
@@ -482,7 +498,8 @@ async function readClaudeSession(path: string): Promise<ClaudeSessionDraft | nul
     titleMessages: [],
     updatedAtMs: stats.mtimeMs,
     tokenTotal: 0,
-    entrypoint: null
+    entrypoint: null,
+    sources: [{ path, size: stats.size, mtimeMs: stats.mtimeMs }]
   }
 
   const raw = await readFile(path, 'utf-8')
@@ -539,7 +556,7 @@ function dedupeById(drafts: ClaudeSessionDraft[]): ClaudeSessionDraft[] {
   for (const draft of drafts) {
     const existing = byId.get(draft.id)
     if (!existing) {
-      byId.set(draft.id, { ...draft })
+      byId.set(draft.id, { ...draft, titleMessages: [...draft.titleMessages], sources: [...draft.sources] })
       continue
     }
 
@@ -547,6 +564,7 @@ function dedupeById(drafts: ClaudeSessionDraft[]): ClaudeSessionDraft[] {
     existing.rawTitle = existing.rawTitle ?? draft.rawTitle
     existing.entrypoint = existing.entrypoint ?? draft.entrypoint
     existing.titleMessages.push(...draft.titleMessages)
+    existing.sources.push(...draft.sources)
     if (draft.updatedAtMs >= existing.updatedAtMs) {
       existing.updatedAtMs = draft.updatedAtMs
       existing.sourcePath = draft.sourcePath
@@ -577,25 +595,45 @@ export async function getClaudeSessions(): Promise<AssistantSession[]> {
 
   const drafts = sessions.filter((session): session is ClaudeSessionDraft => Boolean(session))
 
-  return dedupeById(drafts)
+  const visibleSessions = dedupeById(drafts)
     .filter((session) => !isAutomatedSession(session.entrypoint))
     .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
     .slice(0, MAX_SESSIONS)
-    .map((session) => {
+
+  return Promise.all(
+    visibleSessions.map(async (session) => {
+      const fallbackTitle = claudeFallbackTitle(session.cwd)
+      const project = projectLabel(session.cwd, session.sourcePath)
       const resolvedTitle = resolveSessionTitle({
         rawTitle: session.rawTitle,
-        fallbackTitle: claudeFallbackTitle(session.cwd),
+        fallbackTitle,
         messages: session.titleMessages
+      })
+      const titleFields = await resolveGeneratedSessionTitle({
+        platform: 'claude',
+        sessionId: session.id,
+        project,
+        projectPath: session.cwd,
+        branch: session.branch,
+        fallbackTitle,
+        resolvedTitle,
+        titleMessages: session.titleMessages,
+        transcriptUpdatedAtMs: session.updatedAtMs,
+        sources: session.sources
       })
 
       return {
         id: session.id,
         platform: 'claude',
         projectId: projectId('claude', session.cwd, dirname(session.sourcePath)),
-        title: resolvedTitle.title,
-        rawTitle: resolvedTitle.rawTitle,
-        inferredTitle: resolvedTitle.inferredTitle,
-        project: projectLabel(session.cwd, session.sourcePath),
+        title: titleFields.title,
+        rawTitle: titleFields.rawTitle,
+        inferredTitle: titleFields.inferredTitle,
+        generatedTitle: titleFields.generatedTitle,
+        titleSource: titleFields.titleSource,
+        titleStatus: titleFields.titleStatus,
+        titleUpdatedAt: titleFields.titleUpdatedAt,
+        project,
         projectPath: session.cwd,
         branch: session.branch,
         usageLabel: formatTokenLabel(session.tokenTotal),
@@ -604,6 +642,7 @@ export async function getClaudeSessions(): Promise<AssistantSession[]> {
         updatedAt: new Date(session.updatedAtMs).toISOString()
       }
     })
+  )
 }
 
 export async function getCodexSessions(): Promise<AssistantSession[]> {
@@ -635,20 +674,38 @@ export async function getCodexSessions(): Promise<AssistantSession[]> {
       branch = (await branchByCwd.get(draft.cwd)) ?? null
     }
 
+    const fallbackTitle = codexFallbackTitle(draft.id)
+    const project = codexProjectLabel(draft.cwd)
     const resolvedTitle = resolveSessionTitle({
       rawTitle: draft.rawTitle ?? threadNames.get(draft.id) ?? null,
-      fallbackTitle: codexFallbackTitle(draft.id),
+      fallbackTitle,
       messages: draft.titleMessages
+    })
+    const titleFields = await resolveGeneratedSessionTitle({
+      platform: 'codex',
+      sessionId: draft.id,
+      project,
+      projectPath: draft.cwd,
+      branch,
+      fallbackTitle,
+      resolvedTitle,
+      titleMessages: draft.titleMessages,
+      transcriptUpdatedAtMs: draft.updatedAtMs,
+      sources: draft.sources
     })
 
     return {
       id: draft.id,
       platform: 'codex',
       projectId: projectId('codex', draft.cwd),
-      title: resolvedTitle.title,
-      rawTitle: resolvedTitle.rawTitle,
-      inferredTitle: resolvedTitle.inferredTitle,
-      project: codexProjectLabel(draft.cwd),
+      title: titleFields.title,
+      rawTitle: titleFields.rawTitle,
+      inferredTitle: titleFields.inferredTitle,
+      generatedTitle: titleFields.generatedTitle,
+      titleSource: titleFields.titleSource,
+      titleStatus: titleFields.titleStatus,
+      titleUpdatedAt: titleFields.titleUpdatedAt,
+      project,
       projectPath: draft.cwd,
       branch,
       usageLabel: null,
@@ -659,14 +716,16 @@ export async function getCodexSessions(): Promise<AssistantSession[]> {
   }))
 }
 
-async function getClaudeSessionFiles(sessionId: string): Promise<Array<{ path: string; raw: string }>> {
+async function getClaudeSessionFiles(
+  sessionId: string
+): Promise<Array<{ path: string; raw: string; source: SessionTranscriptSource }>> {
   const root = join(app.getPath('home'), '.claude', 'projects')
   // Only real transcripts. This excludes subagent sidechains
   // (`<sessionId>/subagents/agent-*.jsonl`) and claude-flow telemetry
   // (`.claude-flow/data/*.jsonl`) — the latter also carries real sessionIds, so
   // it would otherwise be folded into a session's history as empty noise.
   const files = (await findJsonlFiles(root)).filter((path) => isClaudeTranscriptPath(root, path))
-  const matches: Array<{ path: string; raw: string }> = []
+  const matches: Array<{ path: string; raw: string; source: SessionTranscriptSource }> = []
 
   for (const path of files) {
     let raw = ''
@@ -677,21 +736,26 @@ async function getClaudeSessionFiles(sessionId: string): Promise<Array<{ path: s
     }
 
     if (basename(path, '.jsonl') === sessionId || raw.includes(`"sessionId":"${sessionId}"`)) {
-      matches.push({ path, raw })
+      const source = await sourceFromPath(path)
+      if (source) matches.push({ path, raw, source })
     }
   }
 
   return matches
 }
 
-async function getCodexSessionFile(sessionId: string): Promise<{ path: string; raw: string } | null> {
+async function getCodexSessionFile(
+  sessionId: string
+): Promise<{ path: string; raw: string; source: SessionTranscriptSource } | null> {
   const root = join(app.getPath('home'), '.codex', 'sessions')
   const files = await findJsonlFiles(root)
   const path = files.find((file) => file.includes(sessionId))
   if (!path) return null
 
   try {
-    return { path, raw: await readFile(path, 'utf-8') }
+    const source = await sourceFromPath(path)
+    if (!source) return null
+    return { path, raw: await readFile(path, 'utf-8'), source }
   } catch {
     return null
   }
@@ -701,10 +765,24 @@ export async function getClaudeSessionHistory(sessionId: string): Promise<Assist
   const matches = await getClaudeSessionFiles(sessionId)
   const drafts = await Promise.all(matches.map(({ path }) => readClaudeSession(path)))
   const session = dedupeById(drafts.filter((draft): draft is ClaudeSessionDraft => Boolean(draft)))[0]
+  const fallbackTitle = claudeFallbackTitle(session?.cwd ?? null)
   const resolvedTitle = resolveSessionTitle({
     rawTitle: session?.rawTitle ?? null,
-    fallbackTitle: claudeFallbackTitle(session?.cwd ?? null),
+    fallbackTitle,
     messages: session?.titleMessages ?? []
+  })
+  const project = session ? projectLabel(session.cwd, session.sourcePath) : 'Claude session'
+  const titleFields = await resolveGeneratedSessionTitle({
+    platform: 'claude',
+    sessionId,
+    project,
+    projectPath: session?.cwd ?? null,
+    branch: session?.branch ?? null,
+    fallbackTitle,
+    resolvedTitle,
+    titleMessages: session?.titleMessages ?? [],
+    transcriptUpdatedAtMs: session?.updatedAtMs ?? Math.max(0, ...matches.map((match) => match.source.mtimeMs)),
+    sources: session?.sources ?? matches.map((match) => match.source)
   })
 
   const entries: HistoryDraft[] = []
@@ -725,8 +803,8 @@ export async function getClaudeSessionHistory(sessionId: string): Promise<Assist
   return {
     sessionId,
     platform: 'claude',
-    title: resolvedTitle.title,
-    project: session ? projectLabel(session.cwd, session.sourcePath) : 'Claude session',
+    title: titleFields.title,
+    project,
     entries: finalizeHistoryEntries(entries)
   }
 }
@@ -744,10 +822,24 @@ export async function getCodexSessionHistory(sessionId: string): Promise<Assista
   }
 
   const details = await readCodexSessionDetails(match.path)
+  const fallbackTitle = codexFallbackTitle(sessionId)
   const resolvedTitle = resolveSessionTitle({
     rawTitle: null,
-    fallbackTitle: codexFallbackTitle(sessionId),
+    fallbackTitle,
     messages: details.titleMessages
+  })
+  const project = codexProjectLabel(details.cwd)
+  const titleFields = await resolveGeneratedSessionTitle({
+    platform: 'codex',
+    sessionId,
+    project,
+    projectPath: details.cwd,
+    branch: details.branch,
+    fallbackTitle,
+    resolvedTitle,
+    titleMessages: details.titleMessages,
+    transcriptUpdatedAtMs: details.updatedAtMs,
+    sources: [match.source]
   })
 
   const entries: HistoryDraft[] = []
@@ -766,8 +858,8 @@ export async function getCodexSessionHistory(sessionId: string): Promise<Assista
   return {
     sessionId,
     platform: 'codex',
-    title: resolvedTitle.title,
-    project: codexProjectLabel(details.cwd),
+    title: titleFields.title,
+    project,
     entries: finalizeHistoryEntries(entries)
   }
 }

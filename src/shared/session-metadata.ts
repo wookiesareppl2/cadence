@@ -40,7 +40,7 @@ export function applySessionAlias(
 ): AssistantSession {
   const alias = sessionAliases[sessionAliasKey(session.platform, session.id)]
   if (!alias || !alias.trim() || isInternalSessionAlias(alias)) return session
-  return { ...session, title: alias }
+  return { ...session, title: alias, titleSource: 'manual', titleStatus: 'ready' }
 }
 
 // Returns the alias for a project id, or the inferred name when none is set.

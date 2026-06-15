@@ -189,6 +189,22 @@ describe('session title resolver', () => {
     expect(result.inferredTitle).toBeNull()
   })
 
+  it('labels markdown-linked save command sessions "Save Session"', () => {
+    const result = resolveSessionTitle({
+      rawTitle: null,
+      fallbackTitle: 'Codex 019ab123',
+      messages: [
+        {
+          text: 'Run the [$save](C:\\Users\\sheld\\.codex\\skills\\save\\SKILL.md) skill exactly as specified.',
+          timestampMs: 1
+        }
+      ]
+    })
+
+    expect(result.title).toBe('Save Session')
+    expect(result.inferredTitle).toBeNull()
+  })
+
   it('labels a pure start-skill session "Session Start"', () => {
     const result = resolveSessionTitle({
       rawTitle: null,
@@ -248,5 +264,112 @@ describe('session title resolver', () => {
 
     expect(result.title).toBe('Usage Display Improvements')
     expect(result.inferredTitle).toBe('Usage Display Improvements')
+  })
+
+  it('does not use reviewed-document status preambles as compact titles', () => {
+    const result = resolveSessionTitle({
+      rawTitle: null,
+      fallbackTitle: 'Codex 019ab123',
+      messages: [
+        {
+          text: "I've reviewed the document and I'm ready to provide it to you to review my comments and implement any suggested improvements.",
+          timestampMs: 1
+        }
+      ]
+    })
+
+    expect(result.title).toBe('Codex 019ab123')
+    expect(result.inferredTitle).toBeNull()
+  })
+
+  it('titles Google Docs connector access prompts by topic instead of the opening status sentence', () => {
+    const result = resolveSessionTitle({
+      rawTitle: null,
+      fallbackTitle: 'Codex 019ab123',
+      messages: [
+        {
+          text:
+            '# Context from my IDE setup:\n\n' +
+            '## Active file: BADISA_PHASE_1_SCOPE_QUESTIONNAIRE_2026-04-24.md\n\n' +
+            '## My request for Codex:\n' +
+            "I've reviewed the document and I'm ready to provide it to you to review my comments and implement any suggested improvements. " +
+            'Before you do anything, please confirm how exactly the process works in terms of how you are able to access the Google doc via the connector?',
+          timestampMs: 1
+        }
+      ]
+    })
+
+    expect(result.title).toBe('Google Docs Connector Access')
+    expect(result.inferredTitle).toBe('Google Docs Connector Access')
+  })
+
+  it('prefers the scope questionnaire workstream over a Google Docs access detour', () => {
+    const result = resolveSessionTitle({
+      rawTitle: null,
+      fallbackTitle: 'Codex 019ab123',
+      messages: [
+        {
+          text:
+            'We already reworked the BADISA_PHASE_1_SCOPE_QUESTIONNAIRE document and need to look for any issues or changes needed in the questionaire.',
+          timestampMs: 1
+        },
+        {
+          text:
+            "I've reviewed the document and I'm ready to provide it to you to review my comments. " +
+            'Before you do anything, please confirm how exactly the process works in terms of how you are able to access the Google doc via the connector?',
+          timestampMs: 2
+        },
+        {
+          text:
+            'Please proceed with creating a revised v5 scope questionaire that includes the suggested improvements.',
+          timestampMs: 3
+        }
+      ]
+    })
+
+    expect(result.title).toBe('Scope Questionnaire Review')
+    expect(result.inferredTitle).toBe('Scope Questionnaire Review')
+  })
+
+  it('tolerates small spelling errors in topic words', () => {
+    const result = resolveSessionTitle({
+      rawTitle: null,
+      fallbackTitle: 'Codex 019ab123',
+      messages: [
+        {
+          text: 'The Claude usage notificatons keep popping up every few minutes and need to be fixed.',
+          timestampMs: 1
+        }
+      ]
+    })
+
+    expect(result.title).toBe('Usage Notification Improvements')
+    expect(result.inferredTitle).toBe('Usage Notification Improvements')
+  })
+
+  it('derives a workstream title from repeated document artifact names', () => {
+    const result = resolveSessionTitle({
+      rawTitle: null,
+      fallbackTitle: 'Codex 019ab123',
+      messages: [
+        {
+          text:
+            '# Context from my IDE setup:\n\n' +
+            '## Active file: PRODUCT_REQUIREMENTS_BRIEF_2026-06-01.md\n\n' +
+            '## My request for Codex:\nCan you review the document and check whether anything important is missing?',
+          timestampMs: 1
+        },
+        {
+          text:
+            '# Context from my IDE setup:\n\n' +
+            '## Active file: PRODUCT_REQUIREMENTS_BRIEF_2026-06-01.md\n\n' +
+            '## My request for Codex:\nPlease update the requirements brief based on the review findings.',
+          timestampMs: 2
+        }
+      ]
+    })
+
+    expect(result.title).toBe('Requirements Brief Review')
+    expect(result.inferredTitle).toBe('Requirements Brief Review')
   })
 })

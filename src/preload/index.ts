@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { ClaudePlanUsage } from '@shared/claude-plan-usage'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import type { PlatformId } from '@shared/platform'
-import type { AssistantSession, AssistantSessionHistory } from '@shared/sessions'
+import type { AssistantSession, AssistantSessionHistory, SessionTitleGenerationStatus } from '@shared/sessions'
 import type { SessionMetadata } from '@shared/session-metadata'
 import type { TerminalDataEvent, TerminalPlatform, TerminalStartResult } from '@shared/terminal'
 import type { ClaudeUsageSummary } from '@shared/usage'
@@ -28,6 +28,8 @@ const api = {
     getCodexSessions: (): Promise<AssistantSession[]> => ipcRenderer.invoke('sessions:codex'),
     getSessionHistory: (platform: PlatformId, sessionId: string): Promise<AssistantSessionHistory> =>
       ipcRenderer.invoke('sessions:history', platform, sessionId),
+    getTitleGenerationStatus: (): Promise<SessionTitleGenerationStatus> =>
+      ipcRenderer.invoke('sessions:title-generation-status'),
     getMetadata: (): Promise<SessionMetadata> => ipcRenderer.invoke('sessions:metadata'),
     setProjectAlias: (projectId: string, name: string | null): Promise<SessionMetadata> =>
       ipcRenderer.invoke('sessions:set-project-alias', projectId, name),
