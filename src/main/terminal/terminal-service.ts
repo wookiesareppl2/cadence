@@ -12,6 +12,7 @@ type WorkerRequest = {
   terminalId?: string
   platform?: TerminalPlatform
   cwd?: string
+  wslDistro?: string
   data?: string
   cols?: number
   rows?: number
@@ -153,19 +154,24 @@ export async function startTerminal(
   terminalId: string,
   platform: string,
   webContents: WebContents,
-  cwd?: string
+  cwd?: string,
+  wslDistro?: string
 ): Promise<TerminalStartResult> {
   assertTerminalId(terminalId)
   assertPlatform(platform)
   subscribe(webContents)
 
+  const distro = typeof wslDistro === 'string' && wslDistro.trim() ? wslDistro.trim() : undefined
+
   let workspaceCwd: string | undefined
   if (typeof cwd === 'string' && cwd.trim()) {
-    if (!existsSync(cwd)) throw new Error(`Workspace folder not found: ${cwd}`)
+    // A WSL cwd is a POSIX path that won't exist on the Windows side; let
+    // `wsl --cd` validate it. Only existence-check native Windows folders.
+    if (!distro && !existsSync(cwd)) throw new Error(`Workspace folder not found: ${cwd}`)
     workspaceCwd = cwd
   }
 
-  return sendWorkerRequest({ type: 'start', terminalId, platform, cwd: workspaceCwd })
+  return sendWorkerRequest({ type: 'start', terminalId, platform, cwd: workspaceCwd, wslDistro: distro })
 }
 
 export function writeTerminal(terminalId: string, data: string): void {

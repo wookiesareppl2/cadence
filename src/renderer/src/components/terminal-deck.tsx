@@ -9,13 +9,16 @@ export type TerminalTab = {
   id: string
   title: string
   cwd: string | null
+  // WSL distro to launch the shell inside (cwd is then a POSIX path). Null for
+  // native Windows terminals.
+  wslDistro?: string | null
 }
 
 export type TerminalDeckState = {
   tabs: TerminalTab[]
-  addTerminal: (cwd?: string | null, title?: string) => void
+  addTerminal: (cwd?: string | null, title?: string, wslDistro?: string | null) => void
   closeTerminal: (id: string) => void
-  resetTerminals: (cwd?: string | null, title?: string) => void
+  resetTerminals: (cwd?: string | null, title?: string, wslDistro?: string | null) => void
 }
 
 const TERMINAL_THEME = {
@@ -68,7 +71,7 @@ function loadTabs(platform: TerminalPlatform): TerminalTab[] {
         // the project-scoped tabs and drop any legacy directoryless (home) shell.
         return parsed
           .filter((tab): tab is TerminalTab => typeof tab.cwd === 'string' && tab.cwd.length > 0)
-          .map((tab) => ({ id: tab.id, title: tab.title, cwd: tab.cwd }))
+          .map((tab) => ({ id: tab.id, title: tab.title, cwd: tab.cwd, wslDistro: tab.wslDistro ?? null }))
       }
     }
   } catch {
@@ -102,10 +105,15 @@ export function useTerminalDeck(platform: TerminalPlatform): TerminalDeckState {
   }, [platform, tabs])
 
   const addTerminal = useCallback(
-    (cwd?: string | null, title?: string) => {
+    (cwd?: string | null, title?: string, wslDistro?: string | null) => {
       setTabs((prev) => [
         ...prev,
-        { id: makeTerminalId(platform), title: title?.trim() || nextDefaultTitle(prev), cwd: cwd ?? null }
+        {
+          id: makeTerminalId(platform),
+          title: title?.trim() || nextDefaultTitle(prev),
+          cwd: cwd ?? null,
+          wslDistro: wslDistro ?? null
+        }
       ])
     },
     [platform]
@@ -120,9 +128,11 @@ export function useTerminalDeck(platform: TerminalPlatform): TerminalDeckState {
   // every prior terminal (and its pty) is closed so nothing from the old session
   // bleeds into the new one.
   const resetTerminals = useCallback(
-    (cwd?: string | null, title?: string) => {
+    (cwd?: string | null, title?: string, wslDistro?: string | null) => {
       for (const tab of tabsRef.current) window.dashboard?.terminal?.close(tab.id)
-      setTabs([{ id: makeTerminalId(platform), title: title?.trim() || 'Terminal 1', cwd: cwd ?? null }])
+      setTabs([
+        { id: makeTerminalId(platform), title: title?.trim() || 'Terminal 1', cwd: cwd ?? null, wslDistro: wslDistro ?? null }
+      ])
     },
     [platform]
   )
@@ -134,6 +144,7 @@ export const TerminalDeck = memo(function TerminalDeck({
   platform,
   tabs,
   defaultCwd,
+  defaultWslDistro,
   projectName,
   statusLabel,
   onAdd,
@@ -142,9 +153,10 @@ export const TerminalDeck = memo(function TerminalDeck({
   platform: TerminalPlatform
   tabs: TerminalTab[]
   defaultCwd: string | null
+  defaultWslDistro?: string | null
   projectName?: string | null
   statusLabel: string
-  onAdd: (cwd?: string | null, title?: string) => void
+  onAdd: (cwd?: string | null, title?: string, wslDistro?: string | null) => void
   onClose: (id: string) => void
 }): JSX.Element {
   return (
@@ -159,7 +171,7 @@ export const TerminalDeck = memo(function TerminalDeck({
           <button
             type="button"
             className="terminal-action"
-            onClick={() => onAdd(defaultCwd)}
+            onClick={() => onAdd(defaultCwd, undefined, defaultWslDistro)}
             disabled={!defaultCwd}
             title={
               defaultCwd
@@ -176,7 +188,11 @@ export const TerminalDeck = memo(function TerminalDeck({
           {defaultCwd ? (
             <>
               <span>No terminal open for {projectName ?? 'this project'}.</span>
-              <button type="button" className="terminal-action" onClick={() => onAdd(defaultCwd)}>
+              <button
+                type="button"
+                className="terminal-action"
+                onClick={() => onAdd(defaultCwd, undefined, defaultWslDistro)}
+              >
                 Open terminal in {projectName ?? 'project'}
               </button>
             </>
@@ -192,6 +208,7 @@ export const TerminalDeck = memo(function TerminalDeck({
               terminalId={tab.id}
               platform={platform}
               cwd={tab.cwd}
+              wslDistro={tab.wslDistro ?? null}
               title={tab.title}
               onClose={() => onClose(tab.id)}
             />
@@ -206,12 +223,14 @@ function TerminalPane({
   terminalId,
   platform,
   cwd,
+  wslDistro,
   title,
   onClose
 }: {
   terminalId: string
   platform: TerminalPlatform
   cwd: string | null
+  wslDistro: string | null
   title: string
   onClose: () => void
 }): JSX.Element {
@@ -295,7 +314,7 @@ function TerminalPane({
     observer.observe(hostRef.current)
     window.requestAnimationFrame(fitTerminal)
     window.dashboard.terminal
-      .start(terminalId, platform, cwd ?? undefined)
+      .start(terminalId, platform, cwd ?? undefined, wslDistro ?? undefined)
       .then((result) => {
         setSession(result)
         if (result.replay) terminal.write(result.replay)
@@ -318,7 +337,7 @@ function TerminalPane({
       terminalRef.current = null
       fitAddonRef.current = null
     }
-  }, [terminalId, platform, cwd, fitTerminal, scheduleResizeFit])
+  }, [terminalId, platform, cwd, wslDistro, fitTerminal, scheduleResizeFit])
 
   const shellLabel = session ? `${session.shell} pid ${session.pid}` : 'starting'
 

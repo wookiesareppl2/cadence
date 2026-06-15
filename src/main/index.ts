@@ -192,8 +192,8 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   )
   ipcMain.handle('workspaces:list', () => listWorkspaces())
   ipcMain.handle('workspaces:attach', (event) => attachWorkspace(BrowserWindow.fromWebContents(event.sender)))
-  ipcMain.handle('terminal:start', (event, terminalId: string, platform: string, cwd?: string) =>
-    startTerminal(terminalId, platform, event.sender, cwd)
+  ipcMain.handle('terminal:start', (event, terminalId: string, platform: string, cwd?: string, wslDistro?: string) =>
+    startTerminal(terminalId, platform, event.sender, cwd, wslDistro)
   )
   ipcMain.handle('terminal:restart', (event, terminalId: string) => restartTerminal(terminalId, event.sender))
   ipcMain.on('terminal:input', (_event, terminalId: string, data: string) => writeTerminal(terminalId, data))

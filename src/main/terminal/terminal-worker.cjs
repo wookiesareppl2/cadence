@@ -16,6 +16,15 @@ function shellCommand() {
   return { file: process.env.SHELL || '/bin/bash', args: [] }
 }
 
+// Launch an interactive login shell inside a WSL distro at the project's POSIX
+// path. The pty process itself (wsl.exe) runs from a valid Windows cwd, while
+// `--cd` sets the Linux working directory so `claude`/`codex` start in-project.
+function wslCommand(distro, posixCwd) {
+  const args = ['-d', distro]
+  if (posixCwd) args.push('--cd', posixCwd)
+  return { file: 'wsl.exe', args, label: `wsl:${distro}` }
+}
+
 function send(message) {
   if (process.send) process.send(message)
 }
@@ -30,14 +39,16 @@ function rememberOutput(session, data) {
   }
 }
 
-function createSession(terminalId, platform, requestedCwd) {
-  const cwd = requestedCwd || terminalCwd()
-  const shell = shellCommand()
+function createSession(terminalId, platform, requestedCwd, wslDistro) {
+  // For WSL, wsl.exe runs from a valid Windows cwd and `--cd` handles the Linux
+  // dir; otherwise the native shell starts directly in the requested folder.
+  const shell = wslDistro ? wslCommand(wslDistro, requestedCwd) : shellCommand()
+  const spawnCwd = wslDistro ? terminalCwd() : requestedCwd || terminalCwd()
   const terminal = pty.spawn(shell.file, shell.args, {
     name: 'xterm-256color',
     cols: 120,
     rows: 32,
-    cwd,
+    cwd: spawnCwd,
     env: process.env
   })
 
@@ -45,8 +56,9 @@ function createSession(terminalId, platform, requestedCwd) {
     terminalId,
     platform,
     pty: terminal,
-    cwd,
-    shell: basename(shell.file),
+    cwd: wslDistro ? requestedCwd || null : spawnCwd,
+    wslDistro: wslDistro || null,
+    shell: shell.label || basename(shell.file),
     buffer: []
   }
 
@@ -70,7 +82,7 @@ function createSession(terminalId, platform, requestedCwd) {
   return session
 }
 
-function start(requestId, terminalId, platform, requestedCwd) {
+function start(requestId, terminalId, platform, requestedCwd, wslDistro) {
   if (typeof terminalId !== 'string' || !terminalId) {
     send({ type: 'error', requestId, message: 'Missing terminal id' })
     return
@@ -81,7 +93,7 @@ function start(requestId, terminalId, platform, requestedCwd) {
   // a duplicate. cwd only matters when creating the session for the first time.
   let session = sessions.get(terminalId)
   if (!session) {
-    session = createSession(terminalId, platform, requestedCwd)
+    session = createSession(terminalId, platform, requestedCwd, wslDistro)
   }
 
   send({
@@ -102,11 +114,12 @@ function restart(requestId, terminalId) {
   const existing = sessions.get(terminalId)
   const platform = existing ? existing.platform : undefined
   const cwd = existing ? existing.cwd : undefined
+  const wslDistro = existing ? existing.wslDistro : undefined
   if (existing) {
     existing.pty.kill()
     sessions.delete(terminalId)
   }
-  start(requestId, terminalId, platform, cwd)
+  start(requestId, terminalId, platform, cwd, wslDistro)
 }
 
 function write(terminalId, data) {
@@ -135,7 +148,8 @@ function closeAll() {
 
 process.on('message', (message) => {
   try {
-    if (message.type === 'start') start(message.requestId, message.terminalId, message.platform, message.cwd)
+    if (message.type === 'start')
+      start(message.requestId, message.terminalId, message.platform, message.cwd, message.wslDistro)
     if (message.type === 'restart') restart(message.requestId, message.terminalId)
     if (message.type === 'input') write(message.terminalId, message.data)
     if (message.type === 'resize') resize(message.terminalId, message.cols, message.rows)

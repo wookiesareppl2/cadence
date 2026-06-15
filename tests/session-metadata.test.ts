@@ -23,6 +23,7 @@ function makeSession(overrides: Partial<AssistantSession> = {}): AssistantSessio
     project: 'app',
     projectPath: 'C:/projects/app',
     branch: null,
+    origin: { id: 'windows', kind: 'windows', label: 'Windows', distro: null },
     usageLabel: null,
     status: 'local',
     age: '1m ago',

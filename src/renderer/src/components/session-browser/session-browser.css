@@ -125,6 +125,20 @@
   font-size: 10.5px;
 }
 
+.origin-badge {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent-dim) 30%, transparent);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
 .session-stack {
   min-height: 0;
   flex: 1 1 auto;

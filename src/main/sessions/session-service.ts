@@ -1,4 +1,3 @@
-import { app } from 'electron'
 import { open, readdir, readFile, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import type { AssistantSession, AssistantSessionHistory, AssistantSessionHistoryEntry } from '@shared/sessions'
@@ -11,6 +10,7 @@ import {
   sourceFromPath,
   type SessionTranscriptSource
 } from './session-title-generation-service'
+import { getSessionOrigins, toSessionOrigin, type SessionOriginRoot } from './session-origins'
 
 type ClaudeSessionDraft = {
   id: string
@@ -113,10 +113,25 @@ function codexProjectLabel(cwd: string | null): string {
   return cwd ? basename(cwd) : 'Unindexed'
 }
 
-export function projectId(platform: PlatformId, cwd: string | null, fallbackPath?: string): string {
-  if (cwd) return `${platform}:${resolve(cwd).toLowerCase()}`
-  if (fallbackPath) return `${platform}:${resolve(fallbackPath).toLowerCase()}`
-  return `${platform}:unindexed`
+// WSL cwds are POSIX paths; resolve() would mangle them against the Windows drive,
+// and two distros could share `/home/<user>/...`. So namespace non-Windows origins
+// by id and keep their raw POSIX path. Windows ids stay byte-identical to before so
+// saved project aliases/workspaces keyed by projectId are preserved.
+function normalizeCwdForId(path: string, origin?: SessionOriginRoot): string {
+  if (origin && origin.kind !== 'windows') return path.replace(/\\/g, '/').toLowerCase()
+  return resolve(path).toLowerCase()
+}
+
+export function projectId(
+  platform: PlatformId,
+  cwd: string | null,
+  fallbackPath?: string,
+  origin?: SessionOriginRoot
+): string {
+  const ns = origin && origin.kind !== 'windows' ? `${origin.id}:` : ''
+  if (cwd) return `${platform}:${ns}${normalizeCwdForId(cwd, origin)}`
+  if (fallbackPath) return `${platform}:${ns}${normalizeCwdForId(fallbackPath, origin)}`
+  return `${platform}:${ns}unindexed`
 }
 
 function claudeFallbackTitle(cwd: string | null): string {
@@ -433,9 +448,8 @@ async function readCodexSession(path: string, fallbackUpdatedAtMs: number): Prom
 // captured there may carry a user-set thread name that isn't recoverable from the
 // transcript. Keep it as a best-effort title enrichment, never as the source of
 // truth for which sessions exist.
-async function readCodexThreadNames(): Promise<Map<string, string>> {
+async function readCodexThreadNames(indexPath: string): Promise<Map<string, string>> {
   const names = new Map<string, string>()
-  const indexPath = join(app.getPath('home'), '.codex', 'session_index.jsonl')
 
   let raw: string
   try {
@@ -588,177 +602,222 @@ export function isAutomatedSession(entrypoint: string | null): boolean {
   return typeof entrypoint === 'string' && entrypoint.toLowerCase().startsWith('sdk')
 }
 
-export async function getClaudeSessions(): Promise<AssistantSession[]> {
-  const root = join(app.getPath('home'), '.claude', 'projects')
+async function visibleClaudeDraftsForOrigin(origin: SessionOriginRoot): Promise<ClaudeSessionDraft[]> {
+  const root = origin.claudeProjectsDir
   const files = (await findJsonlFiles(root)).filter((path) => isClaudeTranscriptPath(root, path))
   const sessions = await Promise.all(files.map(readClaudeSession))
-
   const drafts = sessions.filter((session): session is ClaudeSessionDraft => Boolean(session))
 
-  const visibleSessions = dedupeById(drafts)
+  // Per-origin cap: each environment surfaces its own freshest sessions, so a busy
+  // Windows profile can never starve WSL projects out of the list (and vice versa).
+  return dedupeById(drafts)
     .filter((session) => !isAutomatedSession(session.entrypoint))
     .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
     .slice(0, MAX_SESSIONS)
-
-  return Promise.all(
-    visibleSessions.map(async (session) => {
-      const fallbackTitle = claudeFallbackTitle(session.cwd)
-      const project = projectLabel(session.cwd, session.sourcePath)
-      const resolvedTitle = resolveSessionTitle({
-        rawTitle: session.rawTitle,
-        fallbackTitle,
-        messages: session.titleMessages
-      })
-      const titleFields = await resolveGeneratedSessionTitle({
-        platform: 'claude',
-        sessionId: session.id,
-        project,
-        projectPath: session.cwd,
-        branch: session.branch,
-        fallbackTitle,
-        resolvedTitle,
-        titleMessages: session.titleMessages,
-        transcriptUpdatedAtMs: session.updatedAtMs,
-        sources: session.sources
-      })
-
-      return {
-        id: session.id,
-        platform: 'claude',
-        projectId: projectId('claude', session.cwd, dirname(session.sourcePath)),
-        title: titleFields.title,
-        rawTitle: titleFields.rawTitle,
-        inferredTitle: titleFields.inferredTitle,
-        generatedTitle: titleFields.generatedTitle,
-        titleSource: titleFields.titleSource,
-        titleStatus: titleFields.titleStatus,
-        titleUpdatedAt: titleFields.titleUpdatedAt,
-        project,
-        projectPath: session.cwd,
-        branch: session.branch,
-        usageLabel: formatTokenLabel(session.tokenTotal),
-        status: 'local',
-        age: relativeAge(session.updatedAtMs),
-        updatedAt: new Date(session.updatedAtMs).toISOString()
-      }
-    })
-  )
 }
 
-export async function getCodexSessions(): Promise<AssistantSession[]> {
-  const root = join(app.getPath('home'), '.codex', 'sessions')
-  const files = await findJsonlFiles(root)
+async function mapClaudeSession(session: ClaudeSessionDraft, origin: SessionOriginRoot): Promise<AssistantSession> {
+  const fallbackTitle = claudeFallbackTitle(session.cwd)
+  const project = projectLabel(session.cwd, session.sourcePath)
+  const resolvedTitle = resolveSessionTitle({
+    rawTitle: session.rawTitle,
+    fallbackTitle,
+    messages: session.titleMessages
+  })
+  const titleFields = await resolveGeneratedSessionTitle({
+    platform: 'claude',
+    sessionId: session.id,
+    project,
+    projectPath: session.cwd,
+    branch: session.branch,
+    fallbackTitle,
+    resolvedTitle,
+    titleMessages: session.titleMessages,
+    transcriptUpdatedAtMs: session.updatedAtMs,
+    sources: session.sources
+  })
+
+  return {
+    id: session.id,
+    platform: 'claude',
+    projectId: projectId('claude', session.cwd, dirname(session.sourcePath), origin),
+    title: titleFields.title,
+    rawTitle: titleFields.rawTitle,
+    inferredTitle: titleFields.inferredTitle,
+    generatedTitle: titleFields.generatedTitle,
+    titleSource: titleFields.titleSource,
+    titleStatus: titleFields.titleStatus,
+    titleUpdatedAt: titleFields.titleUpdatedAt,
+    project,
+    projectPath: session.cwd,
+    branch: session.branch,
+    origin: toSessionOrigin(origin),
+    usageLabel: formatTokenLabel(session.tokenTotal),
+    status: 'local',
+    age: relativeAge(session.updatedAtMs),
+    updatedAt: new Date(session.updatedAtMs).toISOString()
+  }
+}
+
+export async function getClaudeSessions(): Promise<AssistantSession[]> {
+  const origins = await getSessionOrigins()
+  const groups = await Promise.all(
+    origins.map(async (origin) => ({ origin, drafts: await visibleClaudeDraftsForOrigin(origin) }))
+  )
+
+  return Promise.all(groups.flatMap(({ origin, drafts }) => drafts.map((draft) => mapClaudeSession(draft, origin))))
+}
+
+async function visibleCodexDraftsForOrigin(origin: SessionOriginRoot): Promise<CodexSessionDraft[]> {
+  const files = await findJsonlFiles(origin.codexSessionsDir)
 
   // Rank by the timestamp in each rollout filename (no reads), keep the freshest
   // slice, then read details only for those. Discovery comes from the rollout
   // files themselves — not session_index.jsonl — so current Codex sessions and
   // every project worked on actually surface.
   const ranked = rankRolloutFiles(files, MAX_SESSIONS)
-
-  const [threadNames, drafts] = await Promise.all([
-    readCodexThreadNames(),
-    Promise.all(ranked.map((ref) => readCodexSession(ref.path, ref.startedAtMs)))
-  ])
+  const drafts = await Promise.all(ranked.map((ref) => readCodexSession(ref.path, ref.startedAtMs)))
 
   const visibleDrafts = drafts
     .filter((draft): draft is CodexSessionDraft => Boolean(draft))
     .filter((draft) => !draft.isSubagent)
-  const merged = dedupeCodexById(visibleDrafts).sort((a, b) => b.updatedAtMs - a.updatedAtMs)
+  return dedupeCodexById(visibleDrafts).sort((a, b) => b.updatedAtMs - a.updatedAtMs)
+}
 
+async function mapCodexSession(
+  draft: CodexSessionDraft,
+  origin: SessionOriginRoot,
+  threadNames: Map<string, string>,
+  branchByCwd: Map<string, Promise<string | null>>
+): Promise<AssistantSession> {
+  let branch = draft.branch
+  if (draft.cwd && !branch && origin.kind === 'windows') {
+    // Git branch resolution walks the filesystem; only do it for native Windows
+    // cwds. WSL cwds are POSIX paths that won't resolve from the Windows side.
+    if (!branchByCwd.has(draft.cwd)) branchByCwd.set(draft.cwd, currentGitBranch(draft.cwd))
+    branch = (await branchByCwd.get(draft.cwd)) ?? null
+  }
+
+  const fallbackTitle = codexFallbackTitle(draft.id)
+  const project = codexProjectLabel(draft.cwd)
+  const resolvedTitle = resolveSessionTitle({
+    rawTitle: draft.rawTitle ?? threadNames.get(draft.id) ?? null,
+    fallbackTitle,
+    messages: draft.titleMessages
+  })
+  const titleFields = await resolveGeneratedSessionTitle({
+    platform: 'codex',
+    sessionId: draft.id,
+    project,
+    projectPath: draft.cwd,
+    branch,
+    fallbackTitle,
+    resolvedTitle,
+    titleMessages: draft.titleMessages,
+    transcriptUpdatedAtMs: draft.updatedAtMs,
+    sources: draft.sources
+  })
+
+  return {
+    id: draft.id,
+    platform: 'codex',
+    projectId: projectId('codex', draft.cwd, undefined, origin),
+    title: titleFields.title,
+    rawTitle: titleFields.rawTitle,
+    inferredTitle: titleFields.inferredTitle,
+    generatedTitle: titleFields.generatedTitle,
+    titleSource: titleFields.titleSource,
+    titleStatus: titleFields.titleStatus,
+    titleUpdatedAt: titleFields.titleUpdatedAt,
+    project,
+    projectPath: draft.cwd,
+    branch,
+    origin: toSessionOrigin(origin),
+    usageLabel: null,
+    status: '',
+    age: relativeAge(draft.updatedAtMs),
+    updatedAt: new Date(draft.updatedAtMs).toISOString()
+  }
+}
+
+export async function getCodexSessions(): Promise<AssistantSession[]> {
+  const origins = await getSessionOrigins()
+  const threadNames = new Map<string, string>()
   const branchByCwd = new Map<string, Promise<string | null>>()
 
-  return Promise.all(merged.map(async (draft) => {
-    let branch = draft.branch
-    if (draft.cwd && !branch) {
-      if (!branchByCwd.has(draft.cwd)) branchByCwd.set(draft.cwd, currentGitBranch(draft.cwd))
-      branch = (await branchByCwd.get(draft.cwd)) ?? null
-    }
-
-    const fallbackTitle = codexFallbackTitle(draft.id)
-    const project = codexProjectLabel(draft.cwd)
-    const resolvedTitle = resolveSessionTitle({
-      rawTitle: draft.rawTitle ?? threadNames.get(draft.id) ?? null,
-      fallbackTitle,
-      messages: draft.titleMessages
+  const groups = await Promise.all(
+    origins.map(async (origin) => {
+      const [names, drafts] = await Promise.all([
+        readCodexThreadNames(origin.codexIndexFile),
+        visibleCodexDraftsForOrigin(origin)
+      ])
+      for (const [id, name] of names) if (!threadNames.has(id)) threadNames.set(id, name)
+      return { origin, drafts }
     })
-    const titleFields = await resolveGeneratedSessionTitle({
-      platform: 'codex',
-      sessionId: draft.id,
-      project,
-      projectPath: draft.cwd,
-      branch,
-      fallbackTitle,
-      resolvedTitle,
-      titleMessages: draft.titleMessages,
-      transcriptUpdatedAtMs: draft.updatedAtMs,
-      sources: draft.sources
-    })
+  )
 
-    return {
-      id: draft.id,
-      platform: 'codex',
-      projectId: projectId('codex', draft.cwd),
-      title: titleFields.title,
-      rawTitle: titleFields.rawTitle,
-      inferredTitle: titleFields.inferredTitle,
-      generatedTitle: titleFields.generatedTitle,
-      titleSource: titleFields.titleSource,
-      titleStatus: titleFields.titleStatus,
-      titleUpdatedAt: titleFields.titleUpdatedAt,
-      project,
-      projectPath: draft.cwd,
-      branch,
-      usageLabel: null,
-      status: '',
-      age: relativeAge(draft.updatedAtMs),
-      updatedAt: new Date(draft.updatedAtMs).toISOString()
-    }
-  }))
+  return Promise.all(
+    groups.flatMap(({ origin, drafts }) =>
+      drafts.map((draft) => mapCodexSession(draft, origin, threadNames, branchByCwd))
+    )
+  )
 }
 
 async function getClaudeSessionFiles(
   sessionId: string
 ): Promise<Array<{ path: string; raw: string; source: SessionTranscriptSource }>> {
-  const root = join(app.getPath('home'), '.claude', 'projects')
-  // Only real transcripts. This excludes subagent sidechains
-  // (`<sessionId>/subagents/agent-*.jsonl`) and claude-flow telemetry
-  // (`.claude-flow/data/*.jsonl`) — the latter also carries real sessionIds, so
-  // it would otherwise be folded into a session's history as empty noise.
-  const files = (await findJsonlFiles(root)).filter((path) => isClaudeTranscriptPath(root, path))
-  const matches: Array<{ path: string; raw: string; source: SessionTranscriptSource }> = []
+  const origins = await getSessionOrigins()
 
-  for (const path of files) {
-    let raw = ''
-    try {
-      raw = await readFile(path, 'utf-8')
-    } catch {
-      continue
+  for (const origin of origins) {
+    const root = origin.claudeProjectsDir
+    // Only real transcripts. This excludes subagent sidechains
+    // (`<sessionId>/subagents/agent-*.jsonl`) and claude-flow telemetry
+    // (`.claude-flow/data/*.jsonl`) — the latter also carries real sessionIds, so
+    // it would otherwise be folded into a session's history as empty noise.
+    const files = (await findJsonlFiles(root)).filter((path) => isClaudeTranscriptPath(root, path))
+    const matches: Array<{ path: string; raw: string; source: SessionTranscriptSource }> = []
+
+    for (const path of files) {
+      let raw = ''
+      try {
+        raw = await readFile(path, 'utf-8')
+      } catch {
+        continue
+      }
+
+      if (basename(path, '.jsonl') === sessionId || raw.includes(`"sessionId":"${sessionId}"`)) {
+        const source = await sourceFromPath(path)
+        if (source) matches.push({ path, raw, source })
+      }
     }
 
-    if (basename(path, '.jsonl') === sessionId || raw.includes(`"sessionId":"${sessionId}"`)) {
-      const source = await sourceFromPath(path)
-      if (source) matches.push({ path, raw, source })
-    }
+    // A session's transcripts all live in one origin; stop at the first that has it.
+    if (matches.length > 0) return matches
   }
 
-  return matches
+  return []
 }
 
 async function getCodexSessionFile(
   sessionId: string
 ): Promise<{ path: string; raw: string; source: SessionTranscriptSource } | null> {
-  const root = join(app.getPath('home'), '.codex', 'sessions')
-  const files = await findJsonlFiles(root)
-  const path = files.find((file) => file.includes(sessionId))
-  if (!path) return null
+  const origins = await getSessionOrigins()
 
-  try {
-    const source = await sourceFromPath(path)
-    if (!source) return null
-    return { path, raw: await readFile(path, 'utf-8'), source }
-  } catch {
-    return null
+  for (const origin of origins) {
+    const files = await findJsonlFiles(origin.codexSessionsDir)
+    const path = files.find((file) => file.includes(sessionId))
+    if (!path) continue
+
+    try {
+      const source = await sourceFromPath(path)
+      if (!source) continue
+      return { path, raw: await readFile(path, 'utf-8'), source }
+    } catch {
+      continue
+    }
   }
+
+  return null
 }
 
 export async function getClaudeSessionHistory(sessionId: string): Promise<AssistantSessionHistory> {

@@ -45,8 +45,12 @@ const api = {
     attach: (): Promise<Workspace | null> => ipcRenderer.invoke('workspaces:attach')
   },
   terminal: {
-    start: (terminalId: string, platform: TerminalPlatform, cwd?: string): Promise<TerminalStartResult> =>
-      ipcRenderer.invoke('terminal:start', terminalId, platform, cwd),
+    start: (
+      terminalId: string,
+      platform: TerminalPlatform,
+      cwd?: string,
+      wslDistro?: string
+    ): Promise<TerminalStartResult> => ipcRenderer.invoke('terminal:start', terminalId, platform, cwd, wslDistro),
     restart: (terminalId: string): Promise<TerminalStartResult> => ipcRenderer.invoke('terminal:restart', terminalId),
     input: (terminalId: string, data: string): void => ipcRenderer.send('terminal:input', terminalId, data),
     resize: (terminalId: string, cols: number, rows: number): void => {

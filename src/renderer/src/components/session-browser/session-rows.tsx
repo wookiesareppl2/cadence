@@ -190,6 +190,11 @@ function ProjectRow({
           <span className="project-title">{project.name}</span>
           {project.path ? <span className="project-path">{project.path}</span> : null}
           <span className="project-meta">
+            {project.origin?.kind === 'wsl' ? (
+              <span className="origin-badge" title={`Runs in WSL distro: ${project.origin.label}`}>
+                {project.origin.label}
+              </span>
+            ) : null}
             <span>{project.sessionCount === 0 ? 'No sessions yet' : `${project.sessionCount} sessions`}</span>
             <span>{project.sessionCount === 0 ? 'Attached' : `Updated ${project.age}`}</span>
           </span>

@@ -7,6 +7,7 @@ import type {
   AssistantSessionHistory,
   SessionTitleGenerationStatus
 } from '@shared/sessions'
+import { WINDOWS_ORIGIN } from '@shared/sessions'
 import type { Workspace } from '@shared/workspaces'
 import type { SessionMetadata } from '@shared/session-metadata'
 import { applyProjectAlias, applySessionAlias, emptyMetadata } from '@shared/session-metadata'
@@ -415,6 +416,7 @@ function groupSessionsByProject(
       name: applyProjectAlias(projectLabel(session), session.projectId, projectAliases),
       path: session.projectPath,
       branch: session.branch,
+      origin: session.origin,
       sessionCount: 1,
       latestUpdatedAt: session.updatedAt,
       age: session.age,
@@ -459,6 +461,7 @@ function mergeWorkspaceProjects(
       name: applyProjectAlias(workspace.name, id, projectAliases),
       path: workspace.path,
       branch: null,
+      origin: WINDOWS_ORIGIN,
       sessionCount: 0,
       latestUpdatedAt: new Date(workspace.addedAtMs).toISOString(),
       age: 'attached',

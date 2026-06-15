@@ -95,6 +95,43 @@ export async function scanClaudeUsageRecords(root = getDefaultClaudeProjectsRoot
   return { sourceRoot: root, records: [...records.values()], stats }
 }
 
+// Scan several Claude project roots (Windows home + each WSL distro home) and
+// merge them. Records are deduped by requestId across roots, so an identical
+// request that somehow appears under two roots is only counted once.
+export async function scanClaudeUsageRecordsAcrossRoots(roots: string[]): Promise<ClaudeUsageScanResult> {
+  if (roots.length <= 1) return scanClaudeUsageRecords(roots[0])
+
+  const records = new Map<string, ClaudeUsageRecord>()
+  const stats: ClaudeUsageIngestStats = {
+    scannedFileCount: 0,
+    parsedLineCount: 0,
+    usageRowCount: 0,
+    uniqueRequestCount: 0,
+    duplicateUsageRowCount: 0,
+    skippedUsageRows: 0,
+    invalidJsonLineCount: 0
+  }
+
+  for (const root of roots) {
+    const scan = await scanClaudeUsageRecords(root)
+    stats.scannedFileCount += scan.stats.scannedFileCount
+    stats.parsedLineCount += scan.stats.parsedLineCount
+    stats.usageRowCount += scan.stats.usageRowCount
+    stats.skippedUsageRows += scan.stats.skippedUsageRows
+    stats.invalidJsonLineCount += scan.stats.invalidJsonLineCount
+    for (const record of scan.records) {
+      if (records.has(record.requestId)) {
+        stats.duplicateUsageRowCount += 1
+        continue
+      }
+      records.set(record.requestId, record)
+    }
+  }
+
+  stats.uniqueRequestCount = records.size
+  return { sourceRoot: roots[0], records: [...records.values()], stats }
+}
+
 export function parseClaudeUsageLine(
   line: string,
   sourcePath: string,

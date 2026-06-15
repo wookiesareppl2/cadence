@@ -1,5 +1,5 @@
-import { app, shell } from 'electron'
-import { open, readdir, readFile } from 'node:fs/promises'
+import { shell } from 'electron'
+import { open, readdir, readFile, rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import type { PlatformId } from '@shared/platform'
 import {
@@ -8,6 +8,7 @@ import {
   projectId as makeProjectId,
   readCodexSessionDetails
 } from './session-service'
+import { getSessionOrigins, type SessionOriginRoot } from './session-origins'
 import { clearProjectAlias, clearSessionAlias } from './session-metadata-service'
 import { removeWorkspace } from '../workspaces/workspace-service'
 
@@ -15,12 +16,8 @@ export type DeleteResult = { trashed: number }
 
 const CWD_HEAD_BYTES = 64 * 1024
 
-function claudeRoot(): string {
-  return join(app.getPath('home'), '.claude', 'projects')
-}
-
-function codexRoot(): string {
-  return join(app.getPath('home'), '.codex', 'sessions')
+function isWslUncPath(path: string): boolean {
+  return /^\\\\wsl(\.localhost|\$)\\/i.test(path)
 }
 
 // Send each path to the OS Recycle Bin (recoverable). Failures are swallowed
@@ -33,7 +30,18 @@ async function trashAll(paths: Iterable<string>): Promise<number> {
       await shell.trashItem(path)
       trashed += 1
     } catch {
-      // Item may already be gone or locked; skip it.
+      // The Recycle Bin doesn't cover WSL's 9P share, so trashItem throws there.
+      // Fall back to a permanent delete for WSL items only — otherwise "delete"
+      // would silently no-op for them. Native Windows paths keep the safe
+      // skip-on-failure behavior (a locked file is left alone).
+      if (isWslUncPath(path)) {
+        try {
+          await rm(path, { recursive: true, force: true })
+          trashed += 1
+        } catch {
+          // Item may already be gone or locked; skip it.
+        }
+      }
     }
   }
   return trashed
@@ -74,37 +82,51 @@ async function readClaudeCwd(path: string): Promise<string | null> {
 // (`<sessionId>.jsonl`) or because the file's rows carry the sessionId (Claude
 // reuses one id across resumed files). Mirrors getClaudeSessionFiles matching.
 async function claudeSessionFiles(sessionId: string): Promise<string[]> {
-  const root = claudeRoot()
-  const files = (await findJsonlFiles(root)).filter((path) => isClaudeTranscriptPath(root, path))
-  const matches: string[] = []
+  const origins = await getSessionOrigins()
 
-  for (const path of files) {
-    if (basename(path, '.jsonl') === sessionId) {
-      matches.push(path)
-      continue
+  for (const origin of origins) {
+    const root = origin.claudeProjectsDir
+    const files = (await findJsonlFiles(root)).filter((path) => isClaudeTranscriptPath(root, path))
+    const matches: string[] = []
+
+    for (const path of files) {
+      if (basename(path, '.jsonl') === sessionId) {
+        matches.push(path)
+        continue
+      }
+      try {
+        const raw = await readFile(path, 'utf-8')
+        if (raw.includes(`"sessionId":"${sessionId}"`)) matches.push(path)
+      } catch {
+        // Unreadable file — skip.
+      }
     }
-    try {
-      const raw = await readFile(path, 'utf-8')
-      if (raw.includes(`"sessionId":"${sessionId}"`)) matches.push(path)
-    } catch {
-      // Unreadable file — skip.
-    }
+
+    if (matches.length > 0) return matches
   }
 
-  return matches
+  return []
 }
 
 async function codexSessionFiles(sessionId: string): Promise<string[]> {
-  const files = await findJsonlFiles(codexRoot())
-  return files.filter((path) => basename(path).includes(sessionId))
+  const origins = await getSessionOrigins()
+
+  for (const origin of origins) {
+    const files = (await findJsonlFiles(origin.codexSessionsDir)).filter((path) =>
+      basename(path).includes(sessionId)
+    )
+    if (files.length > 0) return files
+  }
+
+  return []
 }
 
 // Resolve the project directory (or directories) under ~/.claude/projects whose
 // derived projectId matches. Trashing the whole dir removes every session it
 // holds — including any beyond the list's display cap — which is the intended
 // semantic for "delete project".
-async function claudeProjectDirs(targetProjectId: string): Promise<string[]> {
-  const root = claudeRoot()
+async function claudeProjectDirsForOrigin(origin: SessionOriginRoot, targetProjectId: string): Promise<string[]> {
+  const root = origin.claudeProjectsDir
   let entries
   try {
     entries = await readdir(root, { withFileTypes: true })
@@ -127,21 +149,30 @@ async function claudeProjectDirs(targetProjectId: string): Promise<string[]> {
 
     const representative = join(dir, dirFiles[0])
     const cwd = await readClaudeCwd(representative)
-    if (makeProjectId('claude', cwd, dir) === targetProjectId) dirs.push(dir)
+    if (makeProjectId('claude', cwd, dir, origin) === targetProjectId) dirs.push(dir)
   }
 
   return dirs
 }
 
+async function claudeProjectDirs(targetProjectId: string): Promise<string[]> {
+  const origins = await getSessionOrigins()
+  const perOrigin = await Promise.all(origins.map((origin) => claudeProjectDirsForOrigin(origin, targetProjectId)))
+  return perOrigin.flat()
+}
+
 // Codex has no project folder — sessions are scattered by date. Resolve every
 // rollout file whose session_meta.cwd maps to the target project.
 async function codexProjectFiles(targetProjectId: string): Promise<string[]> {
-  const files = await findJsonlFiles(codexRoot())
+  const origins = await getSessionOrigins()
   const matches: string[] = []
 
-  for (const path of files) {
-    const { cwd } = await readCodexSessionDetails(path)
-    if (makeProjectId('codex', cwd) === targetProjectId) matches.push(path)
+  for (const origin of origins) {
+    const files = await findJsonlFiles(origin.codexSessionsDir)
+    for (const path of files) {
+      const { cwd } = await readCodexSessionDetails(path)
+      if (makeProjectId('codex', cwd, undefined, origin) === targetProjectId) matches.push(path)
+    }
   }
 
   return matches

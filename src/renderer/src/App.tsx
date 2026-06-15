@@ -499,7 +499,7 @@ function ClaudeWorkspace({
   const startSession = useCallback(
     (project: ProjectSessionGroup) => {
       if (!project.path) return
-      resetTerminals(project.path, project.name)
+      resetTerminals(project.path, project.name, project.origin?.distro ?? null)
       onSelectedSessionIdChange(NEW_SESSION_ID)
     },
     [resetTerminals, onSelectedSessionIdChange]
@@ -543,6 +543,7 @@ function ClaudeWorkspace({
               platform="claude"
               tabs={tabs}
               defaultCwd={sessionBrowser.selectedProject?.path ?? null}
+              defaultWslDistro={sessionBrowser.selectedProject?.origin?.distro ?? null}
               projectName={sessionBrowser.selectedProject?.name ?? null}
               statusLabel={statusLabel}
               onAdd={addTerminal}
@@ -601,7 +602,7 @@ function CodexWorkspace({
   const startSession = useCallback(
     (project: ProjectSessionGroup) => {
       if (!project.path) return
-      resetTerminals(project.path, project.name)
+      resetTerminals(project.path, project.name, project.origin?.distro ?? null)
       onSelectedSessionIdChange(NEW_SESSION_ID)
     },
     [resetTerminals, onSelectedSessionIdChange]
@@ -640,6 +641,7 @@ function CodexWorkspace({
               platform="codex"
               tabs={tabs}
               defaultCwd={sessionBrowser.selectedProject?.path ?? null}
+              defaultWslDistro={sessionBrowser.selectedProject?.origin?.distro ?? null}
               projectName={sessionBrowser.selectedProject?.name ?? null}
               statusLabel={statusLabel}
               onAdd={addTerminal}
