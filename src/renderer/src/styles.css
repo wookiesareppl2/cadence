@@ -605,6 +605,16 @@ button {
   font-size: 10.5px;
 }
 
+/* Hint that live terminals exist in other projects' decks (kept running while
+   hidden). Truncates so a long count never pushes the deck actions off-screen. */
+.terminal-deck-heading .terminal-bg-note {
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
 .terminal-grid {
   flex: 1;
   min-height: 0;

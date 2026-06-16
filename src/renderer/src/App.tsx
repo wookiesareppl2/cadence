@@ -2,24 +2,272 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, JSX, SetStateAction } from 'react'
 import { flushSync } from 'react-dom'
 import {
-  NEW_SESSION_ID,
+  createPendingSessionId,
+  isPendingSessionId,
   SessionDetailAccordion,
   SessionHistorySidebar,
   ProjectSessionSidebar,
   useProjectSessionBrowserState,
   useSessionHistory
 } from '@renderer/components/session-browser'
-import type { ProjectSessionGroup } from '@renderer/components/session-browser'
+import type { ProjectSessionBrowserState, ProjectSessionGroup } from '@renderer/components/session-browser'
 import { TerminalDeck, useTerminalDeck } from '@renderer/components/terminal-deck'
+import type { TerminalTab } from '@renderer/components/terminal-deck'
 import type { ClaudePlanUsage, PlanUsageRefreshMeta, UsageWindow } from '@shared/claude-plan-usage'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
+import type { AssistantSession, SessionOrigin } from '@shared/sessions'
 
 const PLAN_POLL_INTERVAL_MS = 60_000
 const HISTORY_SIDEBAR_CLOSED_WIDTH = 32
 const HISTORY_SIDEBAR_MOTION_MS = 180
 const HISTORY_SIDEBAR_START_OFFSET_MS = -24
 const HISTORY_SIDEBAR_EASING = 'cubic-bezier(0.16, 1, 0.3, 1)'
+
+// Split the platform's flat terminal list into the selected session's terminals
+// (shown in the deck) and the rest, which stay alive in the background. The
+// background tally drives the "running in N other sessions" hint so hidden shells
+// aren't silently lost.
+function partitionTerminalTabs(
+  tabs: TerminalTab[],
+  selectedSessionId: string | null
+): { visibleTabs: TerminalTab[]; backgroundTabCount: number; backgroundSessionCount: number } {
+  const visibleTabs: TerminalTab[] = []
+  const backgroundSessionKeys = new Set<string>()
+
+  for (const tab of tabs) {
+    if (selectedSessionId && tab.sessionKey === selectedSessionId) {
+      visibleTabs.push(tab)
+    } else {
+      backgroundSessionKeys.add(tab.sessionKey)
+    }
+  }
+
+  return {
+    visibleTabs,
+    backgroundTabCount: tabs.length - visibleTabs.length,
+    backgroundSessionCount: backgroundSessionKeys.size
+  }
+}
+
+// A started session is selected before its transcript exists on disk, so its
+// terminals are tagged with a pending id. The slot remembers where the session
+// was started (so the adoption pass can match the transcript when it appears) and
+// enough to render the session as a row in the sidebar immediately.
+const DEFAULT_PENDING_TITLE = 'New session'
+type PendingSessionSlot = {
+  id: string
+  projectId: string
+  projectName: string
+  projectPath: string
+  origin: SessionOrigin
+  title: string
+  createdAtMs: number
+}
+
+// Render a pending slot as a normal session row so a freshly started session is
+// listed (and reselectable) before its transcript exists.
+function toPendingSession(slot: PendingSessionSlot, platform: PlatformId): AssistantSession {
+  return {
+    id: slot.id,
+    platform,
+    projectId: slot.projectId,
+    title: slot.title,
+    rawTitle: null,
+    inferredTitle: null,
+    generatedTitle: null,
+    titleSource: 'fallback',
+    titleStatus: null,
+    titleUpdatedAt: null,
+    project: slot.projectName,
+    projectPath: slot.projectPath,
+    branch: null,
+    origin: slot.origin,
+    usageLabel: null,
+    status: 'pending',
+    age: 'new',
+    updatedAt: new Date(slot.createdAtMs).toISOString()
+  }
+}
+
+const PENDING_SESSION_POLL_MS = 5_000
+// Only poll aggressively for a short burst after a session is started; past this
+// the baseline 60s session poll still adopts, just less eagerly. Bounds the scan
+// rate when a "Start session" is left idle (transcript not created yet).
+const PENDING_FAST_POLL_WINDOW_MS = 120_000
+
+function samePath(a: string | null | undefined, b: string | null | undefined): boolean {
+  return Boolean(a) && Boolean(b) && a!.toLowerCase() === b!.toLowerCase()
+}
+
+// Session-scoped terminal deck: terminals belong to a session, not just a project.
+// Starting a session mints a pending slot + first terminal; once the session's
+// transcript is discovered it is adopted (terminals + selection retagged onto the
+// real id). Other sessions' terminals keep running in the background meanwhile.
+function useSessionScopedTerminals(
+  platform: PlatformId,
+  browser: ProjectSessionBrowserState,
+  selectedSessionId: string | null,
+  onSelectedSessionIdChange: (sessionId: string | null) => void
+): {
+  visibleTabs: TerminalTab[]
+  backgroundTabCount: number
+  backgroundSessionCount: number
+  pendingSessions: AssistantSession[]
+  addTerminal: (cwd?: string | null, title?: string, wslDistro?: string | null) => void
+  closeTerminal: (id: string) => void
+  startSession: (project: ProjectSessionGroup) => void
+  abandonPendingSession: (id: string) => Promise<{ trashed: number }>
+  renamePendingSession: (id: string, title: string | null) => Promise<void>
+} {
+  const { tabs, addTerminal, closeTerminal, retagSession } = useTerminalDeck(platform)
+  const [pending, setPending] = useState<PendingSessionSlot[]>([])
+  const { sessions, selectedProject, refreshSessions } = browser
+
+  const { visibleTabs, backgroundTabCount, backgroundSessionCount } = useMemo(
+    () => partitionTerminalTabs(tabs, selectedSessionId),
+    [tabs, selectedSessionId]
+  )
+
+  const pendingSessions = useMemo(() => pending.map((slot) => toPendingSession(slot, platform)), [pending, platform])
+
+  // Creating a session only adds the (empty) session and selects it — the user
+  // opens its first terminal explicitly via the deck, same as selecting any other
+  // terminal-less session. No shell is auto-spawned.
+  const startSession = useCallback(
+    (project: ProjectSessionGroup) => {
+      if (!project.path) return
+      const pendingId = createPendingSessionId()
+      setPending((prev) => [
+        ...prev,
+        {
+          id: pendingId,
+          projectId: project.id,
+          projectName: project.name,
+          projectPath: project.path!,
+          origin: project.origin,
+          title: DEFAULT_PENDING_TITLE,
+          createdAtMs: Date.now()
+        }
+      ])
+      onSelectedSessionIdChange(pendingId)
+    },
+    [onSelectedSessionIdChange]
+  )
+
+  // Abandon a started-but-unused session: close its terminals (killing their ptys)
+  // and drop the slot. Returns a trashed count so the row's delete control reports
+  // success and the synthetic row disappears.
+  const abandonPendingSession = useCallback(
+    async (id: string): Promise<{ trashed: number }> => {
+      for (const tab of tabs) {
+        if (tab.sessionKey === id) closeTerminal(tab.id)
+      }
+      setPending((prev) => prev.filter((slot) => slot.id !== id))
+      if (selectedSessionId === id) onSelectedSessionIdChange(null)
+      return { trashed: 1 }
+    },
+    [tabs, closeTerminal, selectedSessionId, onSelectedSessionIdChange]
+  )
+
+  const renamePendingSession = useCallback(async (id: string, title: string | null): Promise<void> => {
+    setPending((prev) =>
+      prev.map((slot) => (slot.id === id ? { ...slot, title: title?.trim() || DEFAULT_PENDING_TITLE } : slot))
+    )
+  }, [])
+
+  const handleAddTerminal = useCallback(
+    (cwd?: string | null, title?: string, wslDistro?: string | null) => {
+      // Add to the selected session (real or still-pending); with nothing concrete
+      // selected, fall back to starting a new session so the terminal has an owner.
+      if (selectedSessionId) {
+        addTerminal(selectedSessionId, cwd, title, wslDistro)
+      } else if (selectedProject) {
+        startSession(selectedProject)
+      }
+    },
+    [addTerminal, selectedProject, selectedSessionId, startSession]
+  )
+
+  // Adopt: when the poll reveals a session whose folder matches a waiting pending
+  // slot, retag its terminals (and the selection) onto the real id. Oldest slot
+  // claims first; each transcript is claimed at most once.
+  const knownSessionIdsRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (pending.length > 0) {
+      const known = knownSessionIdsRef.current
+      const added = sessions.filter((session) => !known.has(session.id))
+      if (added.length > 0) {
+        const claimed = new Set<string>()
+        const adoptions: { from: string; to: string }[] = []
+        for (const slot of [...pending].sort((a, b) => a.createdAtMs - b.createdAtMs)) {
+          const match = added.find(
+            (session) =>
+              !claimed.has(session.id) &&
+              samePath(session.projectPath, slot.projectPath) &&
+              (session.origin?.distro ?? null) === slot.origin.distro
+          )
+          if (match) {
+            claimed.add(match.id)
+            adoptions.push({ from: slot.id, to: match.id })
+          }
+        }
+        if (adoptions.length > 0) {
+          for (const { from, to } of adoptions) {
+            retagSession(from, to)
+            if (selectedSessionId === from) onSelectedSessionIdChange(to)
+          }
+          const adoptedIds = new Set(adoptions.map((adoption) => adoption.from))
+          setPending((prev) => prev.filter((slot) => !adoptedIds.has(slot.id)))
+        }
+      }
+    }
+    knownSessionIdsRef.current = new Set(sessions.map((session) => session.id))
+  }, [sessions, pending, retagSession, selectedSessionId, onSelectedSessionIdChange])
+
+  // Drop pending slots once nothing references them (terminals all closed and not
+  // selected), so a never-used "Start session" stops the fast adoption poll.
+  useEffect(() => {
+    setPending((prev) => {
+      const next = prev.filter(
+        (slot) => selectedSessionId === slot.id || tabs.some((tab) => tab.sessionKey === slot.id)
+      )
+      return next.length === prev.length ? prev : next
+    })
+  }, [tabs, selectedSessionId])
+
+  // While a freshly started session awaits its transcript, poll faster than the
+  // 60s baseline so adoption snaps in within a few seconds. Limited to the window
+  // just after creation so an idle "+ New Session" doesn't scan the filesystem
+  // forever (the baseline poll still adopts a later first prompt within ~60s).
+  const fastPollWanted = useCallback(
+    () => pending.some((slot) => Date.now() - slot.createdAtMs < PENDING_FAST_POLL_WINDOW_MS),
+    [pending]
+  )
+  useEffect(() => {
+    if (pending.length === 0 || !fastPollWanted()) return
+    const id = window.setInterval(() => {
+      if (!fastPollWanted()) {
+        window.clearInterval(id)
+        return
+      }
+      void refreshSessions()
+    }, PENDING_SESSION_POLL_MS)
+    return () => window.clearInterval(id)
+  }, [pending.length, fastPollWanted, refreshSessions])
+
+  return {
+    visibleTabs,
+    backgroundTabCount,
+    backgroundSessionCount,
+    pendingSessions,
+    addTerminal: handleAddTerminal,
+    closeTerminal,
+    startSession,
+    abandonPendingSession,
+    renamePendingSession
+  }
+}
 
 type PlanUsageDisplay = {
   fiveHour: UsageWindow | null
@@ -43,10 +291,10 @@ export function App(): JSX.Element {
   const [selectedSessionIds, setSelectedSessionIds] = usePersistentState<Record<PlatformId, string | null>>(
     'selection:sessions:v1',
     { claude: null, codex: null },
-    // Don't restore the transient "new session" sentinel — start clean instead.
+    // Don't restore a transient pending-session selection — start clean instead.
     (value) => ({
-      claude: value.claude === NEW_SESSION_ID ? null : value.claude,
-      codex: value.codex === NEW_SESSION_ID ? null : value.codex
+      claude: isPendingSessionId(value.claude) ? null : value.claude,
+      codex: isPendingSessionId(value.codex) ? null : value.codex
     })
   )
   const [selectedProjectIds, setSelectedProjectIds] = usePersistentState<Record<PlatformId, string | null>>(
@@ -486,7 +734,17 @@ function ClaudeWorkspace({
     onSelectedSessionIdChange
   })
   const historyState = useSessionHistory(sessionBrowser.selectedSession)
-  const { tabs, addTerminal, closeTerminal, resetTerminals } = useTerminalDeck('claude')
+  const {
+    visibleTabs,
+    backgroundTabCount,
+    backgroundSessionCount,
+    pendingSessions,
+    addTerminal: handleAddTerminal,
+    closeTerminal,
+    startSession,
+    abandonPendingSession,
+    renamePendingSession
+  } = useSessionScopedTerminals('claude', sessionBrowser, selectedSessionId, onSelectedSessionIdChange)
   const [historySidebarOpen, toggleHistorySidebarState] = usePersistentPlatformFlag(
     'selection:history-sidebar:v1',
     'claude'
@@ -495,15 +753,7 @@ function ClaudeWorkspace({
     historySidebarOpen,
     toggleHistorySidebarState
   )
-  const newSession = selectedSessionId === NEW_SESSION_ID
-  const startSession = useCallback(
-    (project: ProjectSessionGroup) => {
-      if (!project.path) return
-      resetTerminals(project.path, project.name, project.origin?.distro ?? null)
-      onSelectedSessionIdChange(NEW_SESSION_ID)
-    },
-    [resetTerminals, onSelectedSessionIdChange]
-  )
+  const newSession = isPendingSessionId(selectedSessionId)
 
   const statusLabel = planError
     ? 'error'
@@ -518,7 +768,10 @@ function ClaudeWorkspace({
         ariaLabel="Claude projects"
         emptyLabel="No Claude projects found"
         browser={sessionBrowser}
+        pendingSessions={pendingSessions}
         onStartSession={startSession}
+        onAbandonPendingSession={abandonPendingSession}
+        onRenamePendingSession={renamePendingSession}
       />
 
       <section className="content-grid" aria-label="Claude Code dashboard">
@@ -541,12 +794,14 @@ function ClaudeWorkspace({
             />
             <TerminalDeck
               platform="claude"
-              tabs={tabs}
+              tabs={visibleTabs}
               defaultCwd={sessionBrowser.selectedProject?.path ?? null}
               defaultWslDistro={sessionBrowser.selectedProject?.origin?.distro ?? null}
               projectName={sessionBrowser.selectedProject?.name ?? null}
               statusLabel={statusLabel}
-              onAdd={addTerminal}
+              backgroundTabCount={backgroundTabCount}
+              backgroundSessionCount={backgroundSessionCount}
+              onAdd={handleAddTerminal}
               onClose={closeTerminal}
             />
           </div>
@@ -589,7 +844,17 @@ function CodexWorkspace({
     onSelectedSessionIdChange
   })
   const historyState = useSessionHistory(sessionBrowser.selectedSession)
-  const { tabs, addTerminal, closeTerminal, resetTerminals } = useTerminalDeck('codex')
+  const {
+    visibleTabs,
+    backgroundTabCount,
+    backgroundSessionCount,
+    pendingSessions,
+    addTerminal: handleAddTerminal,
+    closeTerminal,
+    startSession,
+    abandonPendingSession,
+    renamePendingSession
+  } = useSessionScopedTerminals('codex', sessionBrowser, selectedSessionId, onSelectedSessionIdChange)
   const [historySidebarOpen, toggleHistorySidebarState] = usePersistentPlatformFlag(
     'selection:history-sidebar:v1',
     'codex'
@@ -598,15 +863,7 @@ function CodexWorkspace({
     historySidebarOpen,
     toggleHistorySidebarState
   )
-  const newSession = selectedSessionId === NEW_SESSION_ID
-  const startSession = useCallback(
-    (project: ProjectSessionGroup) => {
-      if (!project.path) return
-      resetTerminals(project.path, project.name, project.origin?.distro ?? null)
-      onSelectedSessionIdChange(NEW_SESSION_ID)
-    },
-    [resetTerminals, onSelectedSessionIdChange]
-  )
+  const newSession = isPendingSessionId(selectedSessionId)
   const statusLabel = planError ? 'usage error' : planUsage ? 'live' : 'connecting'
 
   return (
@@ -616,7 +873,10 @@ function CodexWorkspace({
         ariaLabel="Codex projects"
         emptyLabel="No Codex projects found"
         browser={sessionBrowser}
+        pendingSessions={pendingSessions}
         onStartSession={startSession}
+        onAbandonPendingSession={abandonPendingSession}
+        onRenamePendingSession={renamePendingSession}
       />
 
       <section className="content-grid" aria-label="Codex dashboard">
@@ -639,12 +899,14 @@ function CodexWorkspace({
             />
             <TerminalDeck
               platform="codex"
-              tabs={tabs}
+              tabs={visibleTabs}
               defaultCwd={sessionBrowser.selectedProject?.path ?? null}
               defaultWslDistro={sessionBrowser.selectedProject?.origin?.distro ?? null}
               projectName={sessionBrowser.selectedProject?.name ?? null}
               statusLabel={statusLabel}
-              onAdd={addTerminal}
+              backgroundTabCount={backgroundTabCount}
+              backgroundSessionCount={backgroundSessionCount}
+              onAdd={handleAddTerminal}
               onClose={closeTerminal}
             />
           </div>

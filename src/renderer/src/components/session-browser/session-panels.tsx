@@ -7,6 +7,7 @@ import type {
 import { HistoryMarkdown } from '../history-markdown'
 import { ProjectList, SessionList } from './session-rows'
 import {
+  isPendingSessionId,
   projectLabel,
   type ProjectSessionBrowserState,
   type ProjectSessionGroup,
@@ -34,18 +35,34 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
   ariaLabel,
   emptyLabel,
   browser,
-  onStartSession
+  pendingSessions,
+  onStartSession,
+  onAbandonPendingSession,
+  onRenamePendingSession
 }: {
   title: string
   ariaLabel: string
   emptyLabel: string
   browser: ProjectSessionBrowserState
+  // Started-but-unsaved sessions, shown as rows immediately so a freshly started
+  // session is reselectable before its transcript exists.
+  pendingSessions: AssistantSession[]
   onStartSession: (project: ProjectSessionGroup) => void
+  onAbandonPendingSession: (id: string) => Promise<{ trashed: number }>
+  onRenamePendingSession: (id: string, title: string | null) => Promise<void>
 }): JSX.Element {
   const projectEmptyMessage =
     browser.projects.length > 0 && browser.filteredProjects.length === 0 ? 'No matching projects' : emptyLabel
   const selectedProject = browser.selectedProject
   const canStartSession = Boolean(selectedProject?.path)
+
+  // Pending sessions for the open project sit on top of its real sessions. The
+  // highlight follows the resolved real session, or the raw id when the selection
+  // is a pending session (which intentionally resolves to no transcript).
+  const pendingForProject = pendingSessions.filter((session) => session.projectId === selectedProject?.id)
+  const sessionRows = [...pendingForProject, ...browser.projectSessions]
+  const highlightSessionId =
+    browser.selectedSession?.id ?? (isPendingSessionId(browser.selectedSessionId) ? browser.selectedSessionId : null)
 
   return (
     <aside className="sidebar project-sidebar" aria-label={ariaLabel}>
@@ -101,14 +118,18 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
         </div>
         <div className="session-list compact" aria-label={`${ariaLabel} sessions`}>
           <SessionList
-            sessions={browser.projectSessions}
+            sessions={sessionRows}
             loading={browser.loading}
             error={browser.error}
             emptyLabel={selectedProject ? 'No sessions yet — start one' : 'Select a project'}
-            selectedSessionId={browser.selectedSession?.id ?? null}
+            selectedSessionId={highlightSessionId}
             onSelectSession={browser.selectSession}
-            onRenameSession={browser.renameSession}
-            onDeleteSession={browser.deleteSession}
+            onRenameSession={(id, titleValue) =>
+              isPendingSessionId(id) ? onRenamePendingSession(id, titleValue) : browser.renameSession(id, titleValue)
+            }
+            onDeleteSession={(id) =>
+              isPendingSessionId(id) ? onAbandonPendingSession(id) : browser.deleteSession(id)
+            }
           />
         </div>
       </div>

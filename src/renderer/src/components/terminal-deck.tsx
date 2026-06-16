@@ -9,6 +9,12 @@ export type TerminalTab = {
   id: string
   title: string
   cwd: string | null
+  // The session this terminal belongs to. The deck shows only the selected
+  // session's terminals; the rest stay alive (their ptys keep running) and are
+  // revealed again when their session is reselected. May be a pending-session id
+  // while a freshly started session has no transcript yet — once the transcript
+  // is discovered the tab is retagged onto the real session id.
+  sessionKey: string
   // WSL distro to launch the shell inside (cwd is then a POSIX path). Null for
   // native Windows terminals.
   wslDistro?: string | null
@@ -16,9 +22,17 @@ export type TerminalTab = {
 
 export type TerminalDeckState = {
   tabs: TerminalTab[]
-  addTerminal: (cwd?: string | null, title?: string, wslDistro?: string | null) => void
+  addTerminal: (sessionKey: string, cwd?: string | null, title?: string, wslDistro?: string | null) => void
   closeTerminal: (id: string) => void
-  resetTerminals: (cwd?: string | null, title?: string, wslDistro?: string | null) => void
+  // Re-point a started session's terminals from their pending id onto the real
+  // session id once the transcript is discovered, so they follow the session.
+  retagSession: (fromSessionKey: string, toSessionKey: string) => void
+}
+
+// Mirror of session-browser's pending-session test, kept local to avoid a render
+// import cycle. Pending-keyed terminals are never persisted across restarts.
+function isPendingSessionKey(key: string): boolean {
+  return key.startsWith('__new__')
 }
 
 const TERMINAL_THEME = {
@@ -67,11 +81,27 @@ function loadTabs(platform: TerminalPlatform): TerminalTab[] {
     if (raw) {
       const parsed: unknown = JSON.parse(raw)
       if (Array.isArray(parsed) && parsed.every(isTerminalTab)) {
-        // Terminals are only ever opened into a project folder, so restore just
-        // the project-scoped tabs and drop any legacy directoryless (home) shell.
+        // Restore only the session-scoped tabs: a tab needs both a cwd and the
+        // sessionKey that scopes it. Tabs still keyed to a pending session are
+        // dropped — by next launch anything real was retagged onto its session id,
+        // and an unadopted pending session is transient working state. Legacy tabs
+        // predating session scoping (no sessionKey) are likewise dropped.
         return parsed
-          .filter((tab): tab is TerminalTab => typeof tab.cwd === 'string' && tab.cwd.length > 0)
-          .map((tab) => ({ id: tab.id, title: tab.title, cwd: tab.cwd, wslDistro: tab.wslDistro ?? null }))
+          .filter(
+            (tab): tab is TerminalTab =>
+              typeof tab.cwd === 'string' &&
+              tab.cwd.length > 0 &&
+              typeof tab.sessionKey === 'string' &&
+              tab.sessionKey.length > 0 &&
+              !isPendingSessionKey(tab.sessionKey)
+          )
+          .map((tab) => ({
+            id: tab.id,
+            title: tab.title,
+            cwd: tab.cwd,
+            sessionKey: tab.sessionKey,
+            wslDistro: tab.wslDistro ?? null
+          }))
       }
     }
   } catch {
@@ -80,6 +110,8 @@ function loadTabs(platform: TerminalPlatform): TerminalTab[] {
   return []
 }
 
+// Number a new terminal within its own session so every session's deck starts at
+// "Terminal 1" (callers pass the tabs already filtered to that session).
 function nextDefaultTitle(tabs: TerminalTab[]): string {
   const used = tabs
     .map((tab) => tab.title.match(/^Terminal (\d+)$/)?.[1])
@@ -93,10 +125,8 @@ function nextDefaultTitle(tabs: TerminalTab[]): string {
 // the live shell (with its scrollback) instead of orphaning it.
 export function useTerminalDeck(platform: TerminalPlatform): TerminalDeckState {
   const [tabs, setTabs] = useState<TerminalTab[]>(() => loadTabs(platform))
-  const tabsRef = useRef(tabs)
 
   useEffect(() => {
-    tabsRef.current = tabs
     try {
       window.localStorage.setItem(storageKey(platform), JSON.stringify(tabs))
     } catch {
@@ -105,13 +135,14 @@ export function useTerminalDeck(platform: TerminalPlatform): TerminalDeckState {
   }, [platform, tabs])
 
   const addTerminal = useCallback(
-    (cwd?: string | null, title?: string, wslDistro?: string | null) => {
+    (sessionKey: string, cwd?: string | null, title?: string, wslDistro?: string | null) => {
       setTabs((prev) => [
         ...prev,
         {
           id: makeTerminalId(platform),
-          title: title?.trim() || nextDefaultTitle(prev),
+          title: title?.trim() || nextDefaultTitle(prev.filter((tab) => tab.sessionKey === sessionKey)),
           cwd: cwd ?? null,
+          sessionKey,
           wslDistro: wslDistro ?? null
         }
       ])
@@ -124,20 +155,18 @@ export function useTerminalDeck(platform: TerminalPlatform): TerminalDeckState {
     setTabs((prev) => prev.filter((tab) => tab.id !== id))
   }, [])
 
-  // Starting a fresh session wipes the working set back to a single new shell —
-  // every prior terminal (and its pty) is closed so nothing from the old session
-  // bleeds into the new one.
-  const resetTerminals = useCallback(
-    (cwd?: string | null, title?: string, wslDistro?: string | null) => {
-      for (const tab of tabsRef.current) window.dashboard?.terminal?.close(tab.id)
-      setTabs([
-        { id: makeTerminalId(platform), title: title?.trim() || 'Terminal 1', cwd: cwd ?? null, wslDistro: wslDistro ?? null }
-      ])
-    },
-    [platform]
-  )
+  // Adoption: when a started session's transcript is discovered, its terminals are
+  // moved from the pending key onto the real session id so they keep following it.
+  // The ptys are keyed by terminal id and untouched — only the scoping tag changes.
+  const retagSession = useCallback((fromSessionKey: string, toSessionKey: string) => {
+    setTabs((prev) =>
+      prev.some((tab) => tab.sessionKey === fromSessionKey)
+        ? prev.map((tab) => (tab.sessionKey === fromSessionKey ? { ...tab, sessionKey: toSessionKey } : tab))
+        : prev
+    )
+  }, [])
 
-  return { tabs, addTerminal, closeTerminal, resetTerminals }
+  return { tabs, addTerminal, closeTerminal, retagSession }
 }
 
 export const TerminalDeck = memo(function TerminalDeck({
@@ -147,6 +176,8 @@ export const TerminalDeck = memo(function TerminalDeck({
   defaultWslDistro,
   projectName,
   statusLabel,
+  backgroundTabCount = 0,
+  backgroundSessionCount = 0,
   onAdd,
   onClose
 }: {
@@ -156,15 +187,30 @@ export const TerminalDeck = memo(function TerminalDeck({
   defaultWslDistro?: string | null
   projectName?: string | null
   statusLabel: string
+  // Live terminals that belong to other sessions: kept running in the background
+  // and surfaced here so they aren't silently lost while hidden.
+  backgroundTabCount?: number
+  backgroundSessionCount?: number
   onAdd: (cwd?: string | null, title?: string, wslDistro?: string | null) => void
   onClose: (id: string) => void
 }): JSX.Element {
+  const backgroundNote =
+    backgroundTabCount > 0
+      ? `${backgroundTabCount} ${backgroundTabCount === 1 ? 'terminal' : 'terminals'} running in ` +
+        `${backgroundSessionCount} other ${backgroundSessionCount === 1 ? 'session' : 'sessions'}`
+      : null
+
   return (
     <section className="panel terminal-panel" aria-label={`${platform} terminals`}>
       <div className="panel-header terminal-deck-bar">
         <div className="terminal-deck-heading">
           <h1>{platform === 'claude' ? 'Claude Terminals' : 'Codex Terminals'}</h1>
           <span>{tabs.length === 1 ? '1 terminal' : `${tabs.length} terminals`}</span>
+          {backgroundNote ? (
+            <span className="terminal-bg-note" title={backgroundNote}>
+              · {backgroundNote}
+            </span>
+          ) : null}
         </div>
         <div className="terminal-actions">
           <span className="status-pill">{statusLabel}</span>

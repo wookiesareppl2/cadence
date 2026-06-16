@@ -19,6 +19,22 @@ const SESSION_POLL_INTERVAL_MS = 60_000
 // until the user's first prompt creates a real transcript the poll can pick up.
 export const NEW_SESSION_ID = '__new__'
 
+// Per-start pending ids extend the bare sentinel so several started-but-unsaved
+// sessions can coexist (each scoping its own terminals) until their transcripts
+// appear and are adopted onto the real session id.
+const PENDING_SESSION_PREFIX = '__new__:'
+
+export function createPendingSessionId(): string {
+  return `${PENDING_SESSION_PREFIX}${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+// A pending session is the bare NEW_SESSION_ID sentinel or any per-start pending
+// id. Both resolve to an empty selection (no transcript on disk yet) and suppress
+// the auto-select-most-recent effect.
+export function isPendingSessionId(id: string | null | undefined): boolean {
+  return id === NEW_SESSION_ID || (typeof id === 'string' && id.startsWith(PENDING_SESSION_PREFIX))
+}
+
 export type ProjectSessionGroup = AssistantProject & {
   sessions: AssistantSession[]
 }
@@ -47,6 +63,7 @@ export type ProjectSessionBrowserState = {
   setQuery: Dispatch<SetStateAction<string>>
   selectProject: (projectId: string) => void
   selectSession: (sessionId: string) => void
+  refreshSessions: () => Promise<void>
   attachWorkspace: () => Promise<void>
   renameProject: (projectId: string, name: string | null) => Promise<void>
   renameSession: (sessionId: string, title: string | null) => Promise<void>
@@ -104,7 +121,7 @@ export function useProjectSessionBrowserState({
   const projectSessions = selectedProject?.sessions ?? []
   const selectedSession = useMemo(
     () =>
-      selectedSessionId === NEW_SESSION_ID
+      isPendingSessionId(selectedSessionId)
         ? null
         : projectSessions.find((session) => session.id === selectedSessionId) ?? projectSessions[0] ?? null,
     [projectSessions, selectedSessionId]
@@ -119,7 +136,7 @@ export function useProjectSessionBrowserState({
   useEffect(() => {
     if (loading) return
     // A fresh session holds its empty selection until the user picks a real one.
-    if (selectedSessionId === NEW_SESSION_ID) return
+    if (isPendingSessionId(selectedSessionId)) return
     const nextSessionId = selectedSession?.id ?? null
     if (selectedSessionId !== nextSessionId) onSelectedSessionIdChange(nextSessionId)
   }, [loading, onSelectedSessionIdChange, selectedSession, selectedSessionId])
@@ -216,6 +233,7 @@ export function useProjectSessionBrowserState({
       setQuery,
       selectProject,
       selectSession,
+      refreshSessions,
       attachWorkspace,
       renameProject,
       renameSession,
@@ -238,6 +256,7 @@ export function useProjectSessionBrowserState({
       setQuery,
       selectProject,
       selectSession,
+      refreshSessions,
       attachWorkspace,
       renameProject,
       renameSession,
