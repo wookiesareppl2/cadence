@@ -4,7 +4,7 @@ import { fetchClaudePlanUsage } from './claude-plan-usage-service'
 import { fetchCodexPlanUsage } from './codex-plan-usage-service'
 import { UsageRateLimitError } from './usage-rate-limit'
 
-const LIVE_FETCH_INTERVAL_MS = 5 * 60_000
+const LIVE_FETCH_INTERVAL_MS = 2 * 60_000
 const RATE_LIMIT_FALLBACK_MS = 15 * 60_000
 const ERROR_RETRY_INTERVAL_MS = 2 * 60_000
 
