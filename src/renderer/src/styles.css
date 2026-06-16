@@ -147,6 +147,54 @@ button {
   -webkit-app-region: no-drag;
 }
 
+/* Opens the terminal-commands cheat sheet. Pinned just left of the window
+   controls so it never disturbs the centered platform switcher. */
+.titlebar-action {
+  position: absolute;
+  top: 50%;
+  right: 180px;
+  transform: translateY(-50%);
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-0);
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  -webkit-app-region: no-drag;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    border-color 160ms ease;
+}
+
+.titlebar-action:hover {
+  color: var(--text-1);
+  border-color: var(--surface-4);
+}
+
+.titlebar-action.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--surface-0);
+}
+
+.titlebar-action:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.titlebar-action-glyph {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  opacity: 0.8;
+}
+
 .platform-switcher {
   display: flex;
   gap: 2px;

@@ -13,6 +13,7 @@ import {
 import type { ProjectSessionBrowserState, ProjectSessionGroup } from '@renderer/components/session-browser'
 import { TerminalDeck, useTerminalDeck } from '@renderer/components/terminal-deck'
 import type { TerminalTab } from '@renderer/components/terminal-deck'
+import { CheatSheet } from '@renderer/components/cheat-sheet'
 import type { ClaudePlanUsage, PlanUsageRefreshMeta, UsageWindow } from '@shared/claude-plan-usage'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
@@ -287,6 +288,7 @@ type PlanUsageStates = {
 
 export function App(): JSX.Element {
   const [platform, setPlatform] = useState<PlatformId>('claude')
+  const [cheatSheetOpen, setCheatSheetOpen] = useState(false)
   const planUsageStates = usePlanUsagePolling()
   const [selectedSessionIds, setSelectedSessionIds] = usePersistentState<Record<PlatformId, string | null>>(
     'selection:sessions:v1',
@@ -347,8 +349,15 @@ export function App(): JSX.Element {
 
   return (
     <div className="app-shell" style={cssVars} data-platform={platform}>
-      <Titlebar platform={platform} onPlatformChange={setPlatform} />
-      {platform === 'claude' ? (
+      <Titlebar
+        platform={platform}
+        onPlatformChange={setPlatform}
+        cheatSheetOpen={cheatSheetOpen}
+        onToggleCheatSheet={() => setCheatSheetOpen((open) => !open)}
+      />
+      {cheatSheetOpen ? (
+        <CheatSheet onClose={() => setCheatSheetOpen(false)} />
+      ) : platform === 'claude' ? (
         <ClaudeWorkspace
           usageState={planUsageStates.claude}
           selectedProjectId={selectedProjectIds.claude}
@@ -375,10 +384,14 @@ export function App(): JSX.Element {
 
 function Titlebar({
   platform,
-  onPlatformChange
+  onPlatformChange,
+  cheatSheetOpen,
+  onToggleCheatSheet
 }: {
   platform: PlatformId
   onPlatformChange: (platform: PlatformId) => void
+  cheatSheetOpen: boolean
+  onToggleCheatSheet: () => void
 }): JSX.Element {
   const [version, setVersion] = useState<string>('')
   useEffect(() => {
@@ -391,6 +404,16 @@ function Titlebar({
           v{version}
         </span>
       ) : null}
+      <button
+        type="button"
+        className={`titlebar-action ${cheatSheetOpen ? 'active' : ''}`}
+        aria-pressed={cheatSheetOpen}
+        onClick={onToggleCheatSheet}
+        title="Terminal commands cheat sheet"
+      >
+        <span className="titlebar-action-glyph" aria-hidden="true">{'>_'}</span>
+        Commands
+      </button>
       <div className="platform-switcher" role="tablist" aria-label="Platform">
         {Object.values(PLATFORM_CONFIG).map((item) => (
           <button

@@ -171,7 +171,7 @@ const INLINE = /\*\*([^*]+)\*\*|__([^_]+)__|\*([^*\s][^*]*)\*|_([^_\s][^_]*)_|\[
 // Render a text run, splitting inline code spans out first (their contents are
 // never reformatted), then resolving bold / italic / links in the remainder.
 function renderInline(text: string): ReactNode[] {
-  return text.split(/(`[^`]+`)/g).flatMap((part, partIndex) => {
+  return text.split(/(`[^`]+`)/g).flatMap<ReactNode>((part, partIndex) => {
     if (/^`[^`]+`$/.test(part)) {
       return [
         <code key={`c${partIndex}`} className="md-inline-code">
