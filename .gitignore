@@ -9,6 +9,11 @@ coverage/
 .env
 .env.*
 !.env.example
-.claude/settings.local.json
+# Agent working files (Claude/Codex memory bank, skills, settings, instructions)
+# are local-only and must never be committed — the repo holds app code only.
+.claude/
+.codex/
+CLAUDE.md
+AGENTS.md
 **/.coverage
 **/coverage-*.json
