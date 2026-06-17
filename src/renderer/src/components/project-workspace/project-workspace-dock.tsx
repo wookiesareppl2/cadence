@@ -41,13 +41,17 @@ export function ProjectWorkspaceDock({
       <div className="collapsible-content workspace-dock-content" data-open={open} aria-hidden={!open}>
         <div className="collapsible-inner">
           <div className="workspace-dock-body">
-            {projectId ? (
+            {!projectId ? (
+              <div className="workspace-dock-empty">Select a project to add notes and tasks.</div>
+            ) : !workspace.ready ? (
+              // Don't render an editable empty state before the project's data loads —
+              // editing the placeholder could otherwise overwrite stored notes/tasks.
+              <div className="workspace-dock-empty">Loading…</div>
+            ) : (
               <>
                 <TasksPanel workspace={workspace} openCount={openCount} />
                 <NotesPanel notes={notes} onChange={workspace.setNotes} />
               </>
-            ) : (
-              <div className="workspace-dock-empty">Select a project to add notes and tasks.</div>
             )}
           </div>
         </div>

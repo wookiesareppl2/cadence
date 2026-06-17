@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
   emptyProjectWorkspace,
@@ -51,6 +51,9 @@ async function readStore(): Promise<WorkspaceStore> {
 async function writeStore(store: WorkspaceStore): Promise<void> {
   const path = storePath()
   await mkdir(dirname(path), { recursive: true })
+  // Keep the previous file as a one-step backup before overwriting, so a bad write
+  // (e.g. an accidental empty) is always recoverable from project-workspace.json.bak.
+  await copyFile(path, `${path}.bak`).catch(() => undefined)
   await writeFile(path, JSON.stringify(store, null, 2), 'utf-8')
 }
 

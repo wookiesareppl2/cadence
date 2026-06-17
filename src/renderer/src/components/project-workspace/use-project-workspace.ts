@@ -34,6 +34,12 @@ export function useProjectWorkspace(projectId: string | null): ProjectWorkspaceS
   const workspaceRef = useRef(workspace)
   workspaceRef.current = workspace
 
+  // The projectId whose real (on-disk) data has been loaded into state. Until this
+  // matches the current projectId, the in-memory workspace is just the empty
+  // placeholder — persisting it would wipe the project's stored notes/tasks, so
+  // saves are blocked until hydration completes. This is the data-loss guard.
+  const hydratedForRef = useRef<string | null>(null)
+
   // A pending (debounced) save remembers the projectId it belongs to, so switching
   // projects flushes the previous project's edits to the right place.
   const pendingRef = useRef<{ projectId: string; data: ProjectWorkspace } | null>(null)
@@ -53,7 +59,9 @@ export function useProjectWorkspace(projectId: string | null): ProjectWorkspaceS
 
   const scheduleSave = useCallback(
     (data: ProjectWorkspace) => {
-      if (!projectId) return
+      // Never persist before the project's data has loaded: the in-memory state
+      // would still be the empty placeholder, which would wipe stored notes/tasks.
+      if (!projectId || hydratedForRef.current !== projectId) return
       pendingRef.current = { projectId, data }
       if (timerRef.current !== null) window.clearTimeout(timerRef.current)
       timerRef.current = window.setTimeout(flush, SAVE_DEBOUNCE_MS)
@@ -64,6 +72,8 @@ export function useProjectWorkspace(projectId: string | null): ProjectWorkspaceS
   // Load the selected project's workspace; flush any pending edits for the previous
   // project first (cleanup runs before the next effect body).
   useEffect(() => {
+    // A new project starts un-hydrated, so saves are blocked until its data loads.
+    hydratedForRef.current = null
     if (!projectId) {
       setWorkspace(emptyProjectWorkspace())
       setReady(true)
@@ -79,14 +89,16 @@ export function useProjectWorkspace(projectId: string | null): ProjectWorkspaceS
       .then((data) => {
         if (cancelled) return
         setWorkspace(data ?? emptyProjectWorkspace())
+        // Only now is the in-memory state real, so saving it is safe. A failed
+        // load deliberately leaves it un-hydrated so edits can't overwrite disk.
+        hydratedForRef.current = projectId
+        setReady(true)
       })
       .catch(() => {
         if (!cancelled) setWorkspace(emptyProjectWorkspace())
       })
       .finally(() => {
-        if (cancelled) return
-        setLoading(false)
-        setReady(true)
+        if (!cancelled) setLoading(false)
       })
 
     return () => {
