@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import type { ProjectTask } from '@shared/project-workspace'
+import { NotesEditor } from './notes-editor'
 import { useProjectWorkspace, type ProjectWorkspaceState } from './use-project-workspace'
 import './project-workspace-dock.css'
 
@@ -50,7 +51,7 @@ export function ProjectWorkspaceDock({
             ) : (
               <>
                 <TasksPanel workspace={workspace} openCount={openCount} />
-                <NotesPanel notes={notes} onChange={workspace.setNotes} />
+                <NotesPanel projectId={projectId} notes={notes} onChange={workspace.setNotes} />
               </>
             )}
           </div>
@@ -63,15 +64,17 @@ export function ProjectWorkspaceDock({
 function TasksPanel({ workspace, openCount }: { workspace: ProjectWorkspaceState; openCount: number }): JSX.Element {
   const { tasks } = workspace.workspace
   const [draft, setDraft] = useState('')
+  const [tab, setTab] = useState<'open' | 'done'>('open')
   const doneCount = tasks.length - openCount
 
-  // Open tasks float to the top; done sink to the bottom. Array.sort is stable, so
-  // insertion order is preserved within each group.
-  const sorted = useMemo(() => [...tasks].sort((a, b) => Number(a.done) - Number(b.done)), [tasks])
+  // Tabs split open from done; each keeps insertion order (new open tasks at bottom).
+  const visible = useMemo(() => tasks.filter((task) => (tab === 'open' ? !task.done : task.done)), [tasks, tab])
 
   const submit = (): void => {
     workspace.addTask(draft)
     setDraft('')
+    // A new task is open, so surface the Open tab if we're viewing Done.
+    setTab('open')
   }
 
   return (
@@ -94,11 +97,32 @@ function TasksPanel({ workspace, openCount }: { workspace: ProjectWorkspaceState
         </button>
       </form>
 
+      <div className="workspace-task-tabs" role="tablist" aria-label="Task status">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'open'}
+          className={tab === 'open' ? 'active' : ''}
+          onClick={() => setTab('open')}
+        >
+          Open <span className="workspace-task-tab-count">{openCount}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === 'done'}
+          className={tab === 'done' ? 'active' : ''}
+          onClick={() => setTab('done')}
+        >
+          Done <span className="workspace-task-tab-count">{doneCount}</span>
+        </button>
+      </div>
+
       <div className="workspace-task-list">
-        {sorted.length === 0 ? (
-          <div className="workspace-task-empty">No tasks yet.</div>
+        {visible.length === 0 ? (
+          <div className="workspace-task-empty">{tab === 'open' ? 'No open tasks.' : 'No completed tasks.'}</div>
         ) : (
-          sorted.map((task) => (
+          visible.map((task) => (
             <TaskRow
               key={task.id}
               task={task}
@@ -110,14 +134,13 @@ function TasksPanel({ workspace, openCount }: { workspace: ProjectWorkspaceState
         )}
       </div>
 
-      <div className="workspace-task-footer">
-        <span>{openCount} open</span>
-        {doneCount > 0 ? (
+      {tab === 'done' && doneCount > 0 ? (
+        <div className="workspace-task-footer">
           <button type="button" className="workspace-task-clear" onClick={workspace.clearCompleted}>
-            Clear {doneCount} done
+            Clear all done
           </button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -134,6 +157,7 @@ function TaskRow({
   onRemove: () => void
 }): JSX.Element {
   const [editing, setEditing] = useState(false)
+  const [confirming, setConfirming] = useState(false)
   const [value, setValue] = useState(task.text)
   const inputRef = useRef<HTMLInputElement>(null)
   const committedRef = useRef(false)
@@ -196,30 +220,59 @@ function TaskRow({
           {task.text}
         </button>
       )}
-      <button
-        type="button"
-        className="workspace-task-remove"
-        onClick={onRemove}
-        aria-label="Delete task"
-        title="Delete task"
-      >
-        ✕
-      </button>
+      {confirming ? (
+        <div className="workspace-task-confirm" role="group" aria-label="Confirm delete task">
+          <span className="workspace-task-confirm-label">Delete?</span>
+          <button
+            type="button"
+            className="workspace-task-confirm-yes"
+            onClick={() => {
+              setConfirming(false)
+              onRemove()
+            }}
+            aria-label="Confirm delete task"
+            title="Delete"
+          >
+            ✓
+          </button>
+          <button
+            type="button"
+            className="workspace-task-confirm-no"
+            onClick={() => setConfirming(false)}
+            aria-label="Cancel delete"
+            title="Cancel"
+          >
+            ✕
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="workspace-task-remove"
+          onClick={() => setConfirming(true)}
+          aria-label="Delete task"
+          title="Delete task"
+        >
+          ✕
+        </button>
+      )}
     </div>
   )
 }
 
-function NotesPanel({ notes, onChange }: { notes: string; onChange: (notes: string) => void }): JSX.Element {
+function NotesPanel({
+  projectId,
+  notes,
+  onChange
+}: {
+  projectId: string | null
+  notes: string
+  onChange: (notes: string) => void
+}): JSX.Element {
   return (
     <div className="workspace-notes">
-      <textarea
-        className="workspace-notes-area"
-        value={notes}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder="Project notes — references, reminders, snippets to keep handy while you work…"
-        aria-label="Project notes"
-        spellCheck={false}
-      />
+      {/* Re-key per project so the editor re-initializes with that project's notes. */}
+      <NotesEditor key={projectId ?? 'none'} initialHtml={notes} onChange={onChange} />
     </div>
   )
 }

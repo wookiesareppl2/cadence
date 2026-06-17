@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import {
   emptyProjectWorkspace,
   isProjectWorkspaceEmpty,
+  projectWorkspaceKey,
   sanitizeProjectWorkspace,
   type ProjectWorkspace
 } from '@shared/project-workspace'
@@ -20,6 +21,16 @@ function emptyStore(): WorkspaceStore {
   return { version: 1, projects: {} }
 }
 
+// Combine two workspaces that collapsed onto the same directory key (e.g. legacy
+// claude:/codex: entries for the same folder): union the tasks (dedupe by id) and
+// join the notes. Re-sanitized to keep within caps.
+function mergeWorkspaces(a: ProjectWorkspace, b: ProjectWorkspace): ProjectWorkspace {
+  const seen = new Set(a.tasks.map((task) => task.id))
+  const tasks = [...a.tasks, ...b.tasks.filter((task) => !seen.has(task.id))]
+  const notes = a.notes && b.notes ? `${a.notes}\n\n${b.notes}` : a.notes || b.notes
+  return sanitizeProjectWorkspace({ notes, tasks })
+}
+
 function parseStore(raw: string): WorkspaceStore {
   let parsed: unknown
   try {
@@ -32,9 +43,14 @@ function parseStore(raw: string): WorkspaceStore {
   const projects: Record<string, ProjectWorkspace> = {}
   const rawProjects = (parsed as Record<string, unknown>).projects
   if (rawProjects && typeof rawProjects === 'object') {
-    for (const [projectId, value] of Object.entries(rawProjects as Record<string, unknown>)) {
+    for (const [storedKey, value] of Object.entries(rawProjects as Record<string, unknown>)) {
       const workspace = sanitizeProjectWorkspace(value)
-      if (!isProjectWorkspaceEmpty(workspace)) projects[projectId] = workspace
+      if (isProjectWorkspaceEmpty(workspace)) continue
+      // Migrate legacy platform-prefixed keys (claude:/codex:) onto the shared
+      // directory key so data created before notes/tasks were unified across AI
+      // models still loads. If both models had data for the same folder, merge.
+      const key = projectWorkspaceKey(storedKey)
+      projects[key] = projects[key] ? mergeWorkspaces(projects[key], workspace) : workspace
     }
   }
   return { version: 1, projects }
@@ -59,8 +75,9 @@ async function writeStore(store: WorkspaceStore): Promise<void> {
 
 export async function getProjectWorkspace(projectId: string): Promise<ProjectWorkspace> {
   if (typeof projectId !== 'string' || !projectId) return emptyProjectWorkspace()
+  const key = projectWorkspaceKey(projectId)
   const store = await readStore()
-  return store.projects[projectId] ?? emptyProjectWorkspace()
+  return store.projects[key] ?? emptyProjectWorkspace()
 }
 
 // Serialize read-modify-write so rapid saves (e.g. fast task toggles) can't race
@@ -69,14 +86,15 @@ let writeChain: Promise<unknown> = Promise.resolve()
 
 export async function saveProjectWorkspace(projectId: string, data: unknown): Promise<ProjectWorkspace> {
   if (typeof projectId !== 'string' || !projectId) return emptyProjectWorkspace()
+  const key = projectWorkspaceKey(projectId)
   const clean = sanitizeProjectWorkspace(data)
 
   const result = writeChain.then(async () => {
     const store = await readStore()
     // Drop the entry entirely once a project has no notes and no tasks, so the
     // file doesn't accumulate empty shells.
-    if (isProjectWorkspaceEmpty(clean)) delete store.projects[projectId]
-    else store.projects[projectId] = clean
+    if (isProjectWorkspaceEmpty(clean)) delete store.projects[key]
+    else store.projects[key] = clean
     await writeStore(store)
     return clean
   })

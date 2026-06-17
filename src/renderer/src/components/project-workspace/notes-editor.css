@@ -1,0 +1,151 @@
+.notes-editor {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.notes-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.notes-tool {
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 5px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.notes-tool:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.notes-tool.active {
+  background: var(--surface-4);
+  color: var(--text-1);
+  border-color: var(--surface-4);
+}
+
+.notes-toolbar-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 3px;
+  background: var(--border);
+}
+
+.notes-editor-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.notes-editor-content {
+  min-height: 100%;
+  padding: 10px 12px;
+  color: var(--text-1);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  line-height: 1.5;
+  outline: none;
+}
+
+.notes-editor-content:focus {
+  outline: none;
+}
+
+.notes-editor-content > * {
+  margin: 0 0 8px;
+}
+
+.notes-editor-content > *:last-child {
+  margin-bottom: 0;
+}
+
+.notes-editor-content h1 {
+  margin: 4px 0 8px;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.notes-editor-content h2 {
+  margin: 4px 0 6px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.notes-editor-content h3 {
+  margin: 4px 0 6px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.notes-editor-content ul,
+.notes-editor-content ol {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+
+.notes-editor-content li {
+  margin: 2px 0;
+}
+
+/* TipTap wraps list-item content in a paragraph — keep it tight. */
+.notes-editor-content li > p {
+  margin: 0;
+}
+
+.notes-editor-content blockquote {
+  margin: 0 0 8px;
+  padding-left: 10px;
+  border-left: 3px solid var(--surface-4);
+  color: var(--text-2);
+}
+
+.notes-editor-content code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--surface-0);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.notes-editor-content pre {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--surface-0);
+  overflow-x: auto;
+}
+
+.notes-editor-content pre code {
+  padding: 0;
+  background: transparent;
+}
+
+.notes-editor-content strong {
+  font-weight: 700;
+}
+
+.notes-editor-content em {
+  font-style: italic;
+}
+
+.notes-editor-content a {
+  color: var(--accent);
+}

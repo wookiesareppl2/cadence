@@ -126,7 +126,7 @@ export function useProjectWorkspace(projectId: string | null): ProjectWorkspaceS
       const trimmed = text.trim().slice(0, MAX_TASK_TEXT_LENGTH)
       if (!trimmed) return
       const task: ProjectTask = { id: makeTaskId(), text: trimmed, done: false, createdAt: Date.now() }
-      apply({ ...workspaceRef.current, tasks: [task, ...workspaceRef.current.tasks] })
+      apply({ ...workspaceRef.current, tasks: [...workspaceRef.current.tasks, task] })
     },
     [apply]
   )

@@ -122,6 +122,60 @@
   cursor: not-allowed;
 }
 
+.workspace-task-tabs {
+  display: flex;
+  gap: 2px;
+  margin: 0 12px 8px;
+  padding: 2px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-0);
+}
+
+.workspace-task-tabs button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 24px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 600;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.workspace-task-tabs button:hover {
+  color: var(--text-2);
+}
+
+.workspace-task-tabs button.active {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.workspace-task-tab-count {
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-align: center;
+}
+
+.workspace-task-tabs button.active .workspace-task-tab-count {
+  background: var(--surface-4);
+  color: var(--text-2);
+}
+
 .workspace-task-list {
   flex: 1;
   min-height: 0;
@@ -223,6 +277,54 @@
 }
 
 .workspace-task-remove:hover {
+  color: var(--text-1);
+  background: var(--surface-3);
+}
+
+/* Inline two-step delete confirm — stays visible (not hover-gated) so it can be
+   confirmed or cancelled after the row is no longer hovered. */
+.workspace-task-confirm {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.workspace-task-confirm-label {
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.workspace-task-confirm-yes,
+.workspace-task-confirm-no {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--surface-4);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.workspace-task-confirm-yes {
+  color: var(--caution);
+  border-color: var(--caution);
+}
+
+.workspace-task-confirm-yes:hover {
+  background: var(--caution);
+  color: var(--surface-0);
+}
+
+.workspace-task-confirm-no {
+  color: var(--text-3);
+}
+
+.workspace-task-confirm-no:hover {
   color: var(--text-1);
   background: var(--surface-3);
 }
