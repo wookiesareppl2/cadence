@@ -1,0 +1,97 @@
+import { useEffect, useState } from 'react'
+import type { JSX } from 'react'
+import type { FilePreview, FileRequest } from '@shared/project-files'
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+export function FilePreviewModal({
+  request,
+  onOpenExternally,
+  onClose
+}: {
+  request: FileRequest
+  onOpenExternally: () => void
+  onClose: () => void
+}): JSX.Element {
+  const [preview, setPreview] = useState<FilePreview | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    window.dashboard?.projectFiles
+      ?.preview(request)
+      .then((result) => {
+        if (!cancelled) setPreview(result)
+      })
+      .catch(() => {
+        if (!cancelled) setPreview({ kind: 'error', name: '', size: 0, error: 'Preview failed' })
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [request.rootPath, request.distro, request.relPath])
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const name = preview?.name || request.relPath.split('/').pop() || 'File'
+
+  return (
+    <div className="files-modal-backdrop" onMouseDown={onClose}>
+      <div
+        className="files-preview"
+        role="dialog"
+        aria-label={`Preview ${name}`}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="files-preview-header">
+          <span className="files-preview-name" title={name}>
+            {name}
+          </span>
+          <div className="files-preview-actions">
+            <button type="button" onClick={onOpenExternally}>
+              Open externally
+            </button>
+            <button type="button" className="files-preview-close" onClick={onClose} aria-label="Close preview">
+              ✕
+            </button>
+          </div>
+        </div>
+        <div className="files-preview-body">
+          {loading ? (
+            <div className="files-preview-msg">Loading…</div>
+          ) : !preview ? (
+            <div className="files-preview-msg">No preview.</div>
+          ) : preview.kind === 'text' ? (
+            <pre className="files-preview-text">{preview.text}</pre>
+          ) : preview.kind === 'image' ? (
+            <div className="files-preview-image">
+              <img src={preview.dataUrl} alt={name} />
+            </div>
+          ) : preview.kind === 'too-large' ? (
+            <div className="files-preview-msg">
+              File is too large to preview ({formatSize(preview.size)}). Use “Open externally”.
+            </div>
+          ) : preview.kind === 'binary' ? (
+            <div className="files-preview-msg">Binary file — no in-app preview. Use “Open externally”.</div>
+          ) : (
+            <div className="files-preview-msg error">{preview.error ?? 'Could not preview this file.'}</div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}

@@ -4,6 +4,8 @@ import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import type { PlatformId } from '@shared/platform'
 import type { AssistantSession, AssistantSessionHistory, SessionTitleGenerationStatus } from '@shared/sessions'
 import type { SessionMetadata } from '@shared/session-metadata'
+import type { ProjectWorkspace } from '@shared/project-workspace'
+import type { DirListing, FileKind, FileOpResult, FilePreview, FileRequest } from '@shared/project-files'
 import type { TerminalDataEvent, TerminalPlatform, TerminalStartResult } from '@shared/terminal'
 import type { ClaudeUsageSummary } from '@shared/usage'
 import type { Workspace } from '@shared/workspaces'
@@ -43,6 +45,22 @@ const api = {
   workspaces: {
     list: (): Promise<Workspace[]> => ipcRenderer.invoke('workspaces:list'),
     attach: (): Promise<Workspace | null> => ipcRenderer.invoke('workspaces:attach')
+  },
+  projectWorkspace: {
+    get: (projectId: string): Promise<ProjectWorkspace> => ipcRenderer.invoke('project-workspace:get', projectId),
+    save: (projectId: string, data: ProjectWorkspace): Promise<ProjectWorkspace> =>
+      ipcRenderer.invoke('project-workspace:save', projectId, data)
+  },
+  projectFiles: {
+    list: (req: FileRequest): Promise<DirListing> => ipcRenderer.invoke('project-files:list', req),
+    preview: (req: FileRequest): Promise<FilePreview> => ipcRenderer.invoke('project-files:preview', req),
+    rename: (req: FileRequest, newName: string): Promise<FileOpResult> =>
+      ipcRenderer.invoke('project-files:rename', req, newName),
+    create: (req: FileRequest, name: string, kind: FileKind): Promise<FileOpResult> =>
+      ipcRenderer.invoke('project-files:create', req, name, kind),
+    delete: (req: FileRequest): Promise<FileOpResult> => ipcRenderer.invoke('project-files:delete', req),
+    reveal: (req: FileRequest): Promise<FileOpResult> => ipcRenderer.invoke('project-files:reveal', req),
+    open: (req: FileRequest): Promise<FileOpResult> => ipcRenderer.invoke('project-files:open', req)
   },
   terminal: {
     start: (

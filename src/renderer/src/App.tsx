@@ -14,6 +14,8 @@ import type { ProjectSessionBrowserState, ProjectSessionGroup } from '@renderer/
 import { TerminalDeck, useTerminalDeck } from '@renderer/components/terminal-deck'
 import type { TerminalTab } from '@renderer/components/terminal-deck'
 import { CheatSheet } from '@renderer/components/cheat-sheet'
+import { ProjectWorkspaceDock } from '@renderer/components/project-workspace'
+import { FileTreePanel } from '@renderer/components/file-tree'
 import type { ClaudePlanUsage, PlanUsageRefreshMeta, UsageWindow } from '@shared/claude-plan-usage'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
@@ -772,6 +774,8 @@ function ClaudeWorkspace({
     'selection:history-sidebar:v1',
     'claude'
   )
+  const [workspaceDockOpen, toggleWorkspaceDock] = usePersistentPlatformFlag('selection:workspace-dock:v1', 'claude')
+  const [filesPanelOpen, toggleFilesPanel] = usePersistentPlatformFlag('selection:files-panel:v1', 'claude')
   const { contentBodyRef, toggleHistorySidebar } = useHistorySidebarMotion(
     historySidebarOpen,
     toggleHistorySidebarState
@@ -808,6 +812,14 @@ function ClaudeWorkspace({
           ref={contentBodyRef}
           className={`content-body ${historySidebarOpen ? 'history-open' : 'history-closed'}`}
         >
+          <FileTreePanel
+            rootPath={sessionBrowser.selectedProject?.path ?? null}
+            distro={sessionBrowser.selectedProject?.origin?.distro ?? null}
+            projectId={sessionBrowser.selectedProject?.id ?? null}
+            projectName={sessionBrowser.selectedProject?.name ?? null}
+            open={filesPanelOpen}
+            onToggle={toggleFilesPanel}
+          />
           <div className="main-stack">
             <SessionDetailAccordion
               session={sessionBrowser.selectedSession}
@@ -826,6 +838,12 @@ function ClaudeWorkspace({
               backgroundSessionCount={backgroundSessionCount}
               onAdd={handleAddTerminal}
               onClose={closeTerminal}
+            />
+            <ProjectWorkspaceDock
+              projectId={sessionBrowser.selectedProject?.id ?? null}
+              projectName={sessionBrowser.selectedProject?.name ?? null}
+              open={workspaceDockOpen}
+              onToggle={toggleWorkspaceDock}
             />
           </div>
           <SessionHistorySidebar
@@ -882,6 +900,8 @@ function CodexWorkspace({
     'selection:history-sidebar:v1',
     'codex'
   )
+  const [workspaceDockOpen, toggleWorkspaceDock] = usePersistentPlatformFlag('selection:workspace-dock:v1', 'codex')
+  const [filesPanelOpen, toggleFilesPanel] = usePersistentPlatformFlag('selection:files-panel:v1', 'codex')
   const { contentBodyRef, toggleHistorySidebar } = useHistorySidebarMotion(
     historySidebarOpen,
     toggleHistorySidebarState
@@ -913,6 +933,14 @@ function CodexWorkspace({
           ref={contentBodyRef}
           className={`content-body ${historySidebarOpen ? 'history-open' : 'history-closed'}`}
         >
+          <FileTreePanel
+            rootPath={sessionBrowser.selectedProject?.path ?? null}
+            distro={sessionBrowser.selectedProject?.origin?.distro ?? null}
+            projectId={sessionBrowser.selectedProject?.id ?? null}
+            projectName={sessionBrowser.selectedProject?.name ?? null}
+            open={filesPanelOpen}
+            onToggle={toggleFilesPanel}
+          />
           <div className="main-stack">
             <SessionDetailAccordion
               session={sessionBrowser.selectedSession}
@@ -931,6 +959,12 @@ function CodexWorkspace({
               backgroundSessionCount={backgroundSessionCount}
               onAdd={handleAddTerminal}
               onClose={closeTerminal}
+            />
+            <ProjectWorkspaceDock
+              projectId={sessionBrowser.selectedProject?.id ?? null}
+              projectName={sessionBrowser.selectedProject?.name ?? null}
+              open={workspaceDockOpen}
+              onToggle={toggleWorkspaceDock}
             />
           </div>
           <SessionHistorySidebar

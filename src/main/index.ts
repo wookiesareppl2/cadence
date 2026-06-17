@@ -20,6 +20,17 @@ import {
   setSessionAlias
 } from './sessions/session-metadata-service'
 import { deleteProject, deleteSession } from './sessions/session-delete-service'
+import { getProjectWorkspace, saveProjectWorkspace } from './projects/project-workspace-service'
+import {
+  createEntry,
+  deleteEntry,
+  listDirectory,
+  openExternally,
+  readFilePreview,
+  renameEntry,
+  revealInExplorer
+} from './projects/project-files-service'
+import type { FileKind, FileRequest } from '@shared/project-files'
 import { attachWorkspace, listWorkspaces } from './workspaces/workspace-service'
 import { initAutoUpdates } from './updater'
 import { DEFAULT_WINDOW_BOUNDS } from './window-state-utils'
@@ -192,6 +203,19 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   )
   ipcMain.handle('workspaces:list', () => listWorkspaces())
   ipcMain.handle('workspaces:attach', (event) => attachWorkspace(BrowserWindow.fromWebContents(event.sender)))
+  ipcMain.handle('project-workspace:get', (_event, projectId: string) => getProjectWorkspace(projectId))
+  ipcMain.handle('project-workspace:save', (_event, projectId: string, data: unknown) =>
+    saveProjectWorkspace(projectId, data)
+  )
+  ipcMain.handle('project-files:list', (_event, req: FileRequest) => listDirectory(req))
+  ipcMain.handle('project-files:preview', (_event, req: FileRequest) => readFilePreview(req))
+  ipcMain.handle('project-files:rename', (_event, req: FileRequest, newName: string) => renameEntry(req, newName))
+  ipcMain.handle('project-files:create', (_event, req: FileRequest, name: string, kind: FileKind) =>
+    createEntry(req, name, kind)
+  )
+  ipcMain.handle('project-files:delete', (_event, req: FileRequest) => deleteEntry(req))
+  ipcMain.handle('project-files:reveal', (_event, req: FileRequest) => revealInExplorer(req))
+  ipcMain.handle('project-files:open', (_event, req: FileRequest) => openExternally(req))
   ipcMain.handle('terminal:start', (event, terminalId: string, platform: string, cwd?: string, wslDistro?: string) =>
     startTerminal(terminalId, platform, event.sender, cwd, wslDistro)
   )

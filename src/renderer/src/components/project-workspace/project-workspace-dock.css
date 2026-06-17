@@ -1,0 +1,279 @@
+.workspace-dock {
+  min-height: 0;
+}
+
+/* Full-width header that doubles as the open/close toggle. */
+.workspace-dock-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 40px;
+  padding: 0 14px;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 160ms ease;
+}
+
+.workspace-dock-header:hover {
+  background: var(--surface-2);
+}
+
+.workspace-dock-title {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.workspace-dock-sub {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-dock-chevron {
+  flex: 0 0 auto;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.workspace-dock-body {
+  display: flex;
+  height: clamp(190px, 30vh, 360px);
+  min-height: 0;
+  border-top: 1px solid var(--border);
+}
+
+.workspace-dock-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+/* ── Tasks ────────────────────────────────────────────────────────────────── */
+.workspace-tasks {
+  flex: 1 1 50%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-task-add {
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.workspace-task-add input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-0);
+  color: var(--text-1);
+  font-size: 12px;
+}
+
+.workspace-task-add input::placeholder {
+  color: var(--text-3);
+}
+
+.workspace-task-add input:focus-visible,
+.workspace-task-edit:focus-visible,
+.workspace-notes-area:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.workspace-task-add button {
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.workspace-task-add button:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--surface-0);
+}
+
+.workspace-task-add button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.workspace-task-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.workspace-task-empty {
+  padding: 18px 4px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.workspace-task {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 6px;
+}
+
+.workspace-task:hover {
+  background: var(--surface-2);
+}
+
+.workspace-task-check {
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  margin-top: 1px;
+  border: 1.5px solid var(--surface-4);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--surface-0);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+
+.workspace-task.done .workspace-task-check {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.workspace-task-text {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  cursor: text;
+  font-size: 12.5px;
+  line-height: 1.4;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.workspace-task.done .workspace-task-text {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+
+.workspace-task-edit {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--surface-0);
+  color: var(--text-1);
+  font-size: 12.5px;
+}
+
+.workspace-task-remove {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.workspace-task:hover .workspace-task-remove,
+.workspace-task-remove:focus-visible {
+  opacity: 1;
+}
+
+.workspace-task-remove:hover {
+  color: var(--text-1);
+  background: var(--surface-3);
+}
+
+.workspace-task-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.workspace-task-clear {
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 11px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.workspace-task-clear:hover {
+  color: var(--text-1);
+}
+
+/* ── Notes ────────────────────────────────────────────────────────────────── */
+.workspace-notes {
+  flex: 1 1 50%;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  border-left: 1px solid var(--border);
+}
+
+.workspace-notes-area {
+  flex: 1;
+  min-height: 0;
+  resize: none;
+  padding: 10px 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.workspace-notes-area::placeholder {
+  color: var(--text-3);
+}

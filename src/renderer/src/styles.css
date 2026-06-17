@@ -733,9 +733,37 @@ button {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(280px, 1fr);
+  /* Rows: session detail · terminal deck · notes & tasks dock. The dock row is
+     auto so it grows/shrinks smoothly with its own collapse animation. */
+  grid-template-rows: auto minmax(140px, 1fr) auto;
   gap: 8px;
   transform-origin: left center;
+}
+
+/* Default collapse/expand animation for any toggle item in the dashboard (matches
+   the Session Details accordion). Wrap collapsible content as
+   `.collapsible-content > .collapsible-inner` and set data-open="true|false" on the
+   content element; the header/trigger sits outside it. */
+.collapsible-content {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(-3px);
+  transition:
+    grid-template-rows var(--motion-panel) var(--ease-out-expo),
+    opacity 150ms ease,
+    transform var(--motion-panel) var(--ease-out-expo);
+}
+
+.collapsible-content[data-open='true'] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.collapsible-inner {
+  min-height: 0;
+  overflow: hidden;
 }
 
 .terminal-surface {
