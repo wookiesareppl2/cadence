@@ -58,6 +58,10 @@ function shouldForwardRendererConsole({ message, sourceId }: WebContentsConsoleM
 function createMainWindow(): BrowserWindow {
   const savedWindowState = readWindowState()
   const initialBounds = savedWindowState?.bounds ?? DEFAULT_WINDOW_BOUNDS
+  // Scale the whole UI up a notch so text reads comfortably. A browser-level zoom
+  // keeps everything proportional and, unlike CSS zoom, leaves JS-positioned
+  // overlays (tooltips, context menus) correctly placed.
+  const UI_ZOOM_FACTOR = 1.1
   const mainWindow = new BrowserWindow({
     ...initialBounds,
     minWidth: 1180,
@@ -93,6 +97,29 @@ function createMainWindow(): BrowserWindow {
 
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     console.error('Renderer process exited', details)
+  })
+
+  // Re-apply the zoom after every load; a full reload (incl. dev HMR) resets it.
+  mainWindow.webContents.on('did-finish-load', () => {
+    mainWindow.webContents.setZoomFactor(UI_ZOOM_FACTOR)
+  })
+
+  // Wire up zoom keyboard shortcuts (a frameless window with no menu has none by
+  // default): Ctrl+= / Ctrl++ to zoom in, Ctrl+- to zoom out, Ctrl+0 to reset.
+  const clampZoom = (factor: number): number => Math.min(2.5, Math.max(0.6, Math.round(factor * 10) / 10))
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown' || !input.control || input.alt) return
+    const contents = mainWindow.webContents
+    if (input.key === '=' || input.key === '+') {
+      contents.setZoomFactor(clampZoom(contents.getZoomFactor() + 0.1))
+      event.preventDefault()
+    } else if (input.key === '-') {
+      contents.setZoomFactor(clampZoom(contents.getZoomFactor() - 0.1))
+      event.preventDefault()
+    } else if (input.key === '0') {
+      contents.setZoomFactor(UI_ZOOM_FACTOR)
+      event.preventDefault()
+    }
   })
 
   if (is.dev && process.env.ELECTRON_RENDERER_URL) {
