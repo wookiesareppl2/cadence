@@ -349,8 +349,8 @@
 }
 
 .files-preview {
-  width: min(760px, 100%);
-  height: min(80vh, 700px);
+  width: min(1180px, 100%);
+  height: min(960px, 100%);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -421,6 +421,11 @@
   color: var(--text-1);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* Rendered markdown preview reuses the shared .history-md / .md-* styles. */
+.files-preview-markdown {
+  padding: 14px 18px;
 }
 
 .files-preview-image {

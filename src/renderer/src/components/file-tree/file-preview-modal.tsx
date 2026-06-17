@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
 import type { FilePreview, FileRequest } from '@shared/project-files'
+import { HistoryMarkdown } from '../history-markdown'
+
+const MARKDOWN_EXT = /\.(md|markdown|mdx|mdown|mkd)$/i
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -19,10 +22,12 @@ export function FilePreviewModal({
 }): JSX.Element {
   const [preview, setPreview] = useState<FilePreview | null>(null)
   const [loading, setLoading] = useState(true)
+  const [raw, setRaw] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
+    setRaw(false)
     window.dashboard?.projectFiles
       ?.preview(request)
       .then((result) => {
@@ -48,6 +53,8 @@ export function FilePreviewModal({
   }, [onClose])
 
   const name = preview?.name || request.relPath.split('/').pop() || 'File'
+  const isMarkdown = MARKDOWN_EXT.test(name)
+  const canToggle = isMarkdown && preview?.kind === 'text'
 
   return (
     <div className="files-modal-backdrop" onMouseDown={onClose}>
@@ -62,6 +69,11 @@ export function FilePreviewModal({
             {name}
           </span>
           <div className="files-preview-actions">
+            {canToggle ? (
+              <button type="button" onClick={() => setRaw((current) => !current)}>
+                {raw ? 'Rendered' : 'Raw'}
+              </button>
+            ) : null}
             <button type="button" onClick={onOpenExternally}>
               Open externally
             </button>
@@ -76,7 +88,13 @@ export function FilePreviewModal({
           ) : !preview ? (
             <div className="files-preview-msg">No preview.</div>
           ) : preview.kind === 'text' ? (
-            <pre className="files-preview-text">{preview.text}</pre>
+            isMarkdown && !raw ? (
+              <div className="files-preview-markdown">
+                <HistoryMarkdown text={preview.text ?? ''} />
+              </div>
+            ) : (
+              <pre className="files-preview-text">{preview.text}</pre>
+            )
           ) : preview.kind === 'image' ? (
             <div className="files-preview-image">
               <img src={preview.dataUrl} alt={name} />
