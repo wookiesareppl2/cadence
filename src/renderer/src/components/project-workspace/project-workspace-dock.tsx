@@ -25,7 +25,7 @@ export function ProjectWorkspaceDock({
     : 'Select a project'
 
   return (
-    <section className="panel workspace-dock" aria-label="Project notes and tasks">
+    <section className={`panel workspace-dock ${open ? 'expanded' : 'collapsed'}`} aria-label="Project notes and tasks">
       <button
         type="button"
         className="workspace-dock-header"
@@ -253,7 +253,7 @@ function TaskRow({
           aria-label="Delete task"
           title="Delete task"
         >
-          ✕
+          🗑
         </button>
       )}
     </div>

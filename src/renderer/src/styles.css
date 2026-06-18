@@ -195,6 +195,50 @@ button {
   opacity: 0.8;
 }
 
+.panel-layout-actions {
+  position: absolute;
+  top: 50%;
+  left: 72px;
+  display: flex;
+  gap: 4px;
+  transform: translateY(-50%);
+  -webkit-app-region: no-drag;
+}
+
+.panel-layout-action {
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    border-color 160ms ease,
+    opacity 160ms ease;
+}
+
+.panel-layout-action:hover:not(:disabled) {
+  background: var(--surface-3);
+  border-color: var(--surface-4);
+  color: var(--text-1);
+}
+
+.panel-layout-action:disabled {
+  color: var(--text-3);
+  cursor: default;
+  opacity: 0.52;
+}
+
+.panel-layout-action:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .platform-switcher {
   display: flex;
   gap: 2px;

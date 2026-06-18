@@ -1,5 +1,8 @@
 .workspace-dock {
   min-height: 0;
+  transition:
+    border-color 160ms var(--ease-out-expo),
+    background-color 160ms var(--ease-out-expo);
 }
 
 /* Full-width header that doubles as the open/close toggle. */
@@ -18,7 +21,18 @@
   transition: background-color 160ms ease;
 }
 
-.workspace-dock-header:hover {
+/* Match the History panel's hover model: only the chevron whitens when expanded;
+   the collapsed dock lights the real panel border so rounded corners stay clean. */
+.workspace-dock-header:hover .workspace-dock-chevron {
+  color: var(--text-1);
+}
+
+.workspace-dock.collapsed:hover {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.workspace-dock.collapsed:hover .workspace-dock-header {
   background: var(--surface-2);
 }
 
@@ -42,8 +56,10 @@
 
 .workspace-dock-chevron {
   flex: 0 0 auto;
-  color: var(--text-3);
-  font-size: 11px;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 15px;
+  line-height: 1;
 }
 
 .workspace-dock-body {

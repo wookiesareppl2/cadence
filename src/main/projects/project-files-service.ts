@@ -1,4 +1,5 @@
 import { shell } from 'electron'
+import { spawn } from 'node:child_process'
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname } from 'node:path'
 import {
@@ -33,6 +34,7 @@ function isWslUncPath(path: string): boolean {
 }
 
 type Resolved = { root: string; native: string }
+type ExternalOpenResult = 'opened' | 'failed'
 
 // Validate a request and resolve it to a native Windows path confined to the
 // project root. Returns null for anything that can't be confined.
@@ -47,6 +49,38 @@ function resolveRequest(req: FileRequest): Resolved | null {
   const nativeLc = native.toLowerCase()
   if (nativeLc !== rootLc && !nativeLc.startsWith(`${rootLc}\\`)) return null
   return { root, native }
+}
+
+async function openViaExplorer(nativePath: string): Promise<ExternalOpenResult> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (result: ExternalOpenResult): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeout)
+      resolve(result)
+    }
+    const timeout = setTimeout(() => finish('failed'), 3000)
+
+    try {
+      // Use Explorer as the Windows shell broker. Launching Code.exe/code.cmd
+      // directly from an Electron app can create a black VS Code window whose
+      // renderer exits with `launch-failed`; Explorer owns the file association
+      // launch and avoids inheriting this process tree's Electron state.
+      const child = spawn('explorer.exe', [nativePath], {
+        stdio: 'ignore',
+        detached: true,
+        windowsHide: true
+      })
+      child.once('spawn', () => {
+        child.unref()
+        finish('opened')
+      })
+      child.once('error', () => finish('failed'))
+    } catch {
+      finish('failed')
+    }
+  })
 }
 
 export async function listDirectory(req: FileRequest): Promise<DirListing> {
@@ -187,6 +221,12 @@ export async function revealInExplorer(req: FileRequest): Promise<FileOpResult> 
 export async function openExternally(req: FileRequest): Promise<FileOpResult> {
   const resolved = resolveRequest(req)
   if (!resolved) return { ok: false, error: 'Invalid path' }
+  if (process.platform === 'win32') {
+    const explorerResult = await openViaExplorer(resolved.native)
+    if (explorerResult === 'opened') return { ok: true }
+    console.warn('[project-files:open] Explorer failed to open path', { relPath: confineRelPath(req.relPath ?? '') ?? '' })
+    return { ok: false, error: 'Windows could not open this file externally' }
+  }
   const error = await shell.openPath(resolved.native)
   return error ? { ok: false, error } : { ok: true }
 }

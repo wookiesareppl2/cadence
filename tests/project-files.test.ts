@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { confineRelPath, isValidEntryName, joinNative, toNativeRoot } from '../src/shared/project-files'
+import {
+  confineRelPath,
+  isTextLikeProjectFile,
+  isValidEntryName,
+  joinNative,
+  toNativeRoot
+} from '../src/shared/project-files'
 
 describe('confineRelPath', () => {
   it('cleans ordinary relative paths and keeps spaces', () => {
@@ -68,5 +74,25 @@ describe('joinNative', () => {
     expect(joinNative('\\\\wsl.localhost\\Ubuntu\\home\\app', 'src/x')).toBe(
       '\\\\wsl.localhost\\Ubuntu\\home\\app\\src\\x'
     )
+  })
+})
+
+describe('isTextLikeProjectFile', () => {
+  it('recognizes source, markdown, and config files', () => {
+    expect(isTextLikeProjectFile('src/app.tsx')).toBe(true)
+    expect(isTextLikeProjectFile('docs/DESIGN.md')).toBe(true)
+    expect(isTextLikeProjectFile('.gitignore')).toBe(true)
+    expect(isTextLikeProjectFile('.env.local')).toBe(true)
+    expect(isTextLikeProjectFile('Dockerfile')).toBe(true)
+  })
+
+  it('treats directories as editor-friendly targets', () => {
+    expect(isTextLikeProjectFile('assets', true)).toBe(true)
+  })
+
+  it('leaves image and binary-looking files on the OS default opener', () => {
+    expect(isTextLikeProjectFile('screenshot.png')).toBe(false)
+    expect(isTextLikeProjectFile('archive.zip')).toBe(false)
+    expect(isTextLikeProjectFile('bin/tool.exe')).toBe(false)
   })
 })

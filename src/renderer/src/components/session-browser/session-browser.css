@@ -258,7 +258,6 @@
     border-color 160ms var(--ease-out-expo),
     color 160ms var(--ease-out-expo),
     background-color 160ms var(--ease-out-expo),
-    box-shadow 160ms var(--ease-out-expo),
     opacity 90ms ease,
     transform var(--motion-sidebar) var(--ease-out-expo);
   z-index: 2;
@@ -298,7 +297,6 @@
   border-color: var(--accent);
   color: var(--text-1);
   background: var(--surface-2);
-  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 .history-sidebar-shell.open .history-sidebar-toggle {
@@ -321,7 +319,7 @@
 
 .history-sidebar-toggle-icon {
   font-family: var(--font-mono);
-  font-size: 18px;
+  font-size: 15px;
   line-height: 1;
 }
 
@@ -632,6 +630,22 @@
 .session-detail-header {
   min-height: 42px;
   padding: 8px 14px;
+  cursor: pointer;
+}
+
+/* Same hover model as History/Notes: chevron whitens when expanded; the collapsed
+   bar lights the real panel border so rounded corners stay clean. */
+.session-detail-header:hover .panel-collapse-toggle {
+  color: var(--text-1);
+}
+
+.session-detail-accordion.collapsed:hover {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.session-detail-accordion.collapsed:hover .session-detail-header {
+  background: var(--surface-2);
 }
 
 .session-detail-heading {
@@ -727,31 +741,29 @@
   background: var(--border-subtle);
 }
 
+/* Unified panel collapse toggle: a 15px triangle with no box (just a comfortable
+   click target), used by Session Detail, History, Files, and matched by the Notes
+   dock and the side-rail icons. */
 .panel-collapse-toggle {
   flex: 0 0 auto;
+  display: grid;
+  place-items: center;
   width: 26px;
   min-width: 26px;
   height: 26px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--surface-2);
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--text-2);
   cursor: pointer;
   font-family: var(--font-mono);
   font-size: 15px;
   line-height: 1;
-  transition:
-    border-color 160ms var(--ease-out-expo),
-    color 160ms var(--ease-out-expo),
-    background-color 160ms var(--ease-out-expo),
-    transform var(--motion-panel) var(--ease-out-expo);
+  transition: color 160ms var(--ease-out-expo);
 }
 
 .panel-collapse-toggle:hover {
-  border-color: var(--accent);
   color: var(--text-1);
-  background: var(--accent-dim);
-  transform: translateY(-1px);
 }
 
 .panel-collapse-toggle:focus-visible {

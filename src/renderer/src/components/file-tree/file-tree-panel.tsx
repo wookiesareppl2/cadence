@@ -52,6 +52,9 @@ export function FileTreePanel({
     return (
       <div className="files-panel-shell closed">
         <button type="button" className="files-panel-rail" onClick={onToggle} title="Show files">
+          <span className="files-panel-rail-icon" aria-hidden="true">
+            ▸
+          </span>
           <span className="files-panel-rail-label">Files</span>
         </button>
       </div>
@@ -84,8 +87,14 @@ export function FileTreePanel({
             <button type="button" onClick={() => tree.refresh('')} disabled={!rootPath} title="Refresh" aria-label="Refresh">
               ⟳
             </button>
-            <button type="button" onClick={onToggle} title="Hide files" aria-label="Hide files">
-              ‹
+            <button
+              type="button"
+              className="files-panel-collapse"
+              onClick={onToggle}
+              title="Hide files"
+              aria-label="Hide files"
+            >
+              ◂
             </button>
           </div>
         </div>
@@ -171,7 +180,7 @@ export function FileTreePanel({
       {preview ? (
         <FilePreviewModal
           request={{ rootPath: rootPath ?? '', distro, relPath: preview.relPath }}
-          onOpenExternally={() => void tree.openExternally(preview.relPath)}
+          onOpenExternally={() => tree.openExternally(preview.relPath)}
           onClose={() => setPreview(null)}
         />
       ) : null}

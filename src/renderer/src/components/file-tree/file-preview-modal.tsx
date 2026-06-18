@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
-import type { FilePreview, FileRequest } from '@shared/project-files'
+import type { FileOpResult, FilePreview, FileRequest } from '@shared/project-files'
 import { HistoryMarkdown } from '../history-markdown'
 
 const MARKDOWN_EXT = /\.(md|markdown|mdx|mdown|mkd)$/i
@@ -17,17 +17,20 @@ export function FilePreviewModal({
   onClose
 }: {
   request: FileRequest
-  onOpenExternally: () => void
+  onOpenExternally: () => Promise<FileOpResult>
   onClose: () => void
 }): JSX.Element {
   const [preview, setPreview] = useState<FilePreview | null>(null)
   const [loading, setLoading] = useState(true)
   const [raw, setRaw] = useState(false)
+  const [openingExternal, setOpeningExternal] = useState(false)
+  const [externalError, setExternalError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setRaw(false)
+    setExternalError(null)
     window.dashboard?.projectFiles
       ?.preview(request)
       .then((result) => {
@@ -56,6 +59,19 @@ export function FilePreviewModal({
   const isMarkdown = MARKDOWN_EXT.test(name)
   const canToggle = isMarkdown && preview?.kind === 'text'
 
+  const openExternal = async (): Promise<void> => {
+    setOpeningExternal(true)
+    setExternalError(null)
+    try {
+      const result = await onOpenExternally()
+      if (!result.ok) setExternalError(result.error ?? 'Could not open this file externally.')
+    } catch (error) {
+      setExternalError(error instanceof Error ? error.message : 'Could not open this file externally.')
+    } finally {
+      setOpeningExternal(false)
+    }
+  }
+
   return (
     <div className="files-modal-backdrop" onMouseDown={onClose}>
       <div
@@ -74,14 +90,15 @@ export function FilePreviewModal({
                 {raw ? 'Rendered' : 'Raw'}
               </button>
             ) : null}
-            <button type="button" onClick={onOpenExternally}>
-              Open externally
+            <button type="button" onClick={() => void openExternal()} disabled={openingExternal}>
+              {openingExternal ? 'Opening...' : 'Open externally'}
             </button>
             <button type="button" className="files-preview-close" onClick={onClose} aria-label="Close preview">
               ✕
             </button>
           </div>
         </div>
+        {externalError ? <div className="files-preview-open-error">{externalError}</div> : null}
         <div className="files-preview-body">
           {loading ? (
             <div className="files-preview-msg">Loading…</div>

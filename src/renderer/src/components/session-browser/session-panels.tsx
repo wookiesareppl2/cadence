@@ -179,7 +179,7 @@ export const SessionDetailAccordion = memo(function SessionDetailAccordion({
       className={`panel session-detail-accordion ${open ? 'expanded' : 'collapsed'}`}
       aria-label="Session details"
     >
-      <div className="panel-header session-detail-header">
+      <div className="panel-header session-detail-header" onClick={onToggle}>
         <div className="session-detail-heading">
           <h2>Session Detail</h2>
           {open ? <span>{session ? session.title : emptyLabel}</span> : null}
@@ -189,7 +189,10 @@ export const SessionDetailAccordion = memo(function SessionDetailAccordion({
           className="panel-collapse-toggle"
           aria-label={open ? 'Collapse session details' : 'Expand session details'}
           aria-expanded={open}
-          onClick={onToggle}
+          onClick={(event) => {
+            event.stopPropagation()
+            onToggle()
+          }}
           title={open ? 'Collapse session details' : 'Expand session details'}
         >
           {open ? '▴' : '▾'}
@@ -280,7 +283,7 @@ export function SessionHistorySidebar({
         title="Show history"
       >
         <span className="history-sidebar-toggle-icon" aria-hidden="true">
-          ‹
+          ◂
         </span>
         <span className="history-sidebar-toggle-label">History</span>
         <span className="history-sidebar-toggle-count">{loading && !history ? '...' : entryCount}</span>
@@ -304,7 +307,7 @@ export function SessionHistorySidebar({
             tabIndex={open ? 0 : -1}
             title="Hide history"
           >
-            ›
+            ▸
           </button>
         </div>
       </div>

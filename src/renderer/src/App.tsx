@@ -309,6 +309,18 @@ export function App(): JSX.Element {
     'selection:session-detail-accordion:v1',
     { claude: false, codex: false }
   )
+  const [historySidebarOpen, setHistorySidebarOpen] = usePersistentState<Record<PlatformId, boolean>>(
+    'selection:history-sidebar:v1',
+    { claude: false, codex: false }
+  )
+  const [workspaceDockOpen, setWorkspaceDockOpen] = usePersistentState<Record<PlatformId, boolean>>(
+    'selection:workspace-dock:v1',
+    { claude: false, codex: false }
+  )
+  const [filesPanelOpen, setFilesPanelOpen] = usePersistentState<Record<PlatformId, boolean>>(
+    'selection:files-panel:v1',
+    { claude: false, codex: false }
+  )
   const activePlatform = PLATFORM_CONFIG[platform]
 
   const selectClaudeSession = useCallback((sessionId: string | null) => {
@@ -333,11 +345,57 @@ export function App(): JSX.Element {
 
   const toggleClaudeSessionDetail = useCallback(() => {
     setSessionDetailOpen((current) => ({ ...current, claude: !current.claude }))
-  }, [])
+  }, [setSessionDetailOpen])
 
   const toggleCodexSessionDetail = useCallback(() => {
     setSessionDetailOpen((current) => ({ ...current, codex: !current.codex }))
-  }, [])
+  }, [setSessionDetailOpen])
+
+  const toggleClaudeHistorySidebar = useCallback(() => {
+    setHistorySidebarOpen((current) => ({ ...current, claude: !current.claude }))
+  }, [setHistorySidebarOpen])
+
+  const toggleCodexHistorySidebar = useCallback(() => {
+    setHistorySidebarOpen((current) => ({ ...current, codex: !current.codex }))
+  }, [setHistorySidebarOpen])
+
+  const toggleClaudeWorkspaceDock = useCallback(() => {
+    setWorkspaceDockOpen((current) => ({ ...current, claude: !current.claude }))
+  }, [setWorkspaceDockOpen])
+
+  const toggleCodexWorkspaceDock = useCallback(() => {
+    setWorkspaceDockOpen((current) => ({ ...current, codex: !current.codex }))
+  }, [setWorkspaceDockOpen])
+
+  const toggleClaudeFilesPanel = useCallback(() => {
+    setFilesPanelOpen((current) => ({ ...current, claude: !current.claude }))
+  }, [setFilesPanelOpen])
+
+  const toggleCodexFilesPanel = useCallback(() => {
+    setFilesPanelOpen((current) => ({ ...current, codex: !current.codex }))
+  }, [setFilesPanelOpen])
+
+  const activePanelStates = useMemo(
+    () => [
+      sessionDetailOpen[platform],
+      historySidebarOpen[platform],
+      workspaceDockOpen[platform],
+      filesPanelOpen[platform]
+    ],
+    [filesPanelOpen, historySidebarOpen, platform, sessionDetailOpen, workspaceDockOpen]
+  )
+  const activePanelsAllCollapsed = activePanelStates.every((open) => !open)
+  const activePanelsAllExpanded = activePanelStates.every(Boolean)
+
+  const setActivePlatformPanelsOpen = useCallback(
+    (open: boolean) => {
+      setSessionDetailOpen((current) => (current[platform] === open ? current : { ...current, [platform]: open }))
+      setHistorySidebarOpen((current) => (current[platform] === open ? current : { ...current, [platform]: open }))
+      setWorkspaceDockOpen((current) => (current[platform] === open ? current : { ...current, [platform]: open }))
+      setFilesPanelOpen((current) => (current[platform] === open ? current : { ...current, [platform]: open }))
+    },
+    [platform, setFilesPanelOpen, setHistorySidebarOpen, setSessionDetailOpen, setWorkspaceDockOpen]
+  )
 
   const cssVars = useMemo(
     () =>
@@ -356,6 +414,10 @@ export function App(): JSX.Element {
         onPlatformChange={setPlatform}
         cheatSheetOpen={cheatSheetOpen}
         onToggleCheatSheet={() => setCheatSheetOpen((open) => !open)}
+        panelsAllCollapsed={activePanelsAllCollapsed}
+        panelsAllExpanded={activePanelsAllExpanded}
+        onCollapseAllPanels={() => setActivePlatformPanelsOpen(false)}
+        onExpandAllPanels={() => setActivePlatformPanelsOpen(true)}
       />
       {cheatSheetOpen ? (
         <CheatSheet onClose={() => setCheatSheetOpen(false)} />
@@ -365,9 +427,15 @@ export function App(): JSX.Element {
           selectedProjectId={selectedProjectIds.claude}
           selectedSessionId={selectedSessionIds.claude}
           sessionDetailOpen={sessionDetailOpen.claude}
+          historySidebarOpen={historySidebarOpen.claude}
+          workspaceDockOpen={workspaceDockOpen.claude}
+          filesPanelOpen={filesPanelOpen.claude}
           onSelectedProjectIdChange={selectClaudeProject}
           onSelectedSessionIdChange={selectClaudeSession}
           onToggleSessionDetail={toggleClaudeSessionDetail}
+          onToggleHistorySidebar={toggleClaudeHistorySidebar}
+          onToggleWorkspaceDock={toggleClaudeWorkspaceDock}
+          onToggleFilesPanel={toggleClaudeFilesPanel}
         />
       ) : (
         <CodexWorkspace
@@ -375,9 +443,15 @@ export function App(): JSX.Element {
           selectedProjectId={selectedProjectIds.codex}
           selectedSessionId={selectedSessionIds.codex}
           sessionDetailOpen={sessionDetailOpen.codex}
+          historySidebarOpen={historySidebarOpen.codex}
+          workspaceDockOpen={workspaceDockOpen.codex}
+          filesPanelOpen={filesPanelOpen.codex}
           onSelectedProjectIdChange={selectCodexProject}
           onSelectedSessionIdChange={selectCodexSession}
           onToggleSessionDetail={toggleCodexSessionDetail}
+          onToggleHistorySidebar={toggleCodexHistorySidebar}
+          onToggleWorkspaceDock={toggleCodexWorkspaceDock}
+          onToggleFilesPanel={toggleCodexFilesPanel}
         />
       )}
     </div>
@@ -388,14 +462,23 @@ function Titlebar({
   platform,
   onPlatformChange,
   cheatSheetOpen,
-  onToggleCheatSheet
+  onToggleCheatSheet,
+  panelsAllCollapsed,
+  panelsAllExpanded,
+  onCollapseAllPanels,
+  onExpandAllPanels
 }: {
   platform: PlatformId
   onPlatformChange: (platform: PlatformId) => void
   cheatSheetOpen: boolean
   onToggleCheatSheet: () => void
+  panelsAllCollapsed: boolean
+  panelsAllExpanded: boolean
+  onCollapseAllPanels: () => void
+  onExpandAllPanels: () => void
 }): JSX.Element {
   const [version, setVersion] = useState<string>('')
+  const platformLabel = PLATFORM_CONFIG[platform].label
   useEffect(() => {
     window.dashboard?.app?.getVersion?.().then(setVersion).catch(() => undefined)
   }, [])
@@ -416,6 +499,26 @@ function Titlebar({
         <span className="titlebar-action-glyph" aria-hidden="true">{'>_'}</span>
         Commands
       </button>
+      <div className="panel-layout-actions" role="group" aria-label={`${platformLabel} panel layout`}>
+        <button
+          type="button"
+          className="panel-layout-action"
+          onClick={onCollapseAllPanels}
+          disabled={panelsAllCollapsed}
+          title={`Collapse all ${platformLabel} panels`}
+        >
+          Collapse all
+        </button>
+        <button
+          type="button"
+          className="panel-layout-action"
+          onClick={onExpandAllPanels}
+          disabled={panelsAllExpanded}
+          title={`Expand all ${platformLabel} panels`}
+        >
+          Expand all
+        </button>
+      </div>
       <div className="platform-switcher" role="tablist" aria-label="Platform">
         {Object.values(PLATFORM_CONFIG).map((item) => (
           <button
@@ -477,22 +580,6 @@ function usePersistentState<T extends object>(
   }, [key, value])
 
   return [value, setValue]
-}
-
-function usePersistentPlatformFlag(
-  key: string,
-  platform: PlatformId,
-  fallback = false
-): [boolean, () => void] {
-  const [value, setValue] = usePersistentState<Record<PlatformId, boolean>>(key, {
-    claude: fallback,
-    codex: fallback
-  })
-  const toggle = useCallback(() => {
-    setValue((current) => ({ ...current, [platform]: !current[platform] }))
-  }, [platform, setValue])
-
-  return [value[platform], toggle]
 }
 
 function usePlanUsagePolling(): PlanUsageStates {
@@ -738,17 +825,29 @@ function ClaudeWorkspace({
   selectedProjectId,
   selectedSessionId,
   sessionDetailOpen,
+  historySidebarOpen,
+  workspaceDockOpen,
+  filesPanelOpen,
   onSelectedProjectIdChange,
   onSelectedSessionIdChange,
-  onToggleSessionDetail
+  onToggleSessionDetail,
+  onToggleHistorySidebar,
+  onToggleWorkspaceDock,
+  onToggleFilesPanel
 }: {
   usageState: PlanUsageState<ClaudePlanUsage>
   selectedProjectId: string | null
   selectedSessionId: string | null
   sessionDetailOpen: boolean
+  historySidebarOpen: boolean
+  workspaceDockOpen: boolean
+  filesPanelOpen: boolean
   onSelectedProjectIdChange: (projectId: string | null) => void
   onSelectedSessionIdChange: (sessionId: string | null) => void
   onToggleSessionDetail: () => void
+  onToggleHistorySidebar: () => void
+  onToggleWorkspaceDock: () => void
+  onToggleFilesPanel: () => void
 }): JSX.Element {
   const { planUsage, planError } = usageState
   const sessionBrowser = useProjectSessionBrowserState({
@@ -770,15 +869,9 @@ function ClaudeWorkspace({
     abandonPendingSession,
     renamePendingSession
   } = useSessionScopedTerminals('claude', sessionBrowser, selectedSessionId, onSelectedSessionIdChange)
-  const [historySidebarOpen, toggleHistorySidebarState] = usePersistentPlatformFlag(
-    'selection:history-sidebar:v1',
-    'claude'
-  )
-  const [workspaceDockOpen, toggleWorkspaceDock] = usePersistentPlatformFlag('selection:workspace-dock:v1', 'claude')
-  const [filesPanelOpen, toggleFilesPanel] = usePersistentPlatformFlag('selection:files-panel:v1', 'claude')
   const { contentBodyRef, toggleHistorySidebar } = useHistorySidebarMotion(
     historySidebarOpen,
-    toggleHistorySidebarState
+    onToggleHistorySidebar
   )
   const newSession = isPendingSessionId(selectedSessionId)
 
@@ -818,7 +911,7 @@ function ClaudeWorkspace({
             projectId={sessionBrowser.selectedProject?.id ?? null}
             projectName={sessionBrowser.selectedProject?.name ?? null}
             open={filesPanelOpen}
-            onToggle={toggleFilesPanel}
+            onToggle={onToggleFilesPanel}
           />
           <div className="main-stack">
             <SessionDetailAccordion
@@ -843,7 +936,7 @@ function ClaudeWorkspace({
               projectId={sessionBrowser.selectedProject?.id ?? null}
               projectName={sessionBrowser.selectedProject?.name ?? null}
               open={workspaceDockOpen}
-              onToggle={toggleWorkspaceDock}
+              onToggle={onToggleWorkspaceDock}
             />
           </div>
           <SessionHistorySidebar
@@ -864,17 +957,29 @@ function CodexWorkspace({
   selectedProjectId,
   selectedSessionId,
   sessionDetailOpen,
+  historySidebarOpen,
+  workspaceDockOpen,
+  filesPanelOpen,
   onSelectedProjectIdChange,
   onSelectedSessionIdChange,
-  onToggleSessionDetail
+  onToggleSessionDetail,
+  onToggleHistorySidebar,
+  onToggleWorkspaceDock,
+  onToggleFilesPanel
 }: {
   usageState: PlanUsageState<CodexPlanUsage>
   selectedProjectId: string | null
   selectedSessionId: string | null
   sessionDetailOpen: boolean
+  historySidebarOpen: boolean
+  workspaceDockOpen: boolean
+  filesPanelOpen: boolean
   onSelectedProjectIdChange: (projectId: string | null) => void
   onSelectedSessionIdChange: (sessionId: string | null) => void
   onToggleSessionDetail: () => void
+  onToggleHistorySidebar: () => void
+  onToggleWorkspaceDock: () => void
+  onToggleFilesPanel: () => void
 }): JSX.Element {
   const { planUsage, planError } = usageState
   const sessionBrowser = useProjectSessionBrowserState({
@@ -896,15 +1001,9 @@ function CodexWorkspace({
     abandonPendingSession,
     renamePendingSession
   } = useSessionScopedTerminals('codex', sessionBrowser, selectedSessionId, onSelectedSessionIdChange)
-  const [historySidebarOpen, toggleHistorySidebarState] = usePersistentPlatformFlag(
-    'selection:history-sidebar:v1',
-    'codex'
-  )
-  const [workspaceDockOpen, toggleWorkspaceDock] = usePersistentPlatformFlag('selection:workspace-dock:v1', 'codex')
-  const [filesPanelOpen, toggleFilesPanel] = usePersistentPlatformFlag('selection:files-panel:v1', 'codex')
   const { contentBodyRef, toggleHistorySidebar } = useHistorySidebarMotion(
     historySidebarOpen,
-    toggleHistorySidebarState
+    onToggleHistorySidebar
   )
   const newSession = isPendingSessionId(selectedSessionId)
   const statusLabel = planError ? 'usage error' : planUsage ? 'live' : 'connecting'
@@ -939,7 +1038,7 @@ function CodexWorkspace({
             projectId={sessionBrowser.selectedProject?.id ?? null}
             projectName={sessionBrowser.selectedProject?.name ?? null}
             open={filesPanelOpen}
-            onToggle={toggleFilesPanel}
+            onToggle={onToggleFilesPanel}
           />
           <div className="main-stack">
             <SessionDetailAccordion
@@ -964,7 +1063,7 @@ function CodexWorkspace({
               projectId={sessionBrowser.selectedProject?.id ?? null}
               projectName={sessionBrowser.selectedProject?.name ?? null}
               open={workspaceDockOpen}
-              onToggle={toggleWorkspaceDock}
+              onToggle={onToggleWorkspaceDock}
             />
           </div>
           <SessionHistorySidebar

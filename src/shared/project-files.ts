@@ -40,6 +40,70 @@ export const MAX_DIR_ENTRIES = 2000
 export const MAX_TEXT_PREVIEW_BYTES = 262_144 // 256 KiB
 export const MAX_IMAGE_PREVIEW_BYTES = 2_097_152 // 2 MiB
 
+const TEXT_LIKE_EXTENSIONS = new Set([
+  '.bat',
+  '.c',
+  '.cc',
+  '.cmd',
+  '.conf',
+  '.cpp',
+  '.cs',
+  '.css',
+  '.csv',
+  '.cts',
+  '.dockerfile',
+  '.go',
+  '.h',
+  '.hpp',
+  '.html',
+  '.ini',
+  '.java',
+  '.js',
+  '.json',
+  '.jsonc',
+  '.jsonl',
+  '.jsx',
+  '.log',
+  '.lua',
+  '.md',
+  '.mdx',
+  '.mjs',
+  '.mts',
+  '.php',
+  '.ps1',
+  '.py',
+  '.rb',
+  '.rs',
+  '.scss',
+  '.sh',
+  '.sql',
+  '.svg',
+  '.toml',
+  '.ts',
+  '.tsx',
+  '.txt',
+  '.vue',
+  '.xml',
+  '.yaml',
+  '.yml'
+])
+
+const TEXT_LIKE_FILENAMES = new Set([
+  '.editorconfig',
+  '.env',
+  '.eslintignore',
+  '.eslintrc',
+  '.gitattributes',
+  '.gitignore',
+  '.npmrc',
+  '.prettierignore',
+  '.prettierrc',
+  'dockerfile',
+  'license',
+  'makefile',
+  'readme'
+])
+
 // Reduce a caller-supplied relative path to a safe, forward-slash path that can
 // never escape the root: any `..` segment rejects the whole path, and leading
 // slashes / drive letters collapse into harmless name segments. Returns the
@@ -83,4 +147,15 @@ export function toNativeRoot(rootPath: string, distro: string | null): string {
 export function joinNative(nativeRoot: string, safeRel: string): string {
   if (!safeRel) return nativeRoot
   return `${nativeRoot}\\${safeRel.replace(/\//g, '\\')}`
+}
+
+export function isTextLikeProjectFile(relPath: string, isDirectory = false): boolean {
+  if (isDirectory) return true
+  const name = relPath.replace(/\\/g, '/').split('/').pop()?.toLowerCase() ?? ''
+  if (!name) return false
+  if (TEXT_LIKE_FILENAMES.has(name)) return true
+  if (name.startsWith('.env.')) return true
+  const dot = name.lastIndexOf('.')
+  if (dot <= 0) return false
+  return TEXT_LIKE_EXTENSIONS.has(name.slice(dot))
 }
