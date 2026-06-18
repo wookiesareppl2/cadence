@@ -12,7 +12,8 @@ import {
 import { closeClaudeUsageStore, refreshClaudeUsageSummary } from './usage/claude-usage-service'
 import { getCachedClaudePlanUsage, getCachedCodexPlanUsage } from './usage/usage-plan-cache'
 import { notifyUsageThresholds } from './usage/usage-alerts'
-import { getClaudeSessions, getCodexSessions, getSessionHistory } from './sessions/session-service'
+import { getSessionHistory } from './sessions/session-service'
+import { invalidateSessionCache, scanSessions } from './sessions/session-scan'
 import { getSessionTitleGenerationStatus } from './sessions/session-title-generation-service'
 import {
   getSessionMetadata,
@@ -36,6 +37,7 @@ import { initAutoUpdates } from './updater'
 import { DEFAULT_WINDOW_BOUNDS } from './window-state-utils'
 import { readWindowState, registerWindowStatePersistence } from './window-state'
 import type { PlatformId } from '@shared/platform'
+import { APP_NAME } from '@shared/brand'
 
 let restoreBounds: Rectangle | null = null
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
@@ -69,7 +71,11 @@ function createMainWindow(): BrowserWindow {
     show: false,
     frame: false,
     backgroundColor: '#1e1b19',
-    title: 'AI Dashboard',
+    title: APP_NAME,
+    // Packaged builds get the icon from electron-builder (build/icon.ico embedded in
+    // the exe). In dev there's no packaged exe, so point the window/taskbar icon at
+    // the source icon explicitly; otherwise it shows Electron's default.
+    icon: is.dev ? join(app.getAppPath(), 'build', 'icon.png') : undefined,
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       sandbox: false,
@@ -147,8 +153,8 @@ if (hasSingleInstanceLock) {
     const mainWindow = focusExistingWindow()
     const options = {
       type: 'info' as const,
-      title: 'AI Dashboard is already running',
-      message: 'AI Dashboard is already running.',
+      title: `${APP_NAME} is already running`,
+      message: `${APP_NAME} is already running.`,
       detail: 'Use the existing window instead of launching another instance.',
       buttons: ['OK'],
       defaultId: 0,
@@ -211,8 +217,8 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     notifyUsageThresholds('codex', usage.fiveHour, usage.sevenDay)
     return usage
   })
-  ipcMain.handle('sessions:claude', () => getClaudeSessions())
-  ipcMain.handle('sessions:codex', () => getCodexSessions())
+  ipcMain.handle('sessions:claude', (event) => scanSessions('claude', event.sender))
+  ipcMain.handle('sessions:codex', (event) => scanSessions('codex', event.sender))
   ipcMain.handle('sessions:history', (_event, platform: PlatformId, sessionId: string) => getSessionHistory(platform, sessionId))
   ipcMain.handle('sessions:title-generation-status', () => getSessionTitleGenerationStatus())
   ipcMain.handle('sessions:metadata', () => getSessionMetadata())
@@ -222,12 +228,18 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   ipcMain.handle('sessions:set-session-alias', (_event, platform: PlatformId, sessionId: string, title: string | null) =>
     setSessionAlias(platform, sessionId, title)
   )
-  ipcMain.handle('sessions:delete-session', (_event, platform: PlatformId, sessionId: string) =>
-    deleteSession(platform, sessionId)
-  )
-  ipcMain.handle('sessions:delete-project', (_event, platform: PlatformId, projectId: string) =>
-    deleteProject(platform, projectId)
-  )
+  ipcMain.handle('sessions:delete-session', async (_event, platform: PlatformId, sessionId: string) => {
+    const result = await deleteSession(platform, sessionId)
+    // Drop the cache so the renderer's follow-up refresh doesn't show the trashed
+    // session resurface from a warm full-scan cache.
+    invalidateSessionCache(platform)
+    return result
+  })
+  ipcMain.handle('sessions:delete-project', async (_event, platform: PlatformId, projectId: string) => {
+    const result = await deleteProject(platform, projectId)
+    invalidateSessionCache(platform)
+    return result
+  })
   ipcMain.handle('workspaces:list', () => listWorkspaces())
   ipcMain.handle('workspaces:attach', (event) => attachWorkspace(BrowserWindow.fromWebContents(event.sender)))
   ipcMain.handle('project-workspace:get', (_event, projectId: string) => getProjectWorkspace(projectId))

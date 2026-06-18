@@ -19,9 +19,16 @@ import { FileTreePanel } from '@renderer/components/file-tree'
 import type { ClaudePlanUsage, PlanUsageRefreshMeta, UsageWindow } from '@shared/claude-plan-usage'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
+import { APP_NAME } from '@shared/brand'
 import type { AssistantSession, SessionOrigin } from '@shared/sessions'
 
 const PLAN_POLL_INTERVAL_MS = 60_000
+// Splash: keep it on screen long enough to read (no jarring flash on a warm cache),
+// fade out once the active platform's first project scan resolves, and never trap
+// the user if a scan stalls.
+const SPLASH_FADE_MS = 320
+const SPLASH_MIN_VISIBLE_MS = 450
+const SPLASH_MAX_VISIBLE_MS = 9_000
 const HISTORY_SIDEBAR_CLOSED_WIDTH = 32
 const HISTORY_SIDEBAR_MOTION_MS = 180
 const HISTORY_SIDEBAR_START_OFFSET_MS = -24
@@ -323,6 +330,25 @@ export function App(): JSX.Element {
   )
   const activePlatform = PLATFORM_CONFIG[platform]
 
+  // Splash gate: shown until the active platform's first session scan resolves.
+  // Set once and never reset, so switching platforms later never re-shows it.
+  const [appReady, setAppReady] = useState(false)
+  const splashShownAtRef = useRef(Date.now())
+  const readyScheduledRef = useRef(false)
+
+  const handleWorkspaceReady = useCallback(() => {
+    if (readyScheduledRef.current) return
+    readyScheduledRef.current = true
+    const remaining = Math.max(0, SPLASH_MIN_VISIBLE_MS - (Date.now() - splashShownAtRef.current))
+    window.setTimeout(() => setAppReady(true), remaining)
+  }, [])
+
+  // Safety net: never let a stalled scan keep the splash up indefinitely.
+  useEffect(() => {
+    const id = window.setTimeout(() => setAppReady(true), SPLASH_MAX_VISIBLE_MS)
+    return () => window.clearTimeout(id)
+  }, [])
+
   const selectClaudeSession = useCallback((sessionId: string | null) => {
     setSelectedSessionIds((current) =>
       current.claude === sessionId ? current : { ...current, claude: sessionId }
@@ -409,6 +435,7 @@ export function App(): JSX.Element {
 
   return (
     <div className="app-shell" style={cssVars} data-platform={platform}>
+      <SplashScreen active={!appReady} />
       <Titlebar
         platform={platform}
         onPlatformChange={setPlatform}
@@ -423,6 +450,7 @@ export function App(): JSX.Element {
         <CheatSheet onClose={() => setCheatSheetOpen(false)} />
       ) : platform === 'claude' ? (
         <ClaudeWorkspace
+          onReady={handleWorkspaceReady}
           usageState={planUsageStates.claude}
           selectedProjectId={selectedProjectIds.claude}
           selectedSessionId={selectedSessionIds.claude}
@@ -439,6 +467,7 @@ export function App(): JSX.Element {
         />
       ) : (
         <CodexWorkspace
+          onReady={handleWorkspaceReady}
           usageState={planUsageStates.codex}
           selectedProjectId={selectedProjectIds.codex}
           selectedSessionId={selectedSessionIds.codex}
@@ -484,11 +513,15 @@ function Titlebar({
   }, [])
   return (
     <header className="titlebar">
-      {version ? (
-        <span className="app-version" title={`AI Dashboard v${version}`}>
-          v{version}
-        </span>
-      ) : null}
+      <div className="titlebar-brand">
+        <CadenceMark className="titlebar-logo" />
+        <span className="titlebar-brand-name">{APP_NAME}</span>
+        {version ? (
+          <span className="app-version" title={`${APP_NAME} v${version}`}>
+            v{version}
+          </span>
+        ) : null}
+      </div>
       <button
         type="button"
         className={`titlebar-action ${cheatSheetOpen ? 'active' : ''}`}
@@ -545,6 +578,68 @@ function Titlebar({
         </button>
       </div>
     </header>
+  )
+}
+
+// The Cadence mark: a node-graph shaped into a 'C' (nodes connected by edges) —
+// reads as a dev/network tool and doubles as the Cadence monogram. Inlined as JSX so
+// it inherits `currentColor` and stays crisp at any size. Geometry mirrors
+// src/renderer/src/assets/cadence-mark.svg and scripts/generate-icon.py — keep the
+// three in sync if the shape changes.
+function CadenceMark({ className }: { className?: string }): JSX.Element {
+  return (
+    <svg className={className} viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <polyline
+        points="64,27 41,23 25,41 25,59 41,77 64,73"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <g fill="currentColor">
+        <circle cx="64" cy="27" r="7" />
+        <circle cx="41" cy="23" r="7" />
+        <circle cx="25" cy="41" r="7" />
+        <circle cx="25" cy="59" r="7" />
+        <circle cx="41" cy="77" r="7" />
+        <circle cx="64" cy="73" r="7" />
+      </g>
+    </svg>
+  )
+}
+
+// Full-shell loading screen shown from the first window paint until the active
+// platform's first project scan resolves, then faded out and unmounted. Stays
+// mounted through the fade so the transition is visible.
+function SplashScreen({ active }: { active: boolean }): JSX.Element | null {
+  const [rendered, setRendered] = useState(true)
+  const [leaving, setLeaving] = useState(false)
+
+  useEffect(() => {
+    if (active) {
+      setRendered(true)
+      setLeaving(false)
+      return
+    }
+    setLeaving(true)
+    const id = window.setTimeout(() => setRendered(false), SPLASH_FADE_MS)
+    return () => window.clearTimeout(id)
+  }, [active])
+
+  if (!rendered) return null
+
+  return (
+    <div className={`splash ${leaving ? 'splash-leaving' : ''}`} role="status" aria-live="polite" aria-hidden={leaving}>
+      <div className="splash-body">
+        <CadenceMark className="splash-mark" />
+        <span className="splash-logo">{APP_NAME}</span>
+        <span className="splash-sub">Spinning up your workspace…</span>
+        <div className="splash-bar" aria-hidden="true">
+          <div className="splash-bar-fill" />
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -821,6 +916,7 @@ function useHistorySidebarMotion(
 }
 
 function ClaudeWorkspace({
+  onReady,
   usageState,
   selectedProjectId,
   selectedSessionId,
@@ -835,6 +931,7 @@ function ClaudeWorkspace({
   onToggleWorkspaceDock,
   onToggleFilesPanel
 }: {
+  onReady: () => void
   usageState: PlanUsageState<ClaudePlanUsage>
   selectedProjectId: string | null
   selectedSessionId: string | null
@@ -857,6 +954,11 @@ function ClaudeWorkspace({
     onSelectedProjectIdChange,
     onSelectedSessionIdChange
   })
+  // Dismiss the splash once the first project scan resolves (onReady is idempotent).
+  const sessionsLoading = sessionBrowser.loading
+  useEffect(() => {
+    if (!sessionsLoading) onReady()
+  }, [sessionsLoading, onReady])
   const historyState = useSessionHistory(sessionBrowser.selectedSession)
   const {
     visibleTabs,
@@ -953,6 +1055,7 @@ function ClaudeWorkspace({
 }
 
 function CodexWorkspace({
+  onReady,
   usageState,
   selectedProjectId,
   selectedSessionId,
@@ -967,6 +1070,7 @@ function CodexWorkspace({
   onToggleWorkspaceDock,
   onToggleFilesPanel
 }: {
+  onReady: () => void
   usageState: PlanUsageState<CodexPlanUsage>
   selectedProjectId: string | null
   selectedSessionId: string | null
@@ -989,6 +1093,11 @@ function CodexWorkspace({
     onSelectedProjectIdChange,
     onSelectedSessionIdChange
   })
+  // Dismiss the splash once the first project scan resolves (onReady is idempotent).
+  const sessionsLoading = sessionBrowser.loading
+  useEffect(() => {
+    if (!sessionsLoading) onReady()
+  }, [sessionsLoading, onReady])
   const historyState = useSessionHistory(sessionBrowser.selectedSession)
   const {
     visibleTabs,

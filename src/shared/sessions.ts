@@ -43,6 +43,15 @@ export type AssistantSession = {
   updatedAt: string | null
 }
 
+// Pushed from the main process when a background full scan (including slow WSL
+// origins reached over the UNC share) finishes after the fast Windows-only first
+// paint. The renderer replaces the active platform's session list with the
+// complete set when this arrives.
+export type SessionsUpdatedPayload = {
+  platform: PlatformId
+  sessions: AssistantSession[]
+}
+
 export type AssistantProject = {
   id: string
   platform: PlatformId

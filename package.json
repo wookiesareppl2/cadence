@@ -1,9 +1,9 @@
 {
-  "name": "ai-dashboard",
+  "name": "cadence",
   "version": "0.1.9",
   "description": "Desktop control room for AI coding assistants",
   "private": true,
-  "packageManager": "pnpm@11.5.2",
+  "packageManager": "pnpm@11.8.0",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
@@ -52,7 +52,7 @@
     "npmRebuild": false,
     "asar": false,
     "appId": "dev.ai-dashboard.app",
-    "productName": "AI Dashboard",
+    "productName": "Cadence",
     "directories": {
       "output": "release"
     },

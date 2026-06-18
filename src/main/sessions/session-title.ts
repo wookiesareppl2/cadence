@@ -169,7 +169,7 @@ const TOPIC_DEFINITIONS: TopicDefinition[] = [
       /\binstalled app\b/i,
       /\bprompt[- ]to[- ]install\b/i,
       /\brestart(?:\s+to)?\s+install\b/i,
-      /%APPDATA%\\ai-dashboard/i
+      /%APPDATA%\\(?:cadence|ai-dashboard)/i
     ]
   },
   {

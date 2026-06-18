@@ -2,7 +2,12 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { ClaudePlanUsage } from '@shared/claude-plan-usage'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import type { PlatformId } from '@shared/platform'
-import type { AssistantSession, AssistantSessionHistory, SessionTitleGenerationStatus } from '@shared/sessions'
+import type {
+  AssistantSession,
+  AssistantSessionHistory,
+  SessionsUpdatedPayload,
+  SessionTitleGenerationStatus
+} from '@shared/sessions'
 import type { SessionMetadata } from '@shared/session-metadata'
 import type { ProjectWorkspace } from '@shared/project-workspace'
 import type { DirListing, FileKind, FileOpResult, FilePreview, FileRequest } from '@shared/project-files'
@@ -40,7 +45,15 @@ const api = {
     deleteSession: (platform: PlatformId, sessionId: string): Promise<{ trashed: number }> =>
       ipcRenderer.invoke('sessions:delete-session', platform, sessionId),
     deleteProject: (platform: PlatformId, projectId: string): Promise<{ trashed: number }> =>
-      ipcRenderer.invoke('sessions:delete-project', platform, projectId)
+      ipcRenderer.invoke('sessions:delete-project', platform, projectId),
+    // Background full scans (including slow WSL origins) push the complete list
+    // here after the fast Windows-only first paint. Channel must match
+    // SESSIONS_UPDATED_CHANNEL in main/sessions/session-scan.ts.
+    onSessionsUpdated: (callback: (payload: SessionsUpdatedPayload) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: SessionsUpdatedPayload): void => callback(payload)
+      ipcRenderer.on('sessions:updated', listener)
+      return () => ipcRenderer.removeListener('sessions:updated', listener)
+    }
   },
   workspaces: {
     list: (): Promise<Workspace[]> => ipcRenderer.invoke('workspaces:list'),

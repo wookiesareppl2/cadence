@@ -1,4 +1,4 @@
-# AI Dashboard — Design System
+# Cadence — Design System
 
 The single source of truth for visual + interaction conventions. **Read this before
 building or restyling any UI element, and reuse the existing tokens/classes instead
@@ -55,6 +55,17 @@ Use a **two-step inline confirm**, not a blocking dialog: the `🗑` swaps to `D
 
 - **Modals** (`*-modal-backdrop` + dialog): `position: fixed; inset: 46px 0 0 0` (below the titlebar), centered, `rgba(0,0,0,0.5)` backdrop, dialog on `--surface-1` with a soft shadow; close on backdrop click + Esc.
 - **Tooltips/menus/context menus**: `position: fixed`, positioned in JS from a rect (so they escape scroll clipping); dismiss on Esc / outside-click / scroll.
+
+## Splash / loading screen
+
+Shown on launch until the active platform's first project scan resolves, then faded
+out. Use the `.splash` class (full-shell overlay on `--surface-0`, `z-index: 50`,
+`-webkit-app-region: drag` so the frameless window stays movable). Centered wordmark
+(`--font-ui`, 22px, `--text-1`), a muted `--font-mono` status line (`--text-3`), and a
+thin indeterminate bar whose fill is `--accent` (so it matches the active platform).
+Fade out with `--motion-panel`/`--ease-out-expo` via the `.splash-leaving` modifier;
+keep it mounted through the fade, then unmount. A minimum visible time avoids a flash
+on a warm cache, and a max timeout guarantees it never traps the user.
 
 ## Default toggle animation
 

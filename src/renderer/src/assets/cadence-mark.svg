@@ -1,0 +1,11 @@
+<svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Cadence">
+  <polyline points="64,27 41,23 25,41 25,59 41,77 64,73" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+  <g fill="currentColor">
+    <circle cx="64" cy="27" r="7" />
+    <circle cx="41" cy="23" r="7" />
+    <circle cx="25" cy="41" r="7" />
+    <circle cx="25" cy="59" r="7" />
+    <circle cx="41" cy="77" r="7" />
+    <circle cx="64" cy="73" r="7" />
+  </g>
+</svg>

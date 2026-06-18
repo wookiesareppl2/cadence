@@ -1,34 +1,65 @@
-"""Generate the AI Dashboard app icon (build/icon.ico + build/icon.png).
+"""Generate the Cadence app icon (build/icon.ico + build/icon.png).
 
-A rounded-square app icon with a violet->indigo diagonal gradient, a soft glassy
-top sheen, and a white terminal-prompt ">_" glyph with a subtle drop shadow.
+A rounded-square app icon with a warm dark gradient tile and the Cadence mark: a
+node-graph shaped into a 'C' (nodes connected by edges). It reads as a dev/network
+tool and doubles as the Cadence monogram. The geometry is kept in sync with
+src/renderer/src/assets/cadence-mark.svg and the inline CadenceMark component in
+src/renderer/src/App.tsx — update all three together if the shape changes.
 
 Requires Pillow:  pip install pillow
 Run:              python scripts/generate-icon.py
 Then rebuild the app (pnpm dist / pnpm release) to embed the new icon.
 """
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 
 OUT_DIR = Path(__file__).resolve().parent.parent / "build"
 S = 1024          # final design size (px)
 SS = 4            # supersample factor for crisp antialiasing
 R = S * SS        # render size
 
-C_TL = (0x8B, 0x5C, 0xF6)   # violet  #8B5CF6 (top-left)
-C_BR = (0x43, 0x38, 0xCA)   # indigo  #4338CA (bottom-right)
+# Warm dark tile, matching the app theme (--surface ramp), lighter top-left.
+C_TL = (0x2C, 0x26, 0x22)
+C_BR = (0x17, 0x13, 0x10)
+# Off-white mark, matching --text-1 (#EDE8E5).
+C_MARK = (0xED, 0xE8, 0xE5, 0xFF)
+
+# Node-graph 'C' geometry in a 0..100 box (mirrored by cadence-mark.svg / CadenceMark).
+# Six nodes connected in sequence trace an open-right 'C'.
+NODES = [(64, 27), (41, 23), (25, 41), (25, 59), (41, 77), (64, 73)]
+EDGE_W = 5.0      # connecting-edge thickness
+NODE_R = 7.0      # node radius
+# Fraction of the tile the 100x100 mark box occupies (centered).
+MARK_SCALE = 0.62
 
 
 def lerp(a, b, t):
     return tuple(int(round(a[i] + (b[i] - a[i]) * t)) for i in range(3))
 
 
-def stroke(draw, pts, w, fill):
-    """Polyline with round joints and round end caps."""
-    draw.line(pts, fill=fill, width=w, joint="curve")
-    r = w / 2
+def draw_mark(img, color):
+    """Draw the node-graph 'C' into a 0..100 box centered in `img`, in `color`."""
+    a = MARK_SCALE * img.width
+    off = (img.width - a) / 2
+
+    def mx(v):
+        return off + (v / 100.0) * a
+
+    draw = ImageDraw.Draw(img)
+    pts = [(mx(x), mx(y)) for (x, y) in NODES]
+
+    # Edges with round caps + joints.
+    w = max(1, int(round((EDGE_W / 100.0) * a)))
+    ipts = [(int(round(x)), int(round(y))) for (x, y) in pts]
+    draw.line(ipts, fill=color, width=w, joint="curve")
+    rr = w / 2
+    for (x, y) in ipts:
+        draw.ellipse([x - rr, y - rr, x + rr, y + rr], fill=color)
+
+    # Nodes on top.
+    nr = (NODE_R / 100.0) * a
     for (x, y) in pts:
-        draw.ellipse([x - r, y - r, x + r, y + r], fill=fill)
+        draw.ellipse([x - nr, y - nr, x + nr, y + nr], fill=color)
 
 
 def build_icon():
@@ -49,49 +80,18 @@ def build_icon():
     icon = Image.new("RGBA", (R, R), (0, 0, 0, 0))
     icon.paste(grad, (0, 0), mask)
 
-    # Smooth top sheen (vertical fade, no hard edge).
-    sheen = Image.new("L", (R, R), 0)
-    sp = sheen.load()
-    peak, fade_end = 54, 0.62
-    for y in range(R):
-        t = y / (R * fade_end)
-        a = int(peak * (1 - t)) if t < 1 else 0
-        if a > 0:
-            for x in range(R):
-                sp[x, y] = a
-    sheen = Image.composite(sheen, Image.new("L", (R, R), 0), mask)
-    white = Image.new("RGBA", (R, R), (255, 255, 255, 255))
-    icon = Image.alpha_composite(icon, Image.merge("RGBA", (*white.split()[:3], sheen)))
-
-    # Glyph geometry: terminal prompt  >_
-    w = int(0.092 * R)
-    chevron = [
-        (int(0.345 * R), int(0.345 * R)),
-        (int(0.545 * R), int(0.50 * R)),
-        (int(0.345 * R), int(0.655 * R)),
-    ]
-    underscore = [(int(0.585 * R), int(0.655 * R)), (int(0.735 * R), int(0.655 * R))]
-
-    # Soft drop shadow behind the glyph.
-    shadow = Image.new("RGBA", (R, R), (0, 0, 0, 0))
-    sdraw = ImageDraw.Draw(shadow)
-    off = int(0.012 * R)
-    sh = (10, 8, 40, 150)
-    stroke(sdraw, [(x + off, y + off) for (x, y) in chevron], w, sh)
-    stroke(sdraw, [(x + off, y + off) for (x, y) in underscore], w, sh)
-    shadow = shadow.filter(ImageFilter.GaussianBlur(int(0.018 * R)))
-    shadow.putalpha(shadow.split()[3].point(lambda a: int(a * 0.55)))
-    icon = Image.alpha_composite(icon, Image.composite(shadow, Image.new("RGBA", (R, R), (0, 0, 0, 0)), mask))
-
-    # White glyph.
-    gl = Image.new("RGBA", (R, R), (0, 0, 0, 0))
-    gd = ImageDraw.Draw(gl)
-    fg = (255, 255, 255, 255)
-    stroke(gd, chevron, w, fg)
-    stroke(gd, underscore, w, fg)
-    icon = Image.alpha_composite(icon, gl)
+    mark = Image.new("RGBA", (R, R), (0, 0, 0, 0))
+    draw_mark(mark, C_MARK)
+    icon = Image.alpha_composite(icon, mark)
 
     return icon.resize((S, S), Image.LANCZOS)
+
+
+def build_mark():
+    """Transparent off-white mark only (no tile), for general/marketing use."""
+    mark = Image.new("RGBA", (R, R), (0, 0, 0, 0))
+    draw_mark(mark, C_MARK)
+    return mark.resize((S, S), Image.LANCZOS)
 
 
 def main():
@@ -102,7 +102,8 @@ def main():
         OUT_DIR / "icon.ico",
         sizes=[(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)],
     )
-    print(f"Wrote {OUT_DIR / 'icon.ico'} and {OUT_DIR / 'icon.png'}")
+    build_mark().save(OUT_DIR / "cadence-mark.png")
+    print(f"Wrote {OUT_DIR / 'icon.ico'}, {OUT_DIR / 'icon.png'}, {OUT_DIR / 'cadence-mark.png'}")
 
 
 if __name__ == "__main__":

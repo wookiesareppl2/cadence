@@ -47,6 +47,12 @@ type CodexSessionDetails = {
 const MAX_SESSIONS = 80
 const CODEX_SESSION_DETAIL_READ_WINDOW = 1024 * 1024
 
+// Claude transcript filenames carry no timestamp (just `<sessionId>.jsonl`), so we
+// rank candidates by mtime via a cheap stat before reading. We read a buffer above
+// MAX_SESSIONS so resumed sessions (several files sharing one id, merged by
+// dedupeById) still resolve to a full freshest-MAX_SESSIONS set after dedup.
+const CLAUDE_SCAN_READ_LIMIT = MAX_SESSIONS * 2
+
 export async function findJsonlFiles(root: string): Promise<string[]> {
   const files: string[] = []
 
@@ -602,10 +608,34 @@ export function isAutomatedSession(entrypoint: string | null): boolean {
   return typeof entrypoint === 'string' && entrypoint.toLowerCase().startsWith('sdk')
 }
 
+// Rank transcript files by mtime (cheap stat, no content read) and keep the
+// freshest `limit`. Reading and JSON-parsing every transcript just to discard all
+// but the newest MAX_SESSIONS dominated startup for heavy users; a stat is far
+// cheaper than a full read, especially over the WSL UNC share. Mirrors what
+// rankRolloutFiles does for Codex (which ranks by the timestamp in its filenames).
+async function rankClaudeFilesByMtime(paths: string[], limit: number): Promise<string[]> {
+  const ranked = await Promise.all(
+    paths.map(async (path) => {
+      try {
+        return { path, mtimeMs: (await stat(path)).mtimeMs }
+      } catch {
+        return null
+      }
+    })
+  )
+
+  return ranked
+    .filter((ref): ref is { path: string; mtimeMs: number } => ref !== null)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .slice(0, Math.max(0, limit))
+    .map((ref) => ref.path)
+}
+
 async function visibleClaudeDraftsForOrigin(origin: SessionOriginRoot): Promise<ClaudeSessionDraft[]> {
   const root = origin.claudeProjectsDir
   const files = (await findJsonlFiles(root)).filter((path) => isClaudeTranscriptPath(root, path))
-  const sessions = await Promise.all(files.map(readClaudeSession))
+  const freshest = await rankClaudeFilesByMtime(files, CLAUDE_SCAN_READ_LIMIT)
+  const sessions = await Promise.all(freshest.map(readClaudeSession))
   const drafts = sessions.filter((session): session is ClaudeSessionDraft => Boolean(session))
 
   // Per-origin cap: each environment surfaces its own freshest sessions, so a busy
@@ -659,13 +689,16 @@ async function mapClaudeSession(session: ClaudeSessionDraft, origin: SessionOrig
   }
 }
 
-export async function getClaudeSessions(): Promise<AssistantSession[]> {
-  const origins = await getSessionOrigins()
+export async function getClaudeSessionsForOrigins(origins: SessionOriginRoot[]): Promise<AssistantSession[]> {
   const groups = await Promise.all(
     origins.map(async (origin) => ({ origin, drafts: await visibleClaudeDraftsForOrigin(origin) }))
   )
 
   return Promise.all(groups.flatMap(({ origin, drafts }) => drafts.map((draft) => mapClaudeSession(draft, origin))))
+}
+
+export async function getClaudeSessions(): Promise<AssistantSession[]> {
+  return getClaudeSessionsForOrigins(await getSessionOrigins())
 }
 
 async function visibleCodexDraftsForOrigin(origin: SessionOriginRoot): Promise<CodexSessionDraft[]> {
@@ -740,8 +773,7 @@ async function mapCodexSession(
   }
 }
 
-export async function getCodexSessions(): Promise<AssistantSession[]> {
-  const origins = await getSessionOrigins()
+export async function getCodexSessionsForOrigins(origins: SessionOriginRoot[]): Promise<AssistantSession[]> {
   const threadNames = new Map<string, string>()
   const branchByCwd = new Map<string, Promise<string | null>>()
 
@@ -761,6 +793,10 @@ export async function getCodexSessions(): Promise<AssistantSession[]> {
       drafts.map((draft) => mapCodexSession(draft, origin, threadNames, branchByCwd))
     )
   )
+}
+
+export async function getCodexSessions(): Promise<AssistantSession[]> {
+  return getCodexSessionsForOrigins(await getSessionOrigins())
 }
 
 async function getClaudeSessionFiles(

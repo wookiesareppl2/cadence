@@ -1,5 +1,6 @@
 import electronUpdater from 'electron-updater'
 import { BrowserWindow, dialog } from 'electron'
+import { APP_NAME } from '@shared/brand'
 
 const { autoUpdater } = electronUpdater
 
@@ -43,7 +44,7 @@ function promptToInstall(version: string): void {
     defaultId: 0,
     cancelId: 1,
     title: 'Update ready',
-    message: `AI Dashboard ${version} is ready to install.`,
+    message: `${APP_NAME} ${version} is ready to install.`,
     detail: 'The app will restart to apply the update. Choose Later to keep working — you\'ll be prompted again next time you open the app.'
   }
 

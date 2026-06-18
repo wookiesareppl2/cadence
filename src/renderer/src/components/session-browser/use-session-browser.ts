@@ -406,6 +406,20 @@ function usePlatformSessions(platform: PlatformId): {
     return () => clearInterval(id)
   }, [fetchSessions])
 
+  // The main process returns a fast Windows-only list first, then pushes the
+  // complete set (including slow WSL origins) once its background scan finishes.
+  // Apply pushes for this platform only; the title-generation status refreshes on
+  // the next poll.
+  useEffect(() => {
+    const subscribe = window.dashboard?.sessions?.onSessionsUpdated
+    if (!subscribe) return
+    return subscribe((payload) => {
+      if (payload.platform !== platform) return
+      setSessions(payload.sessions)
+      setLoading(false)
+    })
+  }, [platform])
+
   return { sessions, loading, error, titleGenerationStatus, refresh: fetchSessions }
 }
 

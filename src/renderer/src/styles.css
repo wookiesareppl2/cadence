@@ -121,6 +121,84 @@ button {
   flex-direction: column;
 }
 
+/* Splash / loading screen — covers the whole shell from the first window paint
+   until the active platform's first project scan resolves, then fades out. Uses
+   the per-platform --accent already set on .app-shell. */
+.splash {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: var(--surface-0);
+  -webkit-app-region: drag;
+  opacity: 1;
+  transition: opacity var(--motion-panel) var(--ease-out-expo);
+}
+
+.splash-leaving {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.splash-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  transform: translateY(-6%);
+}
+
+.splash-mark {
+  width: 56px;
+  height: 56px;
+  color: var(--text-1);
+  margin-bottom: 2px;
+}
+
+.splash-logo {
+  font-family: var(--font-ui);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-1);
+}
+
+.splash-sub {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.splash-bar {
+  position: relative;
+  width: 200px;
+  height: 2px;
+  margin-top: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--surface-2);
+}
+
+.splash-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: splash-indeterminate 1.15s var(--ease-out-expo) infinite;
+}
+
+@keyframes splash-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
 .titlebar {
   height: 46px;
   display: flex;
@@ -133,18 +211,40 @@ button {
   -webkit-app-region: drag;
 }
 
-.app-version {
+/* Brand lockup pinned top-left: the Cadence mark + wordmark + version, like most
+   desktop apps. Absolutely positioned so it stays out of the centered platform
+   switcher's flow. */
+.titlebar-brand {
   position: absolute;
   left: 14px;
   top: 0;
   height: 100%;
   display: flex;
   align-items: center;
+  gap: 8px;
+}
+
+.titlebar-logo {
+  width: 18px;
+  height: 18px;
+  color: var(--text-1);
+  flex: 0 0 auto;
+}
+
+.titlebar-brand-name {
+  color: var(--text-1);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.app-version {
+  display: flex;
+  align-items: center;
   color: var(--text-3);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
-  -webkit-app-region: no-drag;
 }
 
 /* Opens the terminal-commands cheat sheet. Pinned just left of the window
@@ -198,7 +298,7 @@ button {
 .panel-layout-actions {
   position: absolute;
   top: 50%;
-  left: 72px;
+  left: 168px;
   display: flex;
   gap: 4px;
   transform: translateY(-50%);
