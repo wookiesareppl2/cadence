@@ -167,7 +167,7 @@ if (hasSingleInstanceLock) {
 }
 
 if (hasSingleInstanceLock) app.whenReady().then(() => {
-  electronApp.setAppUserModelId('dev.ai-dashboard.app')
+  electronApp.setAppUserModelId('dev.cadence.app')
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)

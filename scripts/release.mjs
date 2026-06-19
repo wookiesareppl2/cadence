@@ -1,5 +1,5 @@
 // One-command release: bump the patch version, compile, and publish the
-// installer to the public `ai-dashboard-releases` repo so installed apps
+// installer to the public `cadence-releases` repo so installed apps
 // auto-update. The GitHub token is read from the `gh` CLI, so no secret needs
 // to live in the project — just stay logged in with `gh auth login`.
 import { execSync } from 'node:child_process'

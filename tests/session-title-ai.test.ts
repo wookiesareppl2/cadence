@@ -41,8 +41,8 @@ describe('buildSessionTitlePrompt', () => {
   it('includes previous title context for delta updates', () => {
     const prompt = buildSessionTitlePrompt({
       platform: 'codex',
-      project: 'ai-dashboard',
-      projectPath: 'C:/repo/ai-dashboard',
+      project: 'cadence',
+      projectPath: 'C:/repo/cadence',
       branch: 'fix/session-title-quality',
       fallbackTitle: 'Codex 019abc',
       heuristicTitle: 'General Improvements',

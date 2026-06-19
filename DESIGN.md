@@ -1,10 +1,10 @@
 <!-- SEED: re-run /impeccable document once there's code to capture the actual tokens and components. -->
 ---
-name: AI Dashboard
+name: Cadence
 description: Bloomberg terminal for AI coding assistants
 ---
 
-# Design System: AI Dashboard
+# Design System: Cadence
 
 ## 1. Overview
 

@@ -51,7 +51,7 @@
   "build": {
     "npmRebuild": false,
     "asar": false,
-    "appId": "dev.ai-dashboard.app",
+    "appId": "dev.cadence.app",
     "productName": "Cadence",
     "directories": {
       "output": "release"
@@ -64,7 +64,7 @@
       {
         "provider": "github",
         "owner": "wookiesareppl2",
-        "repo": "ai-dashboard-releases",
+        "repo": "cadence-releases",
         "releaseType": "release"
       }
     ],

@@ -568,13 +568,13 @@ function Titlebar({
       </div>
       <div className="window-controls">
         <button type="button" aria-label="Minimize" onClick={() => window.dashboard.window.minimize()}>
-          -
+          <span className="window-control-icon minimize-icon" aria-hidden="true" />
         </button>
         <button type="button" aria-label="Maximize" onClick={() => window.dashboard.window.toggleMaximize()}>
-          □
+          <span className="window-control-icon maximize-icon" aria-hidden="true" />
         </button>
         <button type="button" aria-label="Close" className="close" onClick={() => window.dashboard.window.close()}>
-          x
+          <span className="window-control-icon close-icon" aria-hidden="true" />
         </button>
       </div>
     </header>

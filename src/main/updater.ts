@@ -5,7 +5,7 @@ import { APP_NAME } from '@shared/brand'
 const { autoUpdater } = electronUpdater
 
 // Background auto-updates with an explicit, user-consented install. The app pulls
-// releases from the public `ai-dashboard-releases` repo (build.publish), so no
+// releases from the public `cadence-releases` repo (build.publish), so no
 // token is embedded. A new version downloads in the background; the user is then
 // PROMPTED to restart & install — we never install silently on quit.
 export function initAutoUpdates(): void {

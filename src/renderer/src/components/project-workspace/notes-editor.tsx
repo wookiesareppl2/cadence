@@ -76,8 +76,22 @@ function NotesToolbar({ editor }: { editor: Editor }): JSX.Element {
 
   return (
     <div className="notes-toolbar" role="toolbar" aria-label="Formatting">
-      {tool(editor.isActive('bold'), 'Bold', <b>B</b>, () => chain().toggleBold().run())}
-      {tool(editor.isActive('italic'), 'Italic', <i>I</i>, () => chain().toggleItalic().run())}
+      {tool(
+        editor.isActive('bold'),
+        'Bold',
+        <span className="notes-text-icon notes-bold-icon" aria-hidden="true">
+          B
+        </span>,
+        () => chain().toggleBold().run()
+      )}
+      {tool(
+        editor.isActive('italic'),
+        'Italic',
+        <span className="notes-text-icon notes-italic-icon" aria-hidden="true">
+          i
+        </span>,
+        () => chain().toggleItalic().run()
+      )}
       <span className="notes-toolbar-sep" aria-hidden="true" />
       {tool(editor.isActive('heading', { level: 1 }), 'Heading', 'H1', () =>
         chain().toggleHeading({ level: 1 }).run()
@@ -89,10 +103,58 @@ function NotesToolbar({ editor }: { editor: Editor }): JSX.Element {
         chain().toggleHeading({ level: 3 }).run()
       )}
       <span className="notes-toolbar-sep" aria-hidden="true" />
-      {tool(editor.isActive('bulletList'), 'Bulleted list', '•', () => chain().toggleBulletList().run())}
-      {tool(editor.isActive('orderedList'), 'Numbered list', '1.', () => chain().toggleOrderedList().run())}
-      {tool(editor.isActive('blockquote'), 'Quote', '❝', () => chain().toggleBlockquote().run())}
-      {tool(editor.isActive('codeBlock'), 'Code block', '〈〉', () => chain().toggleCodeBlock().run())}
+      {tool(editor.isActive('bulletList'), 'Bulleted list', <BulletedListIcon />, () =>
+        chain().toggleBulletList().run()
+      )}
+      {tool(editor.isActive('orderedList'), 'Numbered list', <NumberedListIcon />, () =>
+        chain().toggleOrderedList().run()
+      )}
+      {tool(editor.isActive('blockquote'), 'Quote', <QuoteIcon />, () => chain().toggleBlockquote().run())}
+      {tool(editor.isActive('codeBlock'), 'Code block', <CodeBlockIcon />, () => chain().toggleCodeBlock().run())}
     </div>
+  )
+}
+
+function BulletedListIcon(): JSX.Element {
+  return (
+    <svg className="notes-format-icon notes-list-icon" viewBox="0 0 18 18" aria-hidden="true" focusable="false">
+      <circle cx="4" cy="5" r="0.9" />
+      <circle cx="4" cy="9" r="0.9" />
+      <circle cx="4" cy="13" r="0.9" />
+      <path d="M7.25 5h6.75" />
+      <path d="M7.25 9h6.75" />
+      <path d="M7.25 13h6.75" />
+    </svg>
+  )
+}
+
+function NumberedListIcon(): JSX.Element {
+  return (
+    <svg className="notes-format-icon notes-list-icon" viewBox="0 0 18 18" aria-hidden="true" focusable="false">
+      <text x="2.1" y="6.2">1</text>
+      <text x="2.1" y="10.4">2</text>
+      <text x="2.1" y="14.6">3</text>
+      <path d="M7.25 5h6.75" />
+      <path d="M7.25 9h6.75" />
+      <path d="M7.25 13h6.75" />
+    </svg>
+  )
+}
+
+function QuoteIcon(): JSX.Element {
+  return (
+    <svg className="notes-format-icon notes-quote-icon" viewBox="0 0 18 18" aria-hidden="true" focusable="false">
+      <path d="M7.1 4.15c-1.95 1.3-2.95 2.8-2.95 4.5v4.15h4.2V8.7H6.15c.15-1.05.85-1.95 2.1-2.7z" />
+      <path d="M13.45 4.15c-1.95 1.3-2.95 2.8-2.95 4.5v4.15h4.2V8.7h-2.2c.15-1.05.85-1.95 2.1-2.7z" />
+    </svg>
+  )
+}
+
+function CodeBlockIcon(): JSX.Element {
+  return (
+    <svg className="notes-format-icon notes-code-icon" viewBox="0 0 18 18" aria-hidden="true" focusable="false">
+      <path d="M7 5.2 3.6 9 7 12.8" />
+      <path d="M11 5.2 14.4 9 11 12.8" />
+    </svg>
   )
 }

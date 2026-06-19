@@ -79,13 +79,13 @@ export function FileTreePanel({
           </div>
           <div className="files-panel-actions">
             <button type="button" onClick={() => rootPath && startCreate('', 'file')} disabled={!rootPath} title="New file" aria-label="New file">
-              ＋
+              <NewFileIcon />
             </button>
             <button type="button" onClick={() => rootPath && startCreate('', 'dir')} disabled={!rootPath} title="New folder" aria-label="New folder">
-              ＋▸
+              <NewFolderIcon />
             </button>
             <button type="button" onClick={() => tree.refresh('')} disabled={!rootPath} title="Refresh" aria-label="Refresh">
-              ⟳
+              <RefreshIcon />
             </button>
             <button
               type="button"
@@ -185,6 +185,38 @@ export function FileTreePanel({
         />
       ) : null}
     </div>
+  )
+}
+
+function NewFileIcon(): JSX.Element {
+  return (
+    <svg className="files-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M4 1.75h5.25L12.75 5.25v9H4z" />
+      <path d="M9.25 1.75v3.5h3.5" />
+      <path d="M8.35 7.75v4.1" />
+      <path d="M6.3 9.8h4.1" />
+    </svg>
+  )
+}
+
+function NewFolderIcon(): JSX.Element {
+  return (
+    <svg className="files-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M2.25 4.25h4.05l1.35 1.45h6.1v7.05H2.25z" />
+      <path d="M8 7.55v3.9" />
+      <path d="M6.05 9.5h3.9" />
+    </svg>
+  )
+}
+
+function RefreshIcon(): JSX.Element {
+  return (
+    <svg className="files-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M12.55 6.05A4.6 4.6 0 0 0 4.15 4.2L3.2 5.35" />
+      <path d="M3.05 2.85v2.65h2.65" />
+      <path d="M3.45 9.95a4.6 4.6 0 0 0 8.4 1.85l.95-1.15" />
+      <path d="M12.95 13.15V10.5H10.3" />
+    </svg>
   )
 }
 

@@ -16,7 +16,7 @@ const AUTH_PATH = join(homedir(), '.codex', 'auth.json')
 const USAGE_ENDPOINT = 'https://chatgpt.com/backend-api/codex/usage'
 const TOKEN_ENDPOINT = 'https://auth.openai.com/oauth/token'
 const FALLBACK_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'
-const USER_AGENT = 'codex_cli_rs/0.0.0 (ai-dashboard)'
+const USER_AGENT = 'codex_cli_rs/0.0.0 (cadence)'
 
 function readAuth() {
   return JSON.parse(readFileSync(AUTH_PATH, 'utf-8'))

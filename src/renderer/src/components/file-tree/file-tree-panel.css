@@ -101,6 +101,8 @@
   background: transparent;
   color: var(--text-2);
   cursor: pointer;
+  display: grid;
+  place-items: center;
   font-size: 12px;
   line-height: 1;
 }
@@ -114,6 +116,17 @@
 .files-panel-actions button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.files-action-icon {
+  width: 15px;
+  height: 15px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 /* The collapse toggle is a boxless 15px triangle (matches the other panels), not
@@ -201,10 +214,18 @@
 
 .files-row-twisty {
   flex: 0 0 auto;
-  width: 12px;
-  color: var(--text-3);
-  font-size: 9px;
+  width: 15px;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
   text-align: center;
+}
+
+.files-row:hover .files-row-twisty,
+.files-row.selected .files-row-twisty {
+  color: var(--text-1);
 }
 
 .files-row-name {

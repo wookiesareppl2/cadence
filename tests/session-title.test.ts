@@ -5,7 +5,7 @@ describe('session title resolver', () => {
   it('uses a focused theme when one session area dominates', () => {
     const result = resolveSessionTitle({
       rawTitle: '$start',
-      fallbackTitle: 'ai-dashboard',
+      fallbackTitle: 'cadence',
       messages: [
         { text: '$start', timestampMs: 1 },
         {
@@ -31,7 +31,7 @@ describe('session title resolver', () => {
   it('uses a general title when the session spans unrelated work areas', () => {
     const result = resolveSessionTitle({
       rawTitle: null,
-      fallbackTitle: 'ai-dashboard',
+      fallbackTitle: 'cadence',
       messages: [
         { text: 'Please improve the session titles so they explain the overall work better.', timestampMs: 1 },
         { text: 'Can you also theme the scrollbars and clean up the visual elements?', timestampMs: 2 },
@@ -47,7 +47,7 @@ describe('session title resolver', () => {
   it('keeps a focused title when one area dominates over a minor workflow note', () => {
     const result = resolveSessionTitle({
       rawTitle: null,
-      fallbackTitle: 'ai-dashboard',
+      fallbackTitle: 'cadence',
       messages: [
         { text: 'Please improve the session titles so they explain the overall work better.', timestampMs: 1 },
         { text: 'The session title display still needs to avoid weak sentence fragments.', timestampMs: 2 },
@@ -107,7 +107,7 @@ describe('session title resolver', () => {
       fallbackTitle: 'Codex 019ea57d',
       messages: [
         {
-          text: 'Can you please investigate the duplicate Codex sessions in the ai-dashboard project?',
+          text: 'Can you please investigate the duplicate Codex sessions in the cadence project?',
           timestampMs: 1
         },
         {

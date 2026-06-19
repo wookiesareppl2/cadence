@@ -411,16 +411,15 @@ button {
 }
 
 .window-controls button {
-  width: 56px;
+  width: 46px;
   height: 100%;
   border: 0;
   background: transparent;
   color: var(--text-2);
   cursor: pointer;
-  font-family: var(--font-ui);
-  font-size: 18px;
-  font-weight: 500;
   line-height: 1;
+  display: grid;
+  place-items: center;
   transition:
     background-color 160ms ease,
     color 160ms ease;
@@ -433,6 +432,52 @@ button {
 
 .window-controls .close:hover {
   background: #9b3129;
+}
+
+.window-control-icon {
+  position: relative;
+  display: block;
+  color: currentColor;
+}
+
+.minimize-icon {
+  width: 8px;
+  height: 1.2px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.maximize-icon {
+  width: 8px;
+  height: 8px;
+  border: 1.2px solid currentColor;
+  border-radius: 1.5px;
+}
+
+.close-icon {
+  width: 8px;
+  height: 8px;
+}
+
+.close-icon::before,
+.close-icon::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 9.5px;
+  height: 1.2px;
+  border-radius: 999px;
+  background: currentColor;
+  transform-origin: center;
+}
+
+.close-icon::before {
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.close-icon::after {
+  transform: translate(-50%, -50%) rotate(-45deg);
 }
 
 .workspace {

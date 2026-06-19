@@ -813,7 +813,7 @@ async function generateTitleWithCodex(
   provider: CodexTitleProvider,
   prompt: string
 ): Promise<{ outputText: string; model: string }> {
-  const workDir = await mkdtemp(join(tmpdir(), 'ai-dashboard-title-'))
+  const workDir = await mkdtemp(join(tmpdir(), 'cadence-title-'))
   const schemaPath = join(workDir, 'schema.json')
   const outPath = join(workDir, 'out.json')
 

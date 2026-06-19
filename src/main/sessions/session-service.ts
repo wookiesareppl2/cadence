@@ -11,6 +11,7 @@ import {
   type SessionTranscriptSource
 } from './session-title-generation-service'
 import { getSessionOrigins, toSessionOrigin, type SessionOriginRoot } from './session-origins'
+import { canonicalProjectPath } from '../projects/project-identity'
 
 type ClaudeSessionDraft = {
   id: string
@@ -110,13 +111,21 @@ function formatTokenLabel(value: number): string | null {
   return String(value)
 }
 
-function projectLabel(cwd: string | null, sourcePath: string): string {
-  if (cwd) return basename(cwd)
+function canonicalSessionCwd(cwd: string | null, origin?: SessionOriginRoot): string | null {
+  if (!cwd) return null
+  if (origin && origin.kind !== 'windows') return cwd
+  return canonicalProjectPath(cwd)
+}
+
+function projectLabel(cwd: string | null, sourcePath: string, origin?: SessionOriginRoot): string {
+  const projectPath = canonicalSessionCwd(cwd, origin)
+  if (projectPath) return basename(projectPath)
   return basename(dirname(sourcePath)).replaceAll('-', ' ')
 }
 
-function codexProjectLabel(cwd: string | null): string {
-  return cwd ? basename(cwd) : 'Unindexed'
+function codexProjectLabel(cwd: string | null, origin?: SessionOriginRoot): string {
+  const projectPath = canonicalSessionCwd(cwd, origin)
+  return projectPath ? basename(projectPath) : 'Unindexed'
 }
 
 // WSL cwds are POSIX paths; resolve() would mangle them against the Windows drive,
@@ -135,7 +144,8 @@ export function projectId(
   origin?: SessionOriginRoot
 ): string {
   const ns = origin && origin.kind !== 'windows' ? `${origin.id}:` : ''
-  if (cwd) return `${platform}:${ns}${normalizeCwdForId(cwd, origin)}`
+  const projectPath = canonicalSessionCwd(cwd, origin)
+  if (projectPath) return `${platform}:${ns}${normalizeCwdForId(projectPath, origin)}`
   if (fallbackPath) return `${platform}:${ns}${normalizeCwdForId(fallbackPath, origin)}`
   return `${platform}:${ns}unindexed`
 }
@@ -647,8 +657,9 @@ async function visibleClaudeDraftsForOrigin(origin: SessionOriginRoot): Promise<
 }
 
 async function mapClaudeSession(session: ClaudeSessionDraft, origin: SessionOriginRoot): Promise<AssistantSession> {
-  const fallbackTitle = claudeFallbackTitle(session.cwd)
-  const project = projectLabel(session.cwd, session.sourcePath)
+  const projectPath = canonicalSessionCwd(session.cwd, origin)
+  const fallbackTitle = claudeFallbackTitle(projectPath)
+  const project = projectLabel(session.cwd, session.sourcePath, origin)
   const resolvedTitle = resolveSessionTitle({
     rawTitle: session.rawTitle,
     fallbackTitle,
@@ -658,7 +669,7 @@ async function mapClaudeSession(session: ClaudeSessionDraft, origin: SessionOrig
     platform: 'claude',
     sessionId: session.id,
     project,
-    projectPath: session.cwd,
+    projectPath,
     branch: session.branch,
     fallbackTitle,
     resolvedTitle,
@@ -679,7 +690,7 @@ async function mapClaudeSession(session: ClaudeSessionDraft, origin: SessionOrig
     titleStatus: titleFields.titleStatus,
     titleUpdatedAt: titleFields.titleUpdatedAt,
     project,
-    projectPath: session.cwd,
+    projectPath,
     branch: session.branch,
     origin: toSessionOrigin(origin),
     usageLabel: formatTokenLabel(session.tokenTotal),
@@ -724,15 +735,16 @@ async function mapCodexSession(
   branchByCwd: Map<string, Promise<string | null>>
 ): Promise<AssistantSession> {
   let branch = draft.branch
-  if (draft.cwd && !branch && origin.kind === 'windows') {
+  const projectPath = canonicalSessionCwd(draft.cwd, origin)
+  if (projectPath && !branch && origin.kind === 'windows') {
     // Git branch resolution walks the filesystem; only do it for native Windows
     // cwds. WSL cwds are POSIX paths that won't resolve from the Windows side.
-    if (!branchByCwd.has(draft.cwd)) branchByCwd.set(draft.cwd, currentGitBranch(draft.cwd))
-    branch = (await branchByCwd.get(draft.cwd)) ?? null
+    if (!branchByCwd.has(projectPath)) branchByCwd.set(projectPath, currentGitBranch(projectPath))
+    branch = (await branchByCwd.get(projectPath)) ?? null
   }
 
   const fallbackTitle = codexFallbackTitle(draft.id)
-  const project = codexProjectLabel(draft.cwd)
+  const project = codexProjectLabel(draft.cwd, origin)
   const resolvedTitle = resolveSessionTitle({
     rawTitle: draft.rawTitle ?? threadNames.get(draft.id) ?? null,
     fallbackTitle,
@@ -742,7 +754,7 @@ async function mapCodexSession(
     platform: 'codex',
     sessionId: draft.id,
     project,
-    projectPath: draft.cwd,
+    projectPath,
     branch,
     fallbackTitle,
     resolvedTitle,
@@ -763,7 +775,7 @@ async function mapCodexSession(
     titleStatus: titleFields.titleStatus,
     titleUpdatedAt: titleFields.titleUpdatedAt,
     project,
-    projectPath: draft.cwd,
+    projectPath,
     branch,
     origin: toSessionOrigin(origin),
     usageLabel: null,
@@ -860,7 +872,8 @@ export async function getClaudeSessionHistory(sessionId: string): Promise<Assist
   const matches = await getClaudeSessionFiles(sessionId)
   const drafts = await Promise.all(matches.map(({ path }) => readClaudeSession(path)))
   const session = dedupeById(drafts.filter((draft): draft is ClaudeSessionDraft => Boolean(draft)))[0]
-  const fallbackTitle = claudeFallbackTitle(session?.cwd ?? null)
+  const projectPath = canonicalSessionCwd(session?.cwd ?? null)
+  const fallbackTitle = claudeFallbackTitle(projectPath)
   const resolvedTitle = resolveSessionTitle({
     rawTitle: session?.rawTitle ?? null,
     fallbackTitle,
@@ -871,7 +884,7 @@ export async function getClaudeSessionHistory(sessionId: string): Promise<Assist
     platform: 'claude',
     sessionId,
     project,
-    projectPath: session?.cwd ?? null,
+    projectPath,
     branch: session?.branch ?? null,
     fallbackTitle,
     resolvedTitle,
@@ -923,12 +936,13 @@ export async function getCodexSessionHistory(sessionId: string): Promise<Assista
     fallbackTitle,
     messages: details.titleMessages
   })
+  const projectPath = canonicalSessionCwd(details.cwd)
   const project = codexProjectLabel(details.cwd)
   const titleFields = await resolveGeneratedSessionTitle({
     platform: 'codex',
     sessionId,
     project,
-    projectPath: details.cwd,
+    projectPath,
     branch: details.branch,
     fallbackTitle,
     resolvedTitle,

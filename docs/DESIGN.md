@@ -47,6 +47,15 @@ These MUST look and behave identically regardless of dock edge.
 
 `✕` close/cancel · `✓` confirm/done · `✎` rename/edit · `🗑` delete · `⋯` more/menu · `⟳` refresh · `+ <label>` create.
 
+For dense toolbars where a text glyph is ambiguous, use compact 14-16px semantic
+line icons that inherit `currentColor` and sit in the same 24px action button
+frame. File creation uses document-plus / folder-plus; nearby refresh controls
+use the same stroke weight and size. Notes rich-text controls use a 24px button
+frame with a 14px optical glyph box for text glyphs and SVGs. List controls use
+the standard bullets or numbers plus horizontal lines form; quote icons must be
+large enough to read at toolbar size without visually overpowering adjacent
+text-format buttons. Keep these SVGs monochrome and token-coloured.
+
 ## Destructive actions
 
 Use a **two-step inline confirm**, not a blocking dialog: the `🗑` swaps to `Delete?` with a `✓` (danger, `--caution`) and `✕` (cancel). The confirm stays visible after the row is no longer hovered. Heavier modal confirms (`.files-confirm`) are only for higher-stakes deletes (e.g. files), and WSL deletes must warn they are permanent.

@@ -1,5 +1,7 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import {
   createWorkspace,
   dedupeWorkspaces,
@@ -7,11 +9,26 @@ import {
   workspaceProjectId
 } from '../src/main/workspaces/workspace-utils'
 
+const tempRoots: string[] = []
+
+function tempRoot(): string {
+  const root = mkdtempSync(resolve(tmpdir(), 'cadence-workspace-utils-'))
+  tempRoots.push(root)
+  return root
+}
+
+afterEach(() => {
+  while (tempRoots.length > 0) {
+    const root = tempRoots.pop()
+    if (root) rmSync(root, { recursive: true, force: true })
+  }
+})
+
 describe('createWorkspace', () => {
   it('normalizes the path and derives a name and case-insensitive id', () => {
-    const ws = createWorkspace('C:/Projects/ai-dashboard/', 1000)
-    expect(ws.path).toBe(resolve('C:/Projects/ai-dashboard/'))
-    expect(ws.name).toBe('ai-dashboard')
+    const ws = createWorkspace('C:/Projects/cadence/', 1000)
+    expect(ws.path).toBe(resolve('C:/Projects/cadence/'))
+    expect(ws.name).toBe('cadence')
     expect(ws.id).toBe(ws.path.toLowerCase())
     expect(ws.addedAtMs).toBe(1000)
   })
@@ -19,8 +36,8 @@ describe('createWorkspace', () => {
 
 describe('workspaceProjectId', () => {
   it('matches the <platform>:<resolved-lowercased-cwd> scheme used for sessions', () => {
-    const id = workspaceProjectId('codex', 'C:/Projects/ai-dashboard')
-    expect(id).toBe(`codex:${resolve('C:/Projects/ai-dashboard').toLowerCase()}`)
+    const id = workspaceProjectId('codex', 'C:/Projects/cadence')
+    expect(id).toBe(`codex:${resolve('C:/Projects/cadence').toLowerCase()}`)
   })
 })
 
@@ -60,5 +77,18 @@ describe('parseWorkspaces', () => {
       { path: 'C:/Projects/APP', addedAtMs: 200 }
     ])
     expect(parseWorkspaces(raw)).toHaveLength(1)
+  })
+
+  it('canonicalizes attached legacy ai-dashboard workspaces to Cadence when a sibling repo exists', () => {
+    const root = tempRoot()
+    const cadence = resolve(root, 'cadence')
+    mkdirSync(cadence)
+    writeFileSync(resolve(cadence, 'package.json'), JSON.stringify({ name: 'cadence' }), 'utf-8')
+
+    const result = parseWorkspaces(JSON.stringify([{ path: resolve(root, 'ai-dashboard'), addedAtMs: 100 }]))
+
+    expect(result).toHaveLength(1)
+    expect(result[0]?.path).toBe(cadence)
+    expect(result[0]?.name).toBe('cadence')
   })
 })

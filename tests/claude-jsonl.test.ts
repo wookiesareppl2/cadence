@@ -39,7 +39,7 @@ describe('Claude JSONL usage parsing', () => {
   })
 
   it('dedupes repeated usage rows by requestId before returning records', async () => {
-    const root = join(tmpdir(), `ai-dashboard-jsonl-${Date.now()}`)
+    const root = join(tmpdir(), `cadence-jsonl-${Date.now()}`)
     await mkdir(root, { recursive: true })
     await writeFile(
       join(root, 'session.jsonl'),

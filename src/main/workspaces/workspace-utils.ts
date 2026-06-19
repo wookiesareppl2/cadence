@@ -1,12 +1,13 @@
 import { basename, resolve } from 'node:path'
 import type { Workspace } from '@shared/workspaces'
+import { canonicalProjectPath } from '../projects/project-identity'
 
 // Pure helpers for the workspace store, kept free of electron imports so they can
 // be unit tested. The project id scheme MUST match session-service.projectId
 // (`<platform>:<resolved-lowercased-cwd>`) so an attached folder dedupes against a
 // project that already has session history in the same directory.
 export function normalizeWorkspacePath(path: string): string {
-  return resolve(path)
+  return resolve(canonicalProjectPath(path))
 }
 
 export function workspaceKey(path: string): string {
