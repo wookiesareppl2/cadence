@@ -343,10 +343,17 @@ button {
   outline-offset: 2px;
 }
 
-.titlebar-action-glyph {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  opacity: 0.8;
+/* Stroked line icon for titlebar actions — same method as .files-action-icon
+   (monochrome, currentColor) so it inherits the button's hover/active colour. */
+.titlebar-action-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 /* Right-aligned group holding every titlebar action (panel layout, Commands,
@@ -561,6 +568,7 @@ button {
 }
 
 .sidebar-header {
+  flex: 0 0 auto;
   padding: 12px 14px 8px;
   display: flex;
   align-items: center;
@@ -597,6 +605,7 @@ button {
 }
 
 .sidebar-search {
+  flex: 0 0 auto;
   width: calc(100% - 20px);
   height: 30px;
   margin: 0 10px 8px;

@@ -223,7 +223,6 @@ export const TerminalDeck = memo(function TerminalDeck({
   defaultCwd,
   defaultWslDistro,
   projectName,
-  statusLabel,
   loading = false,
   backgroundTabCount = 0,
   backgroundSessionCount = 0,
@@ -237,7 +236,6 @@ export const TerminalDeck = memo(function TerminalDeck({
   defaultCwd: string | null
   defaultWslDistro?: string | null
   projectName?: string | null
-  statusLabel: string
   // Open a file the user clicked inside a terminal session (a path the AI agent
   // printed) in a preview surface owned by the host window, optionally scrolled
   // to a 1-based line parsed from a `file.ts:42` mention.
@@ -274,7 +272,6 @@ export const TerminalDeck = memo(function TerminalDeck({
           ) : null}
         </div>
         <div className="terminal-actions">
-          <span className="status-pill">{statusLabel}</span>
           {onDetach ? (
             <button type="button" className="terminal-action" onClick={onDetach} title="Detach terminals to a separate window">
               Detach

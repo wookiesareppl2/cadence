@@ -246,20 +246,17 @@ export function SessionHistorySidebar({
 
     return [...history.entries].reverse().map((entry) => {
       const speaker = historySpeakerLabel(entry)
-      const showMeta = Boolean(speaker || entry.timestamp)
 
       return (
         <article key={entry.id} className="history-entry" data-role={entry.role}>
-          <div className="history-entry-rail" aria-hidden="true">
-            {historyRoleCode(entry.role)}
-          </div>
           <div className="history-entry-content">
-            {showMeta ? (
-              <div className="history-entry-meta">
-                {speaker ? <span className="history-entry-speaker">{speaker}</span> : null}
+            <div className="history-entry-meta">
+              <span className="history-entry-marker">
+                <span className="history-entry-tag">{historyRoleCode(entry.role)}</span>
                 {entry.timestamp ? <time>{formatEntryTimestamp(entry.timestamp)}</time> : null}
-              </div>
-            ) : null}
+              </span>
+              {speaker ? <span className="history-entry-speaker">{speaker}</span> : null}
+            </div>
             {entry.role === 'user' || entry.role === 'assistant' ? (
               <HistoryMarkdown text={entry.text} />
             ) : (

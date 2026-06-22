@@ -3,6 +3,49 @@ import type { JSX } from 'react'
 import type { AssistantSession } from '@shared/sessions'
 import type { ProjectSessionGroup } from './use-session-browser'
 
+// Trash can: lid + handle, tapered body, two ribs. Stroked-currentColor line
+// icon (the canonical method — see docs/DESIGN.md) replacing the old 🗑 emoji,
+// which rendered as an illegible colour glyph.
+function TrashIcon(): JSX.Element {
+  return (
+    <svg className="row-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M3 4.5h10" />
+      <path d="M6.25 4.5V3.4a1 1 0 0 1 1-1h1.5a1 1 0 0 1 1 1v1.1" />
+      <path d="M4.6 4.5l.6 8.2a1.1 1.1 0 0 0 1.1 1.05h3.4a1.1 1.1 0 0 0 1.1-1.05l.6-8.2" />
+      <path d="M6.9 6.9v4.4" />
+      <path d="M9.1 6.9v4.4" />
+    </svg>
+  )
+}
+
+// Pencil (rename), check (confirm), cross (cancel): the same stroked-currentColor
+// line-icon method, replacing the ✎ / ✓ / ✕ text glyphs.
+function PencilIcon(): JSX.Element {
+  return (
+    <svg className="row-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M11.4 2.85a1.1 1.1 0 0 1 1.55 0l.2.2a1.1 1.1 0 0 1 0 1.55l-7.05 7.05-2.45.65.65-2.45z" />
+      <path d="M10.6 3.65l1.75 1.75" />
+    </svg>
+  )
+}
+
+function CheckIcon(): JSX.Element {
+  return (
+    <svg className="row-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M3.5 8.5l3 3 6-6.5" />
+    </svg>
+  )
+}
+
+function CrossIcon(): JSX.Element {
+  return (
+    <svg className="row-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M4.25 4.25l7.5 7.5" />
+      <path d="M11.75 4.25l-7.5 7.5" />
+    </svg>
+  )
+}
+
 // Inline rename input. A done-guard stops the unmount-triggered blur from
 // double-firing after Enter (commit) or Esc (cancel).
 function RenameField({
@@ -102,7 +145,7 @@ function RowActions({
               setError(ok ? null : 'Couldn’t delete — file may be in use')
             }}
           >
-            ✓
+            <CheckIcon />
           </button>
           <button
             type="button"
@@ -111,7 +154,7 @@ function RowActions({
             title="Cancel"
             onClick={() => setConfirming(false)}
           >
-            ✕
+            <CrossIcon />
           </button>
         </div>
       ) : (
@@ -126,7 +169,7 @@ function RowActions({
               onRename()
             }}
           >
-            ✎
+            <PencilIcon />
           </button>
           <button
             type="button"
@@ -138,7 +181,7 @@ function RowActions({
               setConfirming(true)
             }}
           >
-            🗑
+            <TrashIcon />
           </button>
         </div>
       )}

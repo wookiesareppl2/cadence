@@ -364,6 +364,38 @@ export function useSessionHistory(session: AssistantSession | null): SessionHist
   return { history, loading, error }
 }
 
+// Cache each platform's last-known sessions at module scope so switching platforms
+// — which unmounts and remounts the workspace — shows the previous list instantly
+// instead of flashing an empty "loading" state. A background poll still refreshes
+// the data after mount (stale-while-revalidate).
+const sessionsCache = new Map<PlatformId, AssistantSession[]>()
+const prewarmInFlight = new Set<PlatformId>()
+
+function getSessionsLoader(platform: PlatformId): (() => Promise<AssistantSession[]>) | undefined {
+  return platform === 'claude'
+    ? window.dashboard?.sessions?.getClaudeSessions
+    : window.dashboard?.sessions?.getCodexSessions
+}
+
+// Fetch the inactive platform's sessions once in the background to prime its cache,
+// so the very first switch to it is instant too. Best-effort: failures are ignored
+// and the normal per-mount fetch still runs.
+function prewarmOtherPlatform(current: PlatformId): void {
+  const other: PlatformId = current === 'claude' ? 'codex' : 'claude'
+  if (sessionsCache.has(other) || prewarmInFlight.has(other)) return
+  const loader = getSessionsLoader(other)
+  if (!loader) return
+  prewarmInFlight.add(other)
+  loader()
+    .then((list) => {
+      sessionsCache.set(other, list)
+    })
+    .catch(() => {})
+    .finally(() => {
+      prewarmInFlight.delete(other)
+    })
+}
+
 function usePlatformSessions(platform: PlatformId): {
   sessions: AssistantSession[]
   loading: boolean
@@ -371,16 +403,15 @@ function usePlatformSessions(platform: PlatformId): {
   titleGenerationStatus: SessionTitleGenerationStatus | null
   refresh: () => Promise<void>
 } {
-  const [sessions, setSessions] = useState<AssistantSession[]>([])
-  const [loading, setLoading] = useState(true)
+  const cachedSessions = sessionsCache.get(platform)
+  const [sessions, setSessions] = useState<AssistantSession[]>(cachedSessions ?? [])
+  // Only start in a loading state when there is nothing cached to show.
+  const [loading, setLoading] = useState(cachedSessions === undefined)
   const [error, setError] = useState<string | null>(null)
   const [titleGenerationStatus, setTitleGenerationStatus] = useState<SessionTitleGenerationStatus | null>(null)
 
   const fetchSessions = useCallback(async () => {
-    const loader =
-      platform === 'claude'
-        ? window.dashboard?.sessions?.getClaudeSessions
-        : window.dashboard?.sessions?.getCodexSessions
+    const loader = getSessionsLoader(platform)
 
     if (!loader) {
       setError('Session API unavailable')
@@ -389,7 +420,9 @@ function usePlatformSessions(platform: PlatformId): {
     }
 
     try {
-      setSessions(await loader())
+      const next = await loader()
+      sessionsCache.set(platform, next)
+      setSessions(next)
       setTitleGenerationStatus((await window.dashboard?.sessions?.getTitleGenerationStatus?.()) ?? null)
       setError(null)
     } catch (err: unknown) {
@@ -400,11 +433,14 @@ function usePlatformSessions(platform: PlatformId): {
   }, [platform])
 
   useEffect(() => {
-    setLoading(true)
+    // Refresh quietly when we already have cached sessions, so switching platforms
+    // doesn't flash a loading state; only show loading on a true cold start.
+    if (sessionsCache.get(platform) === undefined) setLoading(true)
     fetchSessions()
+    prewarmOtherPlatform(platform)
     const id = setInterval(fetchSessions, SESSION_POLL_INTERVAL_MS)
     return () => clearInterval(id)
-  }, [fetchSessions])
+  }, [fetchSessions, platform])
 
   // The main process returns a fast Windows-only list first, then pushes the
   // complete set (including slow WSL origins) once its background scan finishes.
@@ -415,6 +451,7 @@ function usePlatformSessions(platform: PlatformId): {
     if (!subscribe) return
     return subscribe((payload) => {
       if (payload.platform !== platform) return
+      sessionsCache.set(platform, payload.sessions)
       setSessions(payload.sessions)
       setLoading(false)
     })

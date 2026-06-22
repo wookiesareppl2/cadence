@@ -811,7 +811,6 @@ function DetachedTerminalWindow({ platform }: { platform: PlatformId }): JSX.Ele
           defaultCwd={sessionBrowser.selectedProject?.path ?? null}
           defaultWslDistro={sessionBrowser.selectedProject?.origin?.distro ?? null}
           projectName={sessionBrowser.selectedProject?.name ?? null}
-          statusLabel="detached"
           loading={sessionBrowser.loading && !sessionBrowser.selectedProject}
           backgroundTabCount={backgroundTabCount}
           backgroundSessionCount={backgroundSessionCount}
@@ -917,7 +916,7 @@ function Titlebar({
           onClick={onToggleMemory}
           title="Project memory & context"
         >
-          <span className="titlebar-action-glyph" aria-hidden="true">{'⛁'}</span>
+          <MemoryIcon />
           Memory
         </button>
         <button
@@ -927,13 +926,39 @@ function Titlebar({
           onClick={onToggleCheatSheet}
           title="Terminal commands cheat sheet"
         >
-          <span className="titlebar-action-glyph" aria-hidden="true">{'>_'}</span>
+          <CommandsIcon />
           Commands
         </button>
         <TitlebarSearch platform={platform} projectId={selectedProjectId} onActivate={onSearchActivate} />
       </div>
       <WindowControls />
     </header>
+  )
+}
+
+// Memory bank: a stacked database cylinder (the legible line-icon version of the
+// old ⛁ glyph). Stroked with currentColor so it tracks the button's text colour
+// through hover/active, matching the file-tree action icons.
+function MemoryIcon(): JSX.Element {
+  return (
+    <svg className="titlebar-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <ellipse cx="8" cy="3.75" rx="5" ry="2" />
+      <path d="M3 3.75v8.5c0 1.1 2.24 2 5 2s5-.9 5-2v-8.5" />
+      <path d="M3 8c0 1.1 2.24 2 5 2s5-.9 5-2" />
+    </svg>
+  )
+}
+
+// Terminal commands cheat sheet: a terminal window with a prompt chevron and
+// command line. Same stroked-currentColor method as MemoryIcon / the file-tree
+// icons, replacing the old ">_" text glyph.
+function CommandsIcon(): JSX.Element {
+  return (
+    <svg className="titlebar-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <rect x="1.75" y="3" width="12.5" height="10" rx="1.5" />
+      <path d="M4.5 6.5l2 1.75-2 1.75" />
+      <path d="M8 10.25h3.5" />
+    </svg>
   )
 }
 
@@ -1440,12 +1465,6 @@ function ClaudeWorkspace({
     })
   }, [fileChangeState.event, fileChangeState.sequence, followEdits, onPreviewFile, selectedProject, terminalsDetached])
 
-  const statusLabel = planError
-    ? 'error'
-    : planUsage
-      ? 'live'
-      : 'connecting'
-
   return (
     <main className="workspace">
       <ProjectSessionSidebar
@@ -1509,7 +1528,6 @@ function ClaudeWorkspace({
                 defaultCwd={sessionBrowser.selectedProject?.path ?? null}
                 defaultWslDistro={sessionBrowser.selectedProject?.origin?.distro ?? null}
                 projectName={sessionBrowser.selectedProject?.name ?? null}
-                statusLabel={statusLabel}
                 loading={sessionBrowser.loading && !sessionBrowser.selectedProject}
                 backgroundTabCount={backgroundTabCount}
                 backgroundSessionCount={backgroundSessionCount}
@@ -1673,8 +1691,6 @@ function CodexWorkspace({
       changeToken: fileChangeState.sequence
     })
   }, [fileChangeState.event, fileChangeState.sequence, followEdits, onPreviewFile, selectedProject, terminalsDetached])
-  const statusLabel = planError ? 'usage error' : planUsage ? 'live' : 'connecting'
-
   return (
     <main className="workspace">
       <ProjectSessionSidebar
@@ -1738,7 +1754,6 @@ function CodexWorkspace({
                 defaultCwd={sessionBrowser.selectedProject?.path ?? null}
                 defaultWslDistro={sessionBrowser.selectedProject?.origin?.distro ?? null}
                 projectName={sessionBrowser.selectedProject?.name ?? null}
-                statusLabel={statusLabel}
                 loading={sessionBrowser.loading && !sessionBrowser.selectedProject}
                 backgroundTabCount={backgroundTabCount}
                 backgroundSessionCount={backgroundSessionCount}

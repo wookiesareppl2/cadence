@@ -48,13 +48,36 @@ These MUST look and behave identically regardless of dock edge.
 `✕` close/cancel · `✓` confirm/done · `✎` rename/edit · `🗑` delete · `⋯` more/menu · `⟳` refresh · `+ <label>` create.
 
 For dense toolbars where a text glyph is ambiguous, use compact 14-16px semantic
-line icons that inherit `currentColor` and sit in the same 24px action button
-frame. File creation uses document-plus / folder-plus; nearby refresh controls
-use the same stroke weight and size. Notes rich-text controls use a 24px button
-frame with a 14px optical glyph box for text glyphs and SVGs. List controls use
-the standard bullets or numbers plus horizontal lines form; quote icons must be
-large enough to read at toolbar size without visually overpowering adjacent
-text-format buttons. Keep these SVGs monochrome and token-coloured.
+line icons that inherit `currentColor` and sit in the same action button frame.
+Notes rich-text controls use a 24px button frame with a 14px optical glyph box;
+list controls use the standard bullets/numbers-plus-lines form; quote icons must
+read at toolbar size without overpowering adjacent text-format buttons.
+
+### SVG line-icon recipe (canonical method — use this for every new/improved icon)
+
+This is the single approach for any meaningful icon in the app. When asked to add
+or fix an icon, follow these steps exactly so it's never a one-off:
+
+1. **Inline SVG, not a font symbol.** Author a small React component returning an
+   `<svg>`. **Never** use a decorative Unicode/emoji symbol (`⛁`, `🧠`, `📁`…) for
+   a meaningful icon — they render inconsistently across fonts and go illegible at
+   small sizes. (Plain ASCII that reads cleanly as mono text, like a literal `+`,
+   is the only glyph exception.)
+2. **Canvas:** `viewBox="0 0 16 16"`, plus `aria-hidden="true"` and
+   `focusable="false"` (the button's label/`title` carries the meaning).
+3. **Stroke, don't fill:** draw outlines with `fill: none; stroke: currentColor;
+   stroke-width: 1.35; stroke-linecap: round; stroke-linejoin: round`. Using
+   `currentColor` is what makes the icon track its button's hover/active colour for
+   free — never hard-code a colour.
+4. **Reuse a shared size class, don't inline styles:** `.files-action-icon` (15px,
+   panel toolbars) or `.titlebar-action-icon` (14px, titlebar actions). Both define
+   the stroke rules above; a new context gets one matching `*-action-icon` class,
+   not bespoke styling.
+5. **Keep the geometry simple and monochrome** — a few stroked paths that read at
+   14-16px. Match the stroke weight/size of neighbouring icons.
+
+Reference implementations to copy: `NewFileIcon` / `NewFolderIcon` / `RefreshIcon`
+in `file-tree-panel.tsx`, and `MemoryIcon` / `CommandsIcon` in `App.tsx`.
 
 ## Destructive actions
 

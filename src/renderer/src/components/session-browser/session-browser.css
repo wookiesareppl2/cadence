@@ -373,14 +373,9 @@
 }
 
 .history-entry {
-  display: grid;
-  grid-template-columns: 52px minmax(0, 1fr);
+  display: block;
   padding: 0;
   border-bottom: 1px solid var(--border-subtle);
-}
-
-.history-sidebar-panel .history-entry {
-  grid-template-columns: 42px minmax(0, 1fr);
 }
 
 .history-entry[data-role="user"] {
@@ -399,33 +394,42 @@
   background: var(--surface-1);
 }
 
-.history-entry-rail {
+/* Role tag stacked above the timestamp (top-right of each entry), replacing the
+   old separate rail column so the content spans the full width. */
+.history-entry-marker {
+  flex: 0 0 auto;
   display: flex;
+  flex-direction: column;
   align-items: flex-start;
-  justify-content: center;
-  padding-top: 13px;
-  border-right: 1px solid var(--border-subtle);
+  gap: 2px;
+  text-align: left;
+}
+
+.history-entry-tag {
+  padding: 1px 5px;
+  border-radius: 3px;
   color: var(--text-3);
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
   font-family: var(--font-mono);
   font-size: 9.5px;
   font-weight: 700;
-  letter-spacing: 0;
+  line-height: 1.45;
 }
 
-.history-entry[data-role="user"] .history-entry-rail {
+.history-entry[data-role="user"] .history-entry-tag {
   color: var(--accent);
-  background: color-mix(in srgb, var(--accent-dim) 18%, transparent);
+  background: color-mix(in srgb, var(--accent-dim) 30%, transparent);
 }
 
-.history-entry[data-role="assistant"] .history-entry-rail {
+.history-entry[data-role="assistant"] .history-entry-tag {
   color: var(--text-2);
-  background: color-mix(in srgb, var(--surface-2) 36%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 60%, transparent);
 }
 
-.history-entry[data-role="tool"] .history-entry-rail,
-.history-entry[data-role="system"] .history-entry-rail {
+.history-entry[data-role="tool"] .history-entry-tag,
+.history-entry[data-role="system"] .history-entry-tag {
   color: var(--text-3);
-  background: color-mix(in srgb, var(--surface-2) 50%, transparent);
+  background: color-mix(in srgb, var(--surface-2) 60%, transparent);
 }
 
 .history-entry-content {
@@ -437,8 +441,8 @@
 
 .history-entry-meta {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: flex-start;
+  justify-content: flex-start;
   gap: 10px;
   color: var(--text-3);
   font-family: var(--font-mono);
@@ -823,6 +827,19 @@
 .row-action:hover {
   background: var(--surface-4);
   color: var(--text-1);
+}
+
+/* Stroked line icon for row actions — same method as .files-action-icon
+   (monochrome, currentColor) so it tracks the button's hover/danger colour. */
+.row-action-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .row-action.danger {
