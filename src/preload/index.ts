@@ -23,7 +23,13 @@ import type {
 } from '@shared/project-files'
 import type { SearchQuery, SearchResults } from '@shared/search'
 import type { MemoryFileContent, MemoryWriteResult, ProjectMemory } from '@shared/memory'
-import type { TerminalDataEvent, TerminalPlatform, TerminalStartResult } from '@shared/terminal'
+import {
+  TERMINAL_DETACHED_CLOSED_CHANNEL,
+  type TerminalDataEvent,
+  type TerminalDetachedEvent,
+  type TerminalPlatform,
+  type TerminalStartResult
+} from '@shared/terminal'
 import type { ClaudeUsageSummary } from '@shared/usage'
 import type { Workspace } from '@shared/workspaces'
 
@@ -114,6 +120,8 @@ const api = {
   terminal: {
     openDetached: (platform: TerminalPlatform): Promise<boolean> =>
       ipcRenderer.invoke('terminal:open-detached', platform),
+    attachDetached: (platform: TerminalPlatform): Promise<boolean> =>
+      ipcRenderer.invoke('terminal:attach-detached', platform),
     start: (
       terminalId: string,
       platform: TerminalPlatform,
@@ -130,6 +138,11 @@ const api = {
       const listener = (_event: Electron.IpcRendererEvent, payload: TerminalDataEvent): void => callback(payload)
       ipcRenderer.on('terminal:data', listener)
       return () => ipcRenderer.removeListener('terminal:data', listener)
+    },
+    onDetachedClosed: (callback: (event: TerminalDetachedEvent) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: TerminalDetachedEvent): void => callback(payload)
+      ipcRenderer.on(TERMINAL_DETACHED_CLOSED_CHANNEL, listener)
+      return () => ipcRenderer.removeListener(TERMINAL_DETACHED_CLOSED_CHANNEL, listener)
     }
   }
 }

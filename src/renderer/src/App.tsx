@@ -23,6 +23,12 @@ import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
 import { APP_NAME } from '@shared/brand'
 import type { AssistantSession, SessionOrigin } from '@shared/sessions'
+import { memoryIdFromProjectRelPath } from '@shared/memory'
+import {
+  backgroundTerminalLocations,
+  type TerminalBackgroundLocation,
+  type TerminalSessionLocator
+} from '@shared/terminal'
 import type {
   FileRequest,
   ProjectFileChangedEvent,
@@ -134,14 +140,17 @@ function useSessionScopedTerminals(
   platform: PlatformId,
   browser: ProjectSessionBrowserState,
   selectedSessionId: string | null,
+  onSelectedProjectIdChange: (projectId: string | null) => void,
   onSelectedSessionIdChange: (sessionId: string | null) => void
 ): {
   visibleTabs: TerminalTab[]
   backgroundTabCount: number
   backgroundSessionCount: number
+  backgroundTerminals: TerminalBackgroundLocation[]
   pendingSessions: AssistantSession[]
   addTerminal: (cwd?: string | null, title?: string, wslDistro?: string | null) => void
   closeTerminal: (id: string) => void
+  selectBackgroundTerminal: (terminal: TerminalBackgroundLocation) => void
   startSession: (project: ProjectSessionGroup) => void
   abandonPendingSession: (id: string) => Promise<{ trashed: number }>
   renamePendingSession: (id: string, title: string | null) => Promise<void>
@@ -156,6 +165,37 @@ function useSessionScopedTerminals(
   )
 
   const pendingSessions = useMemo(() => pending.map((slot) => toPendingSession(slot, platform)), [pending, platform])
+  const terminalSessionLocators = useMemo<TerminalSessionLocator[]>(
+    () => [
+      ...sessions.map((session) => ({
+        sessionKey: session.id,
+        sessionTitle: session.title,
+        projectId: session.projectId,
+        projectName: session.project,
+        projectPath: session.projectPath
+      })),
+      ...pending.map((slot) => ({
+        sessionKey: slot.id,
+        sessionTitle: slot.title,
+        projectId: slot.projectId,
+        projectName: slot.projectName,
+        projectPath: slot.projectPath
+      }))
+    ],
+    [pending, sessions]
+  )
+  const backgroundTerminals = useMemo(
+    () => backgroundTerminalLocations(tabs, selectedSessionId, terminalSessionLocators),
+    [selectedSessionId, tabs, terminalSessionLocators]
+  )
+
+  const selectBackgroundTerminal = useCallback(
+    (terminal: TerminalBackgroundLocation) => {
+      if (terminal.projectId) onSelectedProjectIdChange(terminal.projectId)
+      onSelectedSessionIdChange(terminal.sessionKey)
+    },
+    [onSelectedProjectIdChange, onSelectedSessionIdChange]
+  )
 
   // Creating a session only adds the (empty) session and selects it — the user
   // opens its first terminal explicitly via the deck, same as selecting any other
@@ -286,9 +326,11 @@ function useSessionScopedTerminals(
     visibleTabs,
     backgroundTabCount,
     backgroundSessionCount,
+    backgroundTerminals,
     pendingSessions,
     addTerminal: handleAddTerminal,
     closeTerminal,
+    selectBackgroundTerminal,
     startSession,
     abandonPendingSession,
     renamePendingSession
@@ -315,6 +357,10 @@ type FilePreviewSelection = {
   request: FileRequest
   highlight?: string
   changeToken?: number
+}
+type MemorySelectionRequest = {
+  id: string
+  sequence: number
 }
 
 type ProjectFileChangeState = {
@@ -392,6 +438,8 @@ function DashboardApp(): JSX.Element {
   const [platform, setPlatform] = useState<PlatformId>('claude')
   const [cheatSheetOpen, setCheatSheetOpen] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
+  const memorySelectionSequenceRef = useRef(0)
+  const [memorySelectionRequest, setMemorySelectionRequest] = useState<MemorySelectionRequest | null>(null)
   const planUsageStates = usePlanUsagePolling()
   const [selectedSessionIds, setSelectedSessionIds] = usePersistentState<Record<PlatformId, string | null>>(
     'selection:sessions:v1',
@@ -422,10 +470,10 @@ function DashboardApp(): JSX.Element {
     'selection:files-panel:v1',
     { claude: false, codex: false }
   )
-  const [terminalDetached, setTerminalDetached] = usePersistentState<Record<PlatformId, boolean>>(
-    'selection:terminal-detached:v1',
-    { claude: false, codex: false }
-  )
+  const [terminalDetached, setTerminalDetached] = useState<Record<PlatformId, boolean>>({
+    claude: false,
+    codex: false
+  })
   const [previewFollowEdits, setPreviewFollowEdits] = usePersistentState<Record<PlatformId, boolean>>(
     'selection:file-preview-follow-edits:v1',
     { claude: true, codex: true }
@@ -444,6 +492,20 @@ function DashboardApp(): JSX.Element {
     highlight: string
     scrollToLine?: number
   } | null>(null)
+
+  useEffect(() => {
+    try {
+      window.localStorage.removeItem('selection:terminal-detached:v1')
+    } catch {
+      // Runtime-only state; ignore storage cleanup failures.
+    }
+
+    return window.dashboard.terminal.onDetachedClosed((event) => {
+      setTerminalDetached((current) =>
+        current[event.platform] ? { ...current, [event.platform]: false } : current
+      )
+    })
+  }, [])
 
   const handleSearchActivate = useCallback(
     (item: SearchResultItem, query: string) => {
@@ -464,6 +526,15 @@ function DashboardApp(): JSX.Element {
       }
       if (item.kind === 'file' && item.file) {
         setSelectedProjectIds((current) => ({ ...current, [platform]: item.projectId }))
+        const memoryFileId = memoryIdFromProjectRelPath(item.file.relPath)
+        if (memoryFileId) {
+          memorySelectionSequenceRef.current += 1
+          setMemorySelectionRequest({ id: memoryFileId, sequence: memorySelectionSequenceRef.current })
+          setMemoryOpen(true)
+          setCheatSheetOpen(false)
+          setSearchPreview(null)
+          return
+        }
         if (terminalDetached[platform]) {
           setFilePreviewSelections((current) => ({
             ...current,
@@ -560,9 +631,14 @@ function DashboardApp(): JSX.Element {
       setTerminalDetached((current) =>
         current[targetPlatform] ? current : { ...current, [targetPlatform]: true }
       )
-      window.dashboard.terminal.openDetached(targetPlatform).catch(() => {
-        setTerminalDetached((current) => ({ ...current, [targetPlatform]: false }))
-      })
+      window.dashboard.terminal
+        .openDetached(targetPlatform)
+        .then((opened) => {
+          if (!opened) setTerminalDetached((current) => ({ ...current, [targetPlatform]: false }))
+        })
+        .catch(() => {
+          setTerminalDetached((current) => ({ ...current, [targetPlatform]: false }))
+        })
     },
     [setTerminalDetached]
   )
@@ -572,7 +648,14 @@ function DashboardApp(): JSX.Element {
       setTerminalDetached((current) =>
         current[targetPlatform] ? current : { ...current, [targetPlatform]: true }
       )
-      window.dashboard.terminal.openDetached(targetPlatform).catch(() => undefined)
+      window.dashboard.terminal
+        .openDetached(targetPlatform)
+        .then((opened) => {
+          if (!opened) setTerminalDetached((current) => ({ ...current, [targetPlatform]: false }))
+        })
+        .catch(() => {
+          setTerminalDetached((current) => ({ ...current, [targetPlatform]: false }))
+        })
     },
     [setTerminalDetached]
   )
@@ -582,6 +665,7 @@ function DashboardApp(): JSX.Element {
       setTerminalDetached((current) =>
         current[targetPlatform] ? { ...current, [targetPlatform]: false } : current
       )
+      window.dashboard.terminal.attachDetached(targetPlatform).catch(() => undefined)
     },
     [setTerminalDetached]
   )
@@ -631,6 +715,7 @@ function DashboardApp(): JSX.Element {
         }}
         memoryOpen={memoryOpen}
         onToggleMemory={() => {
+          setMemorySelectionRequest(null)
           setMemoryOpen((open) => !open)
           setCheatSheetOpen(false)
         }}
@@ -642,7 +727,16 @@ function DashboardApp(): JSX.Element {
         onSearchActivate={handleSearchActivate}
       />
       {memoryOpen ? (
-        <MemoryView platform={platform} projectId={selectedProjectIds[platform]} onClose={() => setMemoryOpen(false)} />
+        <MemoryView
+          platform={platform}
+          projectId={selectedProjectIds[platform]}
+          initialFileId={memorySelectionRequest?.id ?? null}
+          initialFileRequestKey={memorySelectionRequest?.sequence ?? null}
+          onClose={() => {
+            setMemoryOpen(false)
+            setMemorySelectionRequest(null)
+          }}
+        />
       ) : cheatSheetOpen ? (
         <CheatSheet onClose={() => setCheatSheetOpen(false)} />
       ) : platform === 'claude' ? (
@@ -733,11 +827,6 @@ function DetachedTerminalWindow({ platform }: { platform: PlatformId }): JSX.Ele
     'selection:projects:v1',
     { claude: null, codex: null }
   )
-  const [, setTerminalDetached] = usePersistentState<Record<PlatformId, boolean>>(
-    'selection:terminal-detached:v1',
-    { claude: false, codex: false }
-  )
-
   const selectSession = useCallback(
     (sessionId: string | null) => {
       setSelectedSessionIds((current) =>
@@ -755,9 +844,8 @@ function DetachedTerminalWindow({ platform }: { platform: PlatformId }): JSX.Ele
     [platform, setSelectedProjectIds]
   )
   const attachHere = useCallback(() => {
-    setTerminalDetached((current) => ({ ...current, [platform]: false }))
-    window.dashboard.window.close()
-  }, [platform, setTerminalDetached])
+    window.dashboard.terminal.attachDetached(platform).catch(() => window.dashboard.window.close())
+  }, [platform])
 
   const sessionBrowser = useProjectSessionBrowserState({
     platform,
@@ -770,9 +858,11 @@ function DetachedTerminalWindow({ platform }: { platform: PlatformId }): JSX.Ele
     visibleTabs,
     backgroundTabCount,
     backgroundSessionCount,
+    backgroundTerminals,
     addTerminal,
-    closeTerminal
-  } = useSessionScopedTerminals(platform, sessionBrowser, selectedSessionIds[platform], selectSession)
+    closeTerminal,
+    selectBackgroundTerminal
+  } = useSessionScopedTerminals(platform, sessionBrowser, selectedSessionIds[platform], selectProject, selectSession)
   const cssVars = useMemo(
     () =>
       ({
@@ -814,6 +904,8 @@ function DetachedTerminalWindow({ platform }: { platform: PlatformId }): JSX.Ele
           loading={sessionBrowser.loading && !sessionBrowser.selectedProject}
           backgroundTabCount={backgroundTabCount}
           backgroundSessionCount={backgroundSessionCount}
+          backgroundTerminals={backgroundTerminals}
+          onSelectBackgroundTerminal={selectBackgroundTerminal}
           onAdd={addTerminal}
           onClose={closeTerminal}
           onOpenFile={(request, line) => setFilePreview({ request, line })}
@@ -1397,13 +1489,21 @@ function ClaudeWorkspace({
     visibleTabs,
     backgroundTabCount,
     backgroundSessionCount,
+    backgroundTerminals,
     pendingSessions,
     addTerminal: handleAddTerminal,
     closeTerminal,
+    selectBackgroundTerminal,
     startSession,
     abandonPendingSession,
     renamePendingSession
-  } = useSessionScopedTerminals('claude', sessionBrowser, selectedSessionId, onSelectedSessionIdChange)
+  } = useSessionScopedTerminals(
+    'claude',
+    sessionBrowser,
+    selectedSessionId,
+    onSelectedProjectIdChange,
+    onSelectedSessionIdChange
+  )
   const { contentBodyRef, toggleHistorySidebar } = useHistorySidebarMotion(
     historySidebarOpen,
     onToggleHistorySidebar
@@ -1531,6 +1631,8 @@ function ClaudeWorkspace({
                 loading={sessionBrowser.loading && !sessionBrowser.selectedProject}
                 backgroundTabCount={backgroundTabCount}
                 backgroundSessionCount={backgroundSessionCount}
+                backgroundTerminals={backgroundTerminals}
+                onSelectBackgroundTerminal={selectBackgroundTerminal}
                 onAdd={handleAddTerminal}
                 onClose={closeTerminal}
                 onOpenFile={onOpenTerminalFile}
@@ -1624,13 +1726,21 @@ function CodexWorkspace({
     visibleTabs,
     backgroundTabCount,
     backgroundSessionCount,
+    backgroundTerminals,
     pendingSessions,
     addTerminal: handleAddTerminal,
     closeTerminal,
+    selectBackgroundTerminal,
     startSession,
     abandonPendingSession,
     renamePendingSession
-  } = useSessionScopedTerminals('codex', sessionBrowser, selectedSessionId, onSelectedSessionIdChange)
+  } = useSessionScopedTerminals(
+    'codex',
+    sessionBrowser,
+    selectedSessionId,
+    onSelectedProjectIdChange,
+    onSelectedSessionIdChange
+  )
   const { contentBodyRef, toggleHistorySidebar } = useHistorySidebarMotion(
     historySidebarOpen,
     onToggleHistorySidebar
@@ -1757,6 +1867,8 @@ function CodexWorkspace({
                 loading={sessionBrowser.loading && !sessionBrowser.selectedProject}
                 backgroundTabCount={backgroundTabCount}
                 backgroundSessionCount={backgroundSessionCount}
+                backgroundTerminals={backgroundTerminals}
+                onSelectBackgroundTerminal={selectBackgroundTerminal}
                 onAdd={handleAddTerminal}
                 onClose={closeTerminal}
                 onOpenFile={onOpenTerminalFile}

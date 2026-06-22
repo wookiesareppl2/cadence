@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { JSX, ReactNode } from 'react'
-import type { FileOpResult, FilePreview, FileRequest, ProjectFileWatchMode } from '@shared/project-files'
+import {
+  projectFileBreadcrumbParts,
+  type FileOpResult,
+  type FilePreview,
+  type FileRequest,
+  type ProjectFileWatchMode
+} from '@shared/project-files'
 import { HistoryMarkdown } from '../history-markdown'
 
 const MARKDOWN_EXT = /\.(md|markdown|mdx|mdown|mkd)$/i
@@ -113,6 +119,26 @@ function HighlightedCode({
 function formatPreviewLoadedAt(ms: number | null): string {
   if (!ms) return 'Live'
   return `Live ${new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`
+}
+
+function FileLocationBreadcrumb({ parts }: { parts: string[] }): JSX.Element {
+  const label = parts.join(' / ')
+  return (
+    <nav className="files-preview-breadcrumb" aria-label="File location" title={label}>
+      {parts.map((part, index) => (
+        <span key={`${part}:${index}`} className="files-preview-breadcrumb-part">
+          <span className={index === parts.length - 1 ? 'files-preview-crumb current' : 'files-preview-crumb'}>
+            {part}
+          </span>
+          {index < parts.length - 1 ? (
+            <span className="files-preview-crumb-separator" aria-hidden="true">
+              /
+            </span>
+          ) : null}
+        </span>
+      ))}
+    </nav>
+  )
 }
 
 function FilePreviewFrame({
@@ -250,6 +276,7 @@ function FilePreviewFrame({
   const name = preview?.name || request.relPath.split('/').pop() || 'File'
   const isMarkdown = MARKDOWN_EXT.test(name)
   const canToggle = isMarkdown && preview?.kind === 'text'
+  const breadcrumbParts = projectFileBreadcrumbParts(request)
 
   const openExternal = async (): Promise<void> => {
     setOpeningExternal(true)
@@ -267,9 +294,12 @@ function FilePreviewFrame({
   const content = (
     <>
       <div className="files-preview-header">
-        <span className="files-preview-name" title={name}>
-          {name}
-        </span>
+        <div className="files-preview-title">
+          <span className="files-preview-name" title={name}>
+            {name}
+          </span>
+          <FileLocationBreadcrumb parts={breadcrumbParts} />
+        </div>
         <div className="files-preview-actions">
           {live ? (
             <span className="files-preview-live" title={loadedAt ? new Date(loadedAt).toLocaleString() : undefined}>

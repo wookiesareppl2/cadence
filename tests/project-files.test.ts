@@ -4,6 +4,7 @@ import {
   isTextLikeProjectFile,
   isValidEntryName,
   joinNative,
+  projectFileBreadcrumbParts,
   toNativeRoot
 } from '../src/shared/project-files'
 
@@ -74,6 +75,34 @@ describe('joinNative', () => {
     expect(joinNative('\\\\wsl.localhost\\Ubuntu\\home\\app', 'src/x')).toBe(
       '\\\\wsl.localhost\\Ubuntu\\home\\app\\src\\x'
     )
+  })
+})
+
+describe('projectFileBreadcrumbParts', () => {
+  it('uses the project folder label followed by relative path segments', () => {
+    expect(
+      projectFileBreadcrumbParts({
+        rootPath: 'C:\\IDE Platforms\\Visual Studio Code\\Projects\\In Progress\\cadence',
+        distro: null,
+        relPath: 'src/renderer/src/App.tsx'
+      })
+    ).toEqual(['cadence', 'src', 'renderer', 'src', 'App.tsx'])
+  })
+
+  it('handles WSL roots and backslash-separated relative paths', () => {
+    expect(
+      projectFileBreadcrumbParts({
+        rootPath: '/home/sheld/work/cadence',
+        distro: 'Ubuntu',
+        relPath: 'docs\\DESIGN.md'
+      })
+    ).toEqual(['cadence', 'docs', 'DESIGN.md'])
+  })
+
+  it('falls back to just the project label for root-relative previews', () => {
+    expect(projectFileBreadcrumbParts({ rootPath: 'C:\\Projects\\cadence', distro: null, relPath: '' })).toEqual([
+      'cadence'
+    ])
   })
 })
 

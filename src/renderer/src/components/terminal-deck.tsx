@@ -1,26 +1,13 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
-import type { JSX } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { CSSProperties, JSX } from 'react'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import type { FileRequest } from '@shared/project-files'
 import { findFilePathCandidates, offsetToCell } from '@shared/terminal-links'
-import type { TerminalPlatform, TerminalStartResult } from '@shared/terminal'
+import type { TerminalBackgroundLocation, TerminalPlatform, TerminalStartResult, TerminalTab } from '@shared/terminal'
 
-export type TerminalTab = {
-  id: string
-  title: string
-  cwd: string | null
-  // The session this terminal belongs to. The deck shows only the selected
-  // session's terminals; the rest stay alive (their ptys keep running) and are
-  // revealed again when their session is reselected. May be a pending-session id
-  // while a freshly started session has no transcript yet — once the transcript
-  // is discovered the tab is retagged onto the real session id.
-  sessionKey: string
-  // WSL distro to launch the shell inside (cwd is then a POSIX path). Null for
-  // native Windows terminals.
-  wslDistro?: string | null
-}
+export type { TerminalTab } from '@shared/terminal'
 
 export type TerminalDeckState = {
   tabs: TerminalTab[]
@@ -226,8 +213,10 @@ export const TerminalDeck = memo(function TerminalDeck({
   loading = false,
   backgroundTabCount = 0,
   backgroundSessionCount = 0,
+  backgroundTerminals = [],
   onAdd,
   onClose,
+  onSelectBackgroundTerminal,
   onOpenFile,
   onDetach
 }: {
@@ -248,16 +237,64 @@ export const TerminalDeck = memo(function TerminalDeck({
   // and surfaced here so they aren't silently lost while hidden.
   backgroundTabCount?: number
   backgroundSessionCount?: number
+  backgroundTerminals?: TerminalBackgroundLocation[]
+  onSelectBackgroundTerminal?: (terminal: TerminalBackgroundLocation) => void
   onAdd: (cwd?: string | null, title?: string, wslDistro?: string | null) => void
   onClose: (id: string) => void
   onDetach?: () => void
 }): JSX.Element {
+  const [backgroundMenuOpen, setBackgroundMenuOpen] = useState(false)
+  const [backgroundButtonRect, setBackgroundButtonRect] = useState<DOMRect | null>(null)
+  const backgroundButtonRef = useRef<HTMLButtonElement>(null)
   const noProjectLabel = loading ? 'Loading project…' : 'Select a project to open a terminal'
+  const backgroundCount = backgroundTerminals.length || backgroundTabCount
   const backgroundNote =
-    backgroundTabCount > 0
-      ? `${backgroundTabCount} ${backgroundTabCount === 1 ? 'terminal' : 'terminals'} running in ` +
+    backgroundCount > 0
+      ? `${backgroundCount} ${backgroundCount === 1 ? 'terminal' : 'terminals'} running in ` +
         `${backgroundSessionCount} other ${backgroundSessionCount === 1 ? 'session' : 'sessions'}`
       : null
+  const backgroundMenuStyle = useMemo<CSSProperties | undefined>(() => {
+    if (!backgroundButtonRect) return undefined
+    const width = Math.min(520, Math.max(360, window.innerWidth - 16))
+    return {
+      top: backgroundButtonRect.bottom + 6,
+      left: Math.max(8, Math.min(backgroundButtonRect.left, window.innerWidth - width - 8)),
+      width
+    }
+  }, [backgroundButtonRect])
+
+  useLayoutEffect(() => {
+    if (!backgroundMenuOpen) return
+    const update = (): void => {
+      if (backgroundButtonRef.current) setBackgroundButtonRect(backgroundButtonRef.current.getBoundingClientRect())
+    }
+    update()
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [backgroundMenuOpen])
+
+  useEffect(() => {
+    if (!backgroundMenuOpen) return
+    const onPointerDown = (event: MouseEvent): void => {
+      const target = event.target as Node
+      if (
+        backgroundButtonRef.current?.contains(target) ||
+        (target instanceof Element && target.closest('.terminal-bg-menu'))
+      ) {
+        return
+      }
+      setBackgroundMenuOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setBackgroundMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [backgroundMenuOpen])
 
   return (
     <section className="panel terminal-panel" aria-label={`${platform} terminals`}>
@@ -266,9 +303,16 @@ export const TerminalDeck = memo(function TerminalDeck({
           <h1>{platform === 'claude' ? 'Claude Terminals' : 'Codex Terminals'}</h1>
           <span>{tabs.length === 1 ? '1 terminal' : `${tabs.length} terminals`}</span>
           {backgroundNote ? (
-            <span className="terminal-bg-note" title={backgroundNote}>
+            <button
+              ref={backgroundButtonRef}
+              type="button"
+              className="terminal-bg-note"
+              aria-expanded={backgroundMenuOpen}
+              onClick={() => setBackgroundMenuOpen((open) => !open)}
+              title="Show background terminals"
+            >
               · {backgroundNote}
-            </span>
+            </button>
           ) : null}
         </div>
         <div className="terminal-actions">
@@ -288,6 +332,42 @@ export const TerminalDeck = memo(function TerminalDeck({
           </button>
         </div>
       </div>
+      {backgroundMenuOpen && backgroundNote ? (
+        <div className="terminal-bg-menu" style={backgroundMenuStyle} role="menu" aria-label="Background terminals">
+          <div className="terminal-bg-menu-head">{backgroundNote}</div>
+          {backgroundTerminals.length > 0 ? (
+            backgroundTerminals.map((terminal) => {
+              const location = terminal.cwd ?? terminal.projectPath ?? 'No working directory'
+              const selectable = Boolean(terminal.projectId)
+              return (
+                <button
+                  key={terminal.terminalId}
+                  type="button"
+                  role="menuitem"
+                  className="terminal-bg-row"
+                  disabled={!selectable}
+                  onClick={() => {
+                    if (!selectable) return
+                    onSelectBackgroundTerminal?.(terminal)
+                    setBackgroundMenuOpen(false)
+                  }}
+                  title={location}
+                >
+                  <span className="terminal-bg-row-main">
+                    <span className="terminal-bg-row-title">{terminal.title}</span>
+                    <span className="terminal-bg-row-context">
+                      {terminal.projectName} / {terminal.sessionTitle}
+                    </span>
+                  </span>
+                  <span className="terminal-bg-row-cwd">{location}</span>
+                </button>
+              )
+            })
+          ) : (
+            <div className="terminal-bg-empty">Background terminal details unavailable.</div>
+          )}
+        </div>
+      ) : null}
       {tabs.length === 0 ? (
         <div className="terminal-empty">
           {defaultCwd ? (

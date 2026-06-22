@@ -117,6 +117,12 @@ one rounded frame.
 
 ## File preview line states
 
+The File Preview header shows the filename as the primary mono label and a compact
+mono breadcrumb directly underneath it (`project / folder / file`) so search-opened
+files keep their location visible. Keep this as metadata, not a second toolbar:
+`--text-3` for the path, `--text-2` for the current file segment, one line with
+ellipsis overflow.
+
 Two accent bands distinguish *why* a code line is marked, so don't reuse one for the other:
 - **`.changed`** — a transient edit highlight in Auto-follow: faint band
   `color-mix(in srgb, var(--accent) 12%, var(--surface-0))` + accent line number.
@@ -152,6 +158,11 @@ vs. `Select a project to open a terminal` when none is picked.
   links (`pointerCursor` + `underline`) that open the File Preview scrolled to the
   line. Only paths that exist under the project root are linked — never style arbitrary
   path-like text as a link.
+- **Background terminal locator:** when terminals are running in other sessions,
+  the header count is a compact disclosure. It opens a fixed-position menu listing
+  terminal title, project/session, and cwd; selecting a row jumps to that session.
+  Keep it dense (`--font-mono` for paths/counts) and clipped with ellipsis, not a
+  modal.
 - **Copy:** drag-select copies on mouse-up (copy-on-select) and `Ctrl+Shift+C` /
   `Cmd+C` copy an existing selection; `Ctrl+C` alone stays SIGINT. A plain click
   leaves no selection and copies nothing.

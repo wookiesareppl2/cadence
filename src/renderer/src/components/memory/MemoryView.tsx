@@ -20,10 +20,14 @@ function formatModified(ms: number): string {
 export function MemoryView({
   platform,
   projectId,
+  initialFileId,
+  initialFileRequestKey,
   onClose
 }: {
   platform: PlatformId
   projectId: string | null
+  initialFileId?: string | null
+  initialFileRequestKey?: number | null
   onClose: () => void
 }): JSX.Element {
   const { data, loading, error, selectedId, select, content, contentLoading, save } = useProjectMemory(
@@ -31,10 +35,15 @@ export function MemoryView({
     projectId
   )
   const [filter, setFilter] = useState('')
+  const [pendingInitialId, setPendingInitialId] = useState<string | null>(initialFileId ?? null)
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setPendingInitialId(initialFileId ?? null)
+  }, [initialFileId, initialFileRequestKey])
 
   // Leaving a file (or reloading) always drops back to read mode.
   useEffect(() => {
@@ -59,6 +68,16 @@ export function MemoryView({
     }
     return null
   }, [data, selectedId])
+
+  useEffect(() => {
+    if (!data || !pendingInitialId) return
+    const ids = data.groups.flatMap((group) => group.files.map((file) => file.id))
+    if (ids.includes(pendingInitialId)) {
+      setFilter('')
+      select(pendingInitialId)
+    }
+    setPendingInitialId(null)
+  }, [data, pendingInitialId, select])
 
   const beginEdit = (): void => {
     setDraft(content?.text ?? '')

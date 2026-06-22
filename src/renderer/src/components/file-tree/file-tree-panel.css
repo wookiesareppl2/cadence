@@ -427,11 +427,19 @@
 
 .files-preview-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
+}
+
+.files-preview-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 
 .files-preview-name {
@@ -442,6 +450,42 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.files-preview-breadcrumb {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.files-preview-breadcrumb-part {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.files-preview-crumb {
+  min-width: 0;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.files-preview-crumb.current {
+  color: var(--text-2);
+}
+
+.files-preview-crumb-separator {
+  flex: 0 0 auto;
+  color: var(--text-3);
 }
 
 .files-preview-actions {

@@ -173,6 +173,19 @@ export function joinNative(nativeRoot: string, safeRel: string): string {
   return `${nativeRoot}\\${safeRel.replace(/\//g, '\\')}`
 }
 
+function projectRootLabel(rootPath: string): string {
+  const trimmed = rootPath.replace(/[\\/]+$/, '')
+  const normalized = trimmed.replace(/\\/g, '/')
+  const last = normalized.split('/').filter(Boolean).pop()
+  return last || rootPath || 'project'
+}
+
+export function projectFileBreadcrumbParts(request: FileRequest): string[] {
+  const safeRel = confineRelPath(request.relPath) ?? ''
+  const relParts = safeRel ? safeRel.split('/') : []
+  return [projectRootLabel(request.rootPath), ...relParts]
+}
+
 export function isTextLikeProjectFile(relPath: string, isDirectory = false): boolean {
   if (isDirectory) return true
   const name = relPath.replace(/\\/g, '/').split('/').pop()?.toLowerCase() ?? ''

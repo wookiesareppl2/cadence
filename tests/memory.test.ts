@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { centralSlug, makeMemoryId, parseMemoryId } from '../src/shared/memory'
+import { centralSlug, makeMemoryId, memoryIdFromProjectRelPath, parseMemoryId } from '../src/shared/memory'
 
 describe('centralSlug', () => {
   it('matches Claude Code folder naming for a Windows path', () => {
@@ -33,5 +33,31 @@ describe('makeMemoryId / parseMemoryId', () => {
     expect(parseMemoryId(':HANDOFF.md')).toBeNull() // empty group
     expect(parseMemoryId('working:')).toBeNull() // empty name
     expect(parseMemoryId('bogus:file.md')).toBeNull() // unknown group
+  })
+})
+
+describe('memoryIdFromProjectRelPath', () => {
+  it('maps working memory and pins files from .claude', () => {
+    expect(memoryIdFromProjectRelPath('.claude/HANDOFF.md')).toBe('working:HANDOFF.md')
+    expect(memoryIdFromProjectRelPath('.claude/patterns.md')).toBe('working:patterns.md')
+    expect(memoryIdFromProjectRelPath('.claude/context-pins.md')).toBe('pins:context-pins.md')
+  })
+
+  it('maps project remembered facts and project instructions', () => {
+    expect(memoryIdFromProjectRelPath('.claude/memory/product.md')).toBe('remembered-project:product.md')
+    expect(memoryIdFromProjectRelPath('CLAUDE.md')).toBe('instructions:CLAUDE.md')
+  })
+
+  it('maps other direct .claude markdown files', () => {
+    expect(memoryIdFromProjectRelPath('.claude/notes.md')).toBe('other:notes.md')
+    expect(memoryIdFromProjectRelPath('.claude\\notes.md')).toBe('other:notes.md')
+  })
+
+  it('rejects files outside the Memory viewer surface', () => {
+    expect(memoryIdFromProjectRelPath('docs/DESIGN.md')).toBeNull()
+    expect(memoryIdFromProjectRelPath('.codex/config.md')).toBeNull()
+    expect(memoryIdFromProjectRelPath('.claude/not-markdown.txt')).toBeNull()
+    expect(memoryIdFromProjectRelPath('.claude/memory/nested/file.md')).toBeNull()
+    expect(memoryIdFromProjectRelPath('../.claude/HANDOFF.md')).toBeNull()
   })
 })

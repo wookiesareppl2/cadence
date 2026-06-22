@@ -43,9 +43,14 @@ import { DEFAULT_WINDOW_BOUNDS } from './window-state-utils'
 import { readWindowState, registerWindowStatePersistence } from './window-state'
 import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
 import { APP_NAME } from '@shared/brand'
+import {
+  TERMINAL_DETACHED_CLOSED_CHANNEL,
+  type TerminalDetachedEvent
+} from '@shared/terminal'
 
 let restoreBounds: Rectangle | null = null
 const UI_ZOOM_FACTOR = 1.1
+let dashboardWindow: BrowserWindow | null = null
 const detachedTerminalWindows: Partial<Record<PlatformId, BrowserWindow>> = {}
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
@@ -89,6 +94,7 @@ function createMainWindow(): BrowserWindow {
       nodeIntegration: false
     }
   })
+  dashboardWindow = mainWindow
 
   if (savedWindowState?.isFullScreen) {
     mainWindow.setFullScreen(true)
@@ -101,6 +107,16 @@ function createMainWindow(): BrowserWindow {
   })
 
   registerWindowStatePersistence(mainWindow)
+
+  mainWindow.on('close', () => {
+    closeDetachedTerminalWindows({ force: true })
+  })
+
+  mainWindow.on('closed', () => {
+    if (dashboardWindow === mainWindow) dashboardWindow = null
+    closeDetachedTerminalWindows({ force: true })
+    if (process.platform !== 'darwin') app.quit()
+  })
 
   mainWindow.webContents.on('console-message', (details) => {
     if (!shouldForwardRendererConsole(details)) return
@@ -141,6 +157,28 @@ function createMainWindow(): BrowserWindow {
   }
 
   return mainWindow
+}
+
+function notifyDetachedTerminalClosed(platform: PlatformId): void {
+  const payload: TerminalDetachedEvent = { platform }
+  if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+    dashboardWindow.webContents.send(TERMINAL_DETACHED_CLOSED_CHANNEL, payload)
+  }
+}
+
+function closeDetachedTerminalWindows({ force = false }: { force?: boolean } = {}): void {
+  for (const terminalWindow of Object.values(detachedTerminalWindows)) {
+    if (!terminalWindow || terminalWindow.isDestroyed()) continue
+    if (force) terminalWindow.destroy()
+    else terminalWindow.close()
+  }
+}
+
+function attachDetachedTerminalWindow(platform: PlatformId): boolean {
+  notifyDetachedTerminalClosed(platform)
+  const terminalWindow = detachedTerminalWindows[platform]
+  if (terminalWindow && !terminalWindow.isDestroyed()) terminalWindow.close()
+  return true
 }
 
 function loadRenderer(window: BrowserWindow, query: Record<string, string> = {}): void {
@@ -195,6 +233,7 @@ function openDetachedTerminalWindow(platform: PlatformId): boolean {
   })
   terminalWindow.on('closed', () => {
     if (detachedTerminalWindows[platform] === terminalWindow) delete detachedTerminalWindows[platform]
+    notifyDetachedTerminalClosed(platform)
   })
   terminalWindow.webContents.on('console-message', (details) => {
     if (!shouldForwardRendererConsole(details)) return
@@ -209,7 +248,7 @@ function openDetachedTerminalWindow(platform: PlatformId): boolean {
 }
 
 function focusExistingWindow(): BrowserWindow | null {
-  const mainWindow = BrowserWindow.getAllWindows()[0] ?? null
+  const mainWindow = dashboardWindow && !dashboardWindow.isDestroyed() ? dashboardWindow : BrowserWindow.getAllWindows()[0] ?? null
   if (!mainWindow) return null
 
   if (mainWindow.isMinimized()) mainWindow.restore()
@@ -272,7 +311,10 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   })
 
   ipcMain.on('window:close', (event) => {
-    BrowserWindow.fromWebContents(event.sender)?.close()
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (!window) return
+    if (window === dashboardWindow) closeDetachedTerminalWindows({ force: true })
+    window.close()
   })
 
   ipcMain.handle('app:version', () => app.getVersion())
@@ -347,6 +389,10 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   ipcMain.handle('terminal:open-detached', (_event, platform: PlatformId) => {
     if (!PLATFORM_CONFIG[platform]) return false
     return openDetachedTerminalWindow(platform)
+  })
+  ipcMain.handle('terminal:attach-detached', (_event, platform: PlatformId) => {
+    if (!PLATFORM_CONFIG[platform]) return false
+    return attachDetachedTerminalWindow(platform)
   })
   ipcMain.handle('terminal:restart', (event, terminalId: string) => restartTerminal(terminalId, event.sender))
   ipcMain.on('terminal:input', (_event, terminalId: string, data: string) => writeTerminal(terminalId, data))
