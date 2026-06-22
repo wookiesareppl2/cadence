@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import type { PlatformId } from '@shared/platform'
 import type {
@@ -114,10 +114,33 @@ export function useProjectSessionBrowserState({
     [platform, sessions, workspaces, metadata.projectAliases]
   )
   const filteredProjects = useMemo(() => filterProjects(projects, query), [projects, query])
-  const selectedProject = useMemo(
-    () => filteredProjects.find((project) => project.id === selectedProjectId) ?? filteredProjects[0] ?? null,
-    [filteredProjects, selectedProjectId]
-  )
+
+  // Remember the last project we actually resolved for the current selection. A
+  // refresh briefly returns a partial list (the fast Windows-only scan drops WSL
+  // projects until the full scan pushes them back), and a search query can filter
+  // the selection out of view. Holding the last-known project through those gaps
+  // stops the UI from yanking the user onto a different project.
+  const lastResolvedProjectRef = useRef<ProjectSessionGroup | null>(null)
+  const selectedProject = useMemo(() => {
+    if (selectedProjectId == null) {
+      const fallback = filteredProjects[0] ?? null
+      lastResolvedProjectRef.current = fallback
+      return fallback
+    }
+    const match =
+      filteredProjects.find((project) => project.id === selectedProjectId) ??
+      projects.find((project) => project.id === selectedProjectId)
+    if (match) {
+      lastResolvedProjectRef.current = match
+      return match
+    }
+    // The selection isn't in this (possibly partial) list. If we've resolved it
+    // before, keep showing it — the scan will include it again once it settles.
+    // Only a never-resolved id (e.g. a stale persisted selection) falls back to
+    // the first project for display.
+    if (lastResolvedProjectRef.current?.id === selectedProjectId) return lastResolvedProjectRef.current
+    return filteredProjects[0] ?? null
+  }, [filteredProjects, projects, selectedProjectId])
   const projectSessions = selectedProject?.sessions ?? []
   const selectedSession = useMemo(
     () =>
@@ -129,9 +152,23 @@ export function useProjectSessionBrowserState({
 
   useEffect(() => {
     if (loading) return
-    const nextProjectId = selectedProject?.id ?? null
-    if (selectedProjectId !== nextProjectId) onSelectedProjectIdChange(nextProjectId)
-  }, [loading, onSelectedProjectIdChange, selectedProject, selectedProjectId])
+    if (selectedProjectId == null) {
+      // Nothing chosen yet — default to the first available project.
+      const nextProjectId = filteredProjects[0]?.id ?? null
+      if (nextProjectId !== selectedProjectId) onSelectedProjectIdChange(nextProjectId)
+      return
+    }
+    // Keep an explicit selection as long as it exists now or has resolved before,
+    // so a partial refresh (the Windows-only fast scan) or a search filter never
+    // silently reassigns the user to another project.
+    const knownNow = projects.some((project) => project.id === selectedProjectId)
+    const knownBefore = lastResolvedProjectRef.current?.id === selectedProjectId
+    if (knownNow || knownBefore) return
+    // A truly unknown id (e.g. a stale persisted selection for a deleted project):
+    // fall back to a sensible default so the UI isn't stuck on nothing.
+    const nextProjectId = filteredProjects[0]?.id ?? null
+    if (nextProjectId !== selectedProjectId) onSelectedProjectIdChange(nextProjectId)
+  }, [loading, onSelectedProjectIdChange, filteredProjects, projects, selectedProjectId])
 
   useEffect(() => {
     if (loading) return

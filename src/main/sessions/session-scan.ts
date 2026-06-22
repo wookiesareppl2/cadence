@@ -9,9 +9,11 @@ import { getClaudeSessionsForOrigins, getCodexSessionsForOrigins } from './sessi
 // preload bridge agree on one name.
 export const SESSIONS_UPDATED_CHANNEL = 'sessions:updated'
 
-// Short TTL: long enough that flipping between the Claude/Codex tabs (or a quick
-// re-poll) reuses the last full scan instead of re-reading the disk, short enough
-// that the 60s renderer poll always re-scans for fresh activity.
+// Short TTL marking how long a full scan is "fresh" enough to serve without
+// re-reading disk (e.g. flipping between the Claude/Codex tabs or a quick
+// re-poll). Past it, the next poll still serves the last complete list instantly
+// but kicks off a background re-scan for fresh activity (pushed over
+// SESSIONS_UPDATED_CHANNEL) — it never regresses to the partial Windows-only list.
 const CACHE_TTL_MS = 15_000
 
 type CacheEntry = { sessions: AssistantSession[]; expiresAt: number }
@@ -76,12 +78,18 @@ function runFullScan(
 }
 
 // Return the freshest available session list as fast as possible:
-//   - a warm full-scan cache, when present (instant tab switches / re-polls);
-//   - otherwise the Windows-only scan, while a background full scan (including slow
-//     WSL origins) refreshes the cache and pushes the complete list to the renderer
-//     over SESSIONS_UPDATED_CHANNEL.
+//   - a fresh full-scan cache, when present (instant tab switches / re-polls);
+//   - a stale-but-complete cache, served instantly while a background full scan
+//     refreshes it and pushes the updated list over SESSIONS_UPDATED_CHANNEL;
+//   - only on a true cold start (no full scan ever completed) the Windows-only
+//     scan, while a background full scan (including slow WSL origins) pushes the
+//     complete list.
 // When there are no remote origins, the single scan is already complete, so it is
 // cached and returned directly with no background pass or push.
+//
+// The stale-but-complete path matters: a routine re-poll must never hand the
+// renderer the partial Windows-only list, or WSL projects flicker out (and the
+// selection would briefly lose them) until the full scan lands.
 export async function scanSessions(platform: PlatformId, sender: WebContents): Promise<AssistantSession[]> {
   const cached = cache.get(platform)
   if (cached && cached.expiresAt > Date.now()) return cached.sessions
@@ -96,6 +104,15 @@ export async function scanSessions(platform: PlatformId, sender: WebContents): P
     return sessions
   }
 
+  // Stale cache present: serve the last complete list now, refresh in the
+  // background. No partial list is ever exposed on a routine re-poll.
+  if (cached) {
+    void runFullScan(platform, origins, sender)
+    return cached.sessions
+  }
+
+  // True cold start (no full scan yet): fast Windows-only first paint, then the
+  // background full scan pushes the complete list when it is ready.
   const fast = await scanForOrigins(platform, windowsOrigins)
   void runFullScan(platform, origins, sender)
   return fast
