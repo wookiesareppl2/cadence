@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { nodeExecutable } from '../node-runtime'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import type { UsageWindow } from '@shared/claude-plan-usage'
 import { retryAfterHeaderMs, UsageRateLimitError } from './usage-rate-limit'
@@ -10,9 +11,10 @@ import { retryAfterHeaderMs, UsageRateLimitError } from './usage-rate-limit'
 // plan usage works — no local-log scraping (those snapshots are only as fresh as
 // the user's last Codex run, so they can never be trusted as current).
 //
-// The actual HTTP call runs in a spawned system-Node worker because Electron's
-// bundled BoringSSL TLS stack is rejected by the backend edge with 403; system
-// Node (OpenSSL) is accepted. See codex-usage-worker.mjs.
+// The actual HTTP call runs in a spawned real-Node worker (a Node runtime bundled
+// with the app, or system `node` in dev — see node-runtime.ts) because Electron's
+// bundled BoringSSL TLS stack is rejected by the backend edge with 403; real Node
+// (OpenSSL) is accepted. See codex-usage-worker.mjs.
 const execFileAsync = promisify(execFile)
 const WORKER_TIMEOUT_MS = 20_000
 const USAGE_ENDPOINT = 'https://chatgpt.com/backend-api/codex/usage'
@@ -41,7 +43,7 @@ function workerPath(): string {
 }
 
 async function runWorkerProcess(command: WorkerCommand): Promise<string> {
-  const { stdout } = await execFileAsync('node', [workerPath(), command], {
+  const { stdout } = await execFileAsync(nodeExecutable(), [workerPath(), command], {
     timeout: WORKER_TIMEOUT_MS,
     windowsHide: true,
     maxBuffer: 1024 * 1024

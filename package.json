@@ -15,7 +15,7 @@
     "rebuild:native:electron": "electron-rebuild -f -o better-sqlite3",
     "rebuild:native:node": "pnpm rebuild better-sqlite3 @homebridge/node-pty-prebuilt-multiarch",
     "preview": "electron-vite preview",
-    "compile": "pnpm run rebuild:native:electron && electron-vite build && node scripts/copy-terminal-worker.mjs",
+    "compile": "pnpm run rebuild:native:electron && electron-vite build && node scripts/copy-terminal-worker.mjs && node scripts/fetch-node.mjs",
     "package": "pnpm run compile && electron-builder --dir",
     "dist": "pnpm run compile && electron-builder",
     "release": "node scripts/release.mjs"
@@ -84,6 +84,12 @@
       "icon": "build/icon.ico",
       "target": [
         "nsis"
+      ],
+      "extraResources": [
+        {
+          "from": "resources/node",
+          "to": "node"
+        }
       ]
     },
     "nsis": {

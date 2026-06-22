@@ -4,6 +4,8 @@ dist/
 out/
 release/
 coverage/
+# Bundled Node runtime fetched at package time (scripts/fetch-node.mjs)
+resources/node/
 *.log
 .DS_Store
 .env

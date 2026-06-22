@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { nodeExecutable } from '../node-runtime'
 import type { PlatformId } from '@shared/platform'
 import type { TerminalPlatform, TerminalStartResult } from '@shared/terminal'
 
@@ -113,7 +114,7 @@ function handleWorkerMessage(message: WorkerMessage): void {
 function ensureWorker(): ChildProcess {
   if (worker?.connected) return worker
 
-  const child = spawn('node', [workerPath()], {
+  const child = spawn(nodeExecutable(), [workerPath()], {
     cwd: terminalCwd(),
     env: {
       ...process.env,
