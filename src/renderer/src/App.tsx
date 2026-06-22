@@ -15,12 +15,21 @@ import { TerminalDeck, useTerminalDeck } from '@renderer/components/terminal-dec
 import type { TerminalTab } from '@renderer/components/terminal-deck'
 import { CheatSheet } from '@renderer/components/cheat-sheet'
 import { ProjectWorkspaceDock } from '@renderer/components/project-workspace'
-import { FileTreePanel } from '@renderer/components/file-tree'
+import { FileTreePanel, FilePreviewModal, FilePreviewPane } from '@renderer/components/file-tree'
+import { TitlebarSearch } from '@renderer/components/search/TitlebarSearch'
+import { MemoryView } from '@renderer/components/memory/MemoryView'
 import type { ClaudePlanUsage, PlanUsageRefreshMeta, UsageWindow } from '@shared/claude-plan-usage'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
 import { APP_NAME } from '@shared/brand'
 import type { AssistantSession, SessionOrigin } from '@shared/sessions'
+import type {
+  FileRequest,
+  ProjectFileChangedEvent,
+  ProjectFileWatchMode,
+  ProjectFileWatchRequest
+} from '@shared/project-files'
+import type { SearchResultItem } from '@shared/search'
 
 const PLAN_POLL_INTERVAL_MS = 60_000
 // Splash: keep it on screen long enough to read (no jarring flash on a warm cache),
@@ -33,6 +42,13 @@ const HISTORY_SIDEBAR_CLOSED_WIDTH = 32
 const HISTORY_SIDEBAR_MOTION_MS = 180
 const HISTORY_SIDEBAR_START_OFFSET_MS = -24
 const HISTORY_SIDEBAR_EASING = 'cubic-bezier(0.16, 1, 0.3, 1)'
+
+function getDetachedTerminalPlatform(): PlatformId | null {
+  const params = new URLSearchParams(window.location.search)
+  if (params.get('view') !== 'terminals') return null
+  const platform = params.get('platform')
+  return platform === 'claude' || platform === 'codex' ? platform : null
+}
 
 // Split the platform's flat terminal list into the selected session's terminals
 // (shown in the deck) and the rest, which stay alive in the background. The
@@ -294,10 +310,88 @@ type PlanUsageStates = {
   claude: PlanUsageState<ClaudePlanUsage>
   codex: PlanUsageState<CodexPlanUsage>
 }
+type FilePreviewSelection = {
+  projectId: string | null
+  request: FileRequest
+  highlight?: string
+  changeToken?: number
+}
+
+type ProjectFileChangeState = {
+  event: ProjectFileChangedEvent | null
+  sequence: number
+  mode: ProjectFileWatchMode | null
+  error: string | null
+}
+
+function sameWatchRoot(a: ProjectFileWatchRequest | null, b: ProjectFileWatchRequest | null): boolean {
+  return Boolean(a && b && a.rootPath === b.rootPath && (a.distro ?? null) === (b.distro ?? null))
+}
+
+function useProjectFileWatcher(
+  root: ProjectFileWatchRequest | null,
+  active: boolean
+): ProjectFileChangeState {
+  const [state, setState] = useState<ProjectFileChangeState>({
+    event: null,
+    sequence: 0,
+    mode: null,
+    error: null
+  })
+
+  useEffect(() => {
+    if (!active || !root?.rootPath) {
+      window.dashboard?.projectFiles?.unwatch?.()
+      setState((current) => ({ ...current, mode: null, error: null }))
+      return
+    }
+
+    let cancelled = false
+    const remove = window.dashboard.projectFiles.onChanged((event) => {
+      if (!sameWatchRoot(event, root)) return
+      setState((current) => ({ ...current, event, sequence: current.sequence + 1, error: null }))
+    })
+
+    window.dashboard.projectFiles
+      .watch(root)
+      .then((result) => {
+        if (cancelled) return
+        setState((current) => ({
+          ...current,
+          mode: result.mode ?? null,
+          error: result.ok ? null : result.error ?? 'Could not watch project files'
+        }))
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return
+        setState((current) => ({
+          ...current,
+          mode: null,
+          error: error instanceof Error ? error.message : 'Could not watch project files'
+        }))
+      })
+
+    return () => {
+      cancelled = true
+      remove()
+      window.dashboard.projectFiles.unwatch()
+    }
+  }, [active, root?.rootPath, root?.distro])
+
+  return state
+}
 
 export function App(): JSX.Element {
+  const detachedTerminalPlatform = getDetachedTerminalPlatform()
+  if (detachedTerminalPlatform) return <DetachedTerminalWindow platform={detachedTerminalPlatform} />
+
+  return <DashboardApp />
+}
+
+function DashboardApp(): JSX.Element {
   const [platform, setPlatform] = useState<PlatformId>('claude')
   const [cheatSheetOpen, setCheatSheetOpen] = useState(false)
+  const [memoryOpen, setMemoryOpen] = useState(false)
   const planUsageStates = usePlanUsagePolling()
   const [selectedSessionIds, setSelectedSessionIds] = usePersistentState<Record<PlatformId, string | null>>(
     'selection:sessions:v1',
@@ -328,7 +422,67 @@ export function App(): JSX.Element {
     'selection:files-panel:v1',
     { claude: false, codex: false }
   )
+  const [terminalDetached, setTerminalDetached] = usePersistentState<Record<PlatformId, boolean>>(
+    'selection:terminal-detached:v1',
+    { claude: false, codex: false }
+  )
+  const [previewFollowEdits, setPreviewFollowEdits] = usePersistentState<Record<PlatformId, boolean>>(
+    'selection:file-preview-follow-edits:v1',
+    { claude: true, codex: true }
+  )
+  const [filePreviewSelections, setFilePreviewSelections] = useState<Record<PlatformId, FilePreviewSelection | null>>({
+    claude: null,
+    codex: null
+  })
   const activePlatform = PLATFORM_CONFIG[platform]
+
+  // A file result from global search opens the shared preview modal at the app
+  // level (decoupled from the file tree), so search can preview any project file
+  // and highlight the term that was searched for.
+  const [searchPreview, setSearchPreview] = useState<{
+    request: FileRequest
+    highlight: string
+    scrollToLine?: number
+  } | null>(null)
+
+  const handleSearchActivate = useCallback(
+    (item: SearchResultItem, query: string) => {
+      if (item.kind === 'project') {
+        setSelectedProjectIds((current) => ({ ...current, [platform]: item.projectId }))
+        return
+      }
+      if (item.kind === 'session') {
+        setSelectedProjectIds((current) => ({ ...current, [platform]: item.projectId }))
+        setSelectedSessionIds((current) => ({ ...current, [platform]: item.sessionId ?? null }))
+        return
+      }
+      if (item.kind === 'history') {
+        setSelectedProjectIds((current) => ({ ...current, [platform]: item.projectId }))
+        setSelectedSessionIds((current) => ({ ...current, [platform]: item.sessionId ?? null }))
+        setHistorySidebarOpen((current) => ({ ...current, [platform]: true }))
+        return
+      }
+      if (item.kind === 'file' && item.file) {
+        setSelectedProjectIds((current) => ({ ...current, [platform]: item.projectId }))
+        if (terminalDetached[platform]) {
+          setFilePreviewSelections((current) => ({
+            ...current,
+            [platform]: { projectId: item.projectId, request: item.file, highlight: query }
+          }))
+        } else {
+          setSearchPreview({ request: item.file, highlight: query })
+        }
+      }
+    },
+    [platform, setHistorySidebarOpen, setSelectedProjectIds, setSelectedSessionIds, terminalDetached]
+  )
+
+  // A file clicked inside an (attached) terminal session opens in the shared
+  // preview modal — same surface global search uses, with no search highlight,
+  // optionally scrolled to the line parsed from a `file.ts:42` mention.
+  const openTerminalFile = useCallback((request: FileRequest, line?: number) => {
+    setSearchPreview({ request, highlight: '', scrollToLine: line })
+  }, [])
 
   // Splash gate: shown until the active platform's first session scan resolves.
   // Set once and never reset, so switching platforms later never re-shows it.
@@ -401,6 +555,37 @@ export function App(): JSX.Element {
     setFilesPanelOpen((current) => ({ ...current, codex: !current.codex }))
   }, [setFilesPanelOpen])
 
+  const detachTerminals = useCallback(
+    (targetPlatform: PlatformId) => {
+      setTerminalDetached((current) =>
+        current[targetPlatform] ? current : { ...current, [targetPlatform]: true }
+      )
+      window.dashboard.terminal.openDetached(targetPlatform).catch(() => {
+        setTerminalDetached((current) => ({ ...current, [targetPlatform]: false }))
+      })
+    },
+    [setTerminalDetached]
+  )
+
+  const openDetachedTerminals = useCallback(
+    (targetPlatform: PlatformId) => {
+      setTerminalDetached((current) =>
+        current[targetPlatform] ? current : { ...current, [targetPlatform]: true }
+      )
+      window.dashboard.terminal.openDetached(targetPlatform).catch(() => undefined)
+    },
+    [setTerminalDetached]
+  )
+
+  const attachTerminals = useCallback(
+    (targetPlatform: PlatformId) => {
+      setTerminalDetached((current) =>
+        current[targetPlatform] ? { ...current, [targetPlatform]: false } : current
+      )
+    },
+    [setTerminalDetached]
+  )
+
   const activePanelStates = useMemo(
     () => [
       sessionDetailOpen[platform],
@@ -440,13 +625,25 @@ export function App(): JSX.Element {
         platform={platform}
         onPlatformChange={setPlatform}
         cheatSheetOpen={cheatSheetOpen}
-        onToggleCheatSheet={() => setCheatSheetOpen((open) => !open)}
+        onToggleCheatSheet={() => {
+          setCheatSheetOpen((open) => !open)
+          setMemoryOpen(false)
+        }}
+        memoryOpen={memoryOpen}
+        onToggleMemory={() => {
+          setMemoryOpen((open) => !open)
+          setCheatSheetOpen(false)
+        }}
         panelsAllCollapsed={activePanelsAllCollapsed}
         panelsAllExpanded={activePanelsAllExpanded}
         onCollapseAllPanels={() => setActivePlatformPanelsOpen(false)}
         onExpandAllPanels={() => setActivePlatformPanelsOpen(true)}
+        selectedProjectId={selectedProjectIds[platform]}
+        onSearchActivate={handleSearchActivate}
       />
-      {cheatSheetOpen ? (
+      {memoryOpen ? (
+        <MemoryView platform={platform} projectId={selectedProjectIds[platform]} onClose={() => setMemoryOpen(false)} />
+      ) : cheatSheetOpen ? (
         <CheatSheet onClose={() => setCheatSheetOpen(false)} />
       ) : platform === 'claude' ? (
         <ClaudeWorkspace
@@ -458,12 +655,25 @@ export function App(): JSX.Element {
           historySidebarOpen={historySidebarOpen.claude}
           workspaceDockOpen={workspaceDockOpen.claude}
           filesPanelOpen={filesPanelOpen.claude}
+          terminalsDetached={terminalDetached.claude}
+          followEdits={previewFollowEdits.claude}
+          previewSelection={filePreviewSelections.claude}
           onSelectedProjectIdChange={selectClaudeProject}
           onSelectedSessionIdChange={selectClaudeSession}
           onToggleSessionDetail={toggleClaudeSessionDetail}
           onToggleHistorySidebar={toggleClaudeHistorySidebar}
           onToggleWorkspaceDock={toggleClaudeWorkspaceDock}
           onToggleFilesPanel={toggleClaudeFilesPanel}
+          onPreviewFile={(selection) =>
+            setFilePreviewSelections((current) => ({ ...current, claude: selection }))
+          }
+          onOpenTerminalFile={openTerminalFile}
+          onToggleFollowEdits={() =>
+            setPreviewFollowEdits((current) => ({ ...current, claude: !current.claude }))
+          }
+          onDetachTerminals={() => detachTerminals('claude')}
+          onOpenDetachedTerminals={() => openDetachedTerminals('claude')}
+          onAttachTerminals={() => attachTerminals('claude')}
         />
       ) : (
         <CodexWorkspace
@@ -475,14 +685,149 @@ export function App(): JSX.Element {
           historySidebarOpen={historySidebarOpen.codex}
           workspaceDockOpen={workspaceDockOpen.codex}
           filesPanelOpen={filesPanelOpen.codex}
+          terminalsDetached={terminalDetached.codex}
+          followEdits={previewFollowEdits.codex}
+          previewSelection={filePreviewSelections.codex}
           onSelectedProjectIdChange={selectCodexProject}
           onSelectedSessionIdChange={selectCodexSession}
           onToggleSessionDetail={toggleCodexSessionDetail}
           onToggleHistorySidebar={toggleCodexHistorySidebar}
           onToggleWorkspaceDock={toggleCodexWorkspaceDock}
           onToggleFilesPanel={toggleCodexFilesPanel}
+          onPreviewFile={(selection) =>
+            setFilePreviewSelections((current) => ({ ...current, codex: selection }))
+          }
+          onOpenTerminalFile={openTerminalFile}
+          onToggleFollowEdits={() =>
+            setPreviewFollowEdits((current) => ({ ...current, codex: !current.codex }))
+          }
+          onDetachTerminals={() => detachTerminals('codex')}
+          onOpenDetachedTerminals={() => openDetachedTerminals('codex')}
+          onAttachTerminals={() => attachTerminals('codex')}
         />
       )}
+      {searchPreview ? (
+        <FilePreviewModal
+          request={searchPreview.request}
+          highlight={searchPreview.highlight}
+          scrollToLine={searchPreview.scrollToLine}
+          onOpenExternally={() => window.dashboard.projectFiles.open(searchPreview.request)}
+          onClose={() => setSearchPreview(null)}
+        />
+      ) : null}
+    </div>
+  )
+}
+
+function DetachedTerminalWindow({ platform }: { platform: PlatformId }): JSX.Element {
+  const platformConfig = PLATFORM_CONFIG[platform]
+  const [selectedSessionIds, setSelectedSessionIds] = usePersistentState<Record<PlatformId, string | null>>(
+    'selection:sessions:v1',
+    { claude: null, codex: null },
+    (value) => ({
+      claude: isPendingSessionId(value.claude) ? null : value.claude,
+      codex: isPendingSessionId(value.codex) ? null : value.codex
+    })
+  )
+  const [selectedProjectIds, setSelectedProjectIds] = usePersistentState<Record<PlatformId, string | null>>(
+    'selection:projects:v1',
+    { claude: null, codex: null }
+  )
+  const [, setTerminalDetached] = usePersistentState<Record<PlatformId, boolean>>(
+    'selection:terminal-detached:v1',
+    { claude: false, codex: false }
+  )
+
+  const selectSession = useCallback(
+    (sessionId: string | null) => {
+      setSelectedSessionIds((current) =>
+        current[platform] === sessionId ? current : { ...current, [platform]: sessionId }
+      )
+    },
+    [platform, setSelectedSessionIds]
+  )
+  const selectProject = useCallback(
+    (projectId: string | null) => {
+      setSelectedProjectIds((current) =>
+        current[platform] === projectId ? current : { ...current, [platform]: projectId }
+      )
+    },
+    [platform, setSelectedProjectIds]
+  )
+  const attachHere = useCallback(() => {
+    setTerminalDetached((current) => ({ ...current, [platform]: false }))
+    window.dashboard.window.close()
+  }, [platform, setTerminalDetached])
+
+  const sessionBrowser = useProjectSessionBrowserState({
+    platform,
+    selectedProjectId: selectedProjectIds[platform],
+    selectedSessionId: selectedSessionIds[platform],
+    onSelectedProjectIdChange: selectProject,
+    onSelectedSessionIdChange: selectSession
+  })
+  const {
+    visibleTabs,
+    backgroundTabCount,
+    backgroundSessionCount,
+    addTerminal,
+    closeTerminal
+  } = useSessionScopedTerminals(platform, sessionBrowser, selectedSessionIds[platform], selectSession)
+  const cssVars = useMemo(
+    () =>
+      ({
+        '--accent': platformConfig.accent,
+        '--accent-dim': platformConfig.accentDim,
+        '--accent-hover': platformConfig.accentHover
+      }) as React.CSSProperties,
+    [platformConfig]
+  )
+
+  // A file clicked inside a detached terminal previews in this window's own modal
+  // (the main-window preview pane lives in a different process/window).
+  const [filePreview, setFilePreview] = useState<{ request: FileRequest; line?: number } | null>(null)
+
+  return (
+    <div className="app-shell detached-terminal-shell" style={cssVars} data-platform={platform}>
+      <header className="detached-terminal-titlebar">
+        <div className="detached-terminal-heading">
+          <CadenceMark className="titlebar-logo" />
+          <span>{platformConfig.label} Terminals</span>
+          <span className="detached-terminal-project">
+            {sessionBrowser.selectedProject?.name ?? 'No project selected'}
+          </span>
+        </div>
+        <div className="detached-terminal-actions">
+          <button type="button" className="terminal-action" onClick={attachHere}>
+            Attach to main
+          </button>
+        </div>
+        <WindowControls />
+      </header>
+      <main className="detached-terminal-body">
+        <TerminalDeck
+          platform={platform}
+          tabs={visibleTabs}
+          defaultCwd={sessionBrowser.selectedProject?.path ?? null}
+          defaultWslDistro={sessionBrowser.selectedProject?.origin?.distro ?? null}
+          projectName={sessionBrowser.selectedProject?.name ?? null}
+          statusLabel="detached"
+          loading={sessionBrowser.loading && !sessionBrowser.selectedProject}
+          backgroundTabCount={backgroundTabCount}
+          backgroundSessionCount={backgroundSessionCount}
+          onAdd={addTerminal}
+          onClose={closeTerminal}
+          onOpenFile={(request, line) => setFilePreview({ request, line })}
+        />
+      </main>
+      {filePreview ? (
+        <FilePreviewModal
+          request={filePreview.request}
+          scrollToLine={filePreview.line}
+          onOpenExternally={() => window.dashboard.projectFiles.open(filePreview.request)}
+          onClose={() => setFilePreview(null)}
+        />
+      ) : null}
     </div>
   )
 }
@@ -492,19 +837,27 @@ function Titlebar({
   onPlatformChange,
   cheatSheetOpen,
   onToggleCheatSheet,
+  memoryOpen,
+  onToggleMemory,
   panelsAllCollapsed,
   panelsAllExpanded,
   onCollapseAllPanels,
-  onExpandAllPanels
+  onExpandAllPanels,
+  selectedProjectId,
+  onSearchActivate
 }: {
   platform: PlatformId
   onPlatformChange: (platform: PlatformId) => void
   cheatSheetOpen: boolean
   onToggleCheatSheet: () => void
+  memoryOpen: boolean
+  onToggleMemory: () => void
   panelsAllCollapsed: boolean
   panelsAllExpanded: boolean
   onCollapseAllPanels: () => void
   onExpandAllPanels: () => void
+  selectedProjectId: string | null
+  onSearchActivate: (item: SearchResultItem, query: string) => void
 }): JSX.Element {
   const [version, setVersion] = useState<string>('')
   const platformLabel = PLATFORM_CONFIG[platform].label
@@ -522,36 +875,6 @@ function Titlebar({
           </span>
         ) : null}
       </div>
-      <button
-        type="button"
-        className={`titlebar-action ${cheatSheetOpen ? 'active' : ''}`}
-        aria-pressed={cheatSheetOpen}
-        onClick={onToggleCheatSheet}
-        title="Terminal commands cheat sheet"
-      >
-        <span className="titlebar-action-glyph" aria-hidden="true">{'>_'}</span>
-        Commands
-      </button>
-      <div className="panel-layout-actions" role="group" aria-label={`${platformLabel} panel layout`}>
-        <button
-          type="button"
-          className="panel-layout-action"
-          onClick={onCollapseAllPanels}
-          disabled={panelsAllCollapsed}
-          title={`Collapse all ${platformLabel} panels`}
-        >
-          Collapse all
-        </button>
-        <button
-          type="button"
-          className="panel-layout-action"
-          onClick={onExpandAllPanels}
-          disabled={panelsAllExpanded}
-          title={`Expand all ${platformLabel} panels`}
-        >
-          Expand all
-        </button>
-      </div>
       <div className="platform-switcher" role="tablist" aria-label="Platform">
         {Object.values(PLATFORM_CONFIG).map((item) => (
           <button
@@ -566,18 +889,67 @@ function Titlebar({
           </button>
         ))}
       </div>
-      <div className="window-controls">
-        <button type="button" aria-label="Minimize" onClick={() => window.dashboard.window.minimize()}>
-          <span className="window-control-icon minimize-icon" aria-hidden="true" />
+      <div className="titlebar-right">
+        <div className="panel-layout-actions" role="group" aria-label={`${platformLabel} panel layout`}>
+          <button
+            type="button"
+            className="panel-layout-action"
+            onClick={onCollapseAllPanels}
+            disabled={panelsAllCollapsed}
+            title={`Collapse all ${platformLabel} panels`}
+          >
+            Collapse all
+          </button>
+          <button
+            type="button"
+            className="panel-layout-action"
+            onClick={onExpandAllPanels}
+            disabled={panelsAllExpanded}
+            title={`Expand all ${platformLabel} panels`}
+          >
+            Expand all
+          </button>
+        </div>
+        <button
+          type="button"
+          className={`titlebar-action ${memoryOpen ? 'active' : ''}`}
+          aria-pressed={memoryOpen}
+          onClick={onToggleMemory}
+          title="Project memory & context"
+        >
+          <span className="titlebar-action-glyph" aria-hidden="true">{'⛁'}</span>
+          Memory
         </button>
-        <button type="button" aria-label="Maximize" onClick={() => window.dashboard.window.toggleMaximize()}>
-          <span className="window-control-icon maximize-icon" aria-hidden="true" />
+        <button
+          type="button"
+          className={`titlebar-action ${cheatSheetOpen ? 'active' : ''}`}
+          aria-pressed={cheatSheetOpen}
+          onClick={onToggleCheatSheet}
+          title="Terminal commands cheat sheet"
+        >
+          <span className="titlebar-action-glyph" aria-hidden="true">{'>_'}</span>
+          Commands
         </button>
-        <button type="button" aria-label="Close" className="close" onClick={() => window.dashboard.window.close()}>
-          <span className="window-control-icon close-icon" aria-hidden="true" />
-        </button>
+        <TitlebarSearch platform={platform} projectId={selectedProjectId} onActivate={onSearchActivate} />
       </div>
+      <WindowControls />
     </header>
+  )
+}
+
+function WindowControls(): JSX.Element {
+  return (
+    <div className="window-controls">
+      <button type="button" aria-label="Minimize" onClick={() => window.dashboard.window.minimize()}>
+        <span className="window-control-icon minimize-icon" aria-hidden="true" />
+      </button>
+      <button type="button" aria-label="Maximize" onClick={() => window.dashboard.window.toggleMaximize()}>
+        <span className="window-control-icon maximize-icon" aria-hidden="true" />
+      </button>
+      <button type="button" aria-label="Close" className="close" onClick={() => window.dashboard.window.close()}>
+        <span className="window-control-icon close-icon" aria-hidden="true" />
+      </button>
+    </div>
   )
 }
 
@@ -665,6 +1037,24 @@ function usePersistentState<T extends object>(
     }
     return fallback
   })
+
+  useEffect(() => {
+    const handleStorage = (event: StorageEvent): void => {
+      if (event.storageArea !== window.localStorage || event.key !== key) return
+      try {
+        const next = event.newValue
+          ? ({ ...fallback, ...(JSON.parse(event.newValue) as Partial<T>) } as T)
+          : fallback
+        const revived = revive ? revive(next) : next
+        setValue((current) => (JSON.stringify(current) === JSON.stringify(revived) ? current : revived))
+      } catch {
+        setValue(fallback)
+      }
+    }
+
+    window.addEventListener('storage', handleStorage)
+    return () => window.removeEventListener('storage', handleStorage)
+  }, [key, revive])
 
   useEffect(() => {
     try {
@@ -924,12 +1314,21 @@ function ClaudeWorkspace({
   historySidebarOpen,
   workspaceDockOpen,
   filesPanelOpen,
+  terminalsDetached,
+  followEdits,
+  previewSelection,
   onSelectedProjectIdChange,
   onSelectedSessionIdChange,
   onToggleSessionDetail,
   onToggleHistorySidebar,
   onToggleWorkspaceDock,
-  onToggleFilesPanel
+  onToggleFilesPanel,
+  onPreviewFile,
+  onOpenTerminalFile,
+  onToggleFollowEdits,
+  onDetachTerminals,
+  onOpenDetachedTerminals,
+  onAttachTerminals
 }: {
   onReady: () => void
   usageState: PlanUsageState<ClaudePlanUsage>
@@ -939,12 +1338,21 @@ function ClaudeWorkspace({
   historySidebarOpen: boolean
   workspaceDockOpen: boolean
   filesPanelOpen: boolean
+  terminalsDetached: boolean
+  followEdits: boolean
+  previewSelection: FilePreviewSelection | null
   onSelectedProjectIdChange: (projectId: string | null) => void
   onSelectedSessionIdChange: (sessionId: string | null) => void
   onToggleSessionDetail: () => void
   onToggleHistorySidebar: () => void
   onToggleWorkspaceDock: () => void
   onToggleFilesPanel: () => void
+  onPreviewFile: (selection: FilePreviewSelection) => void
+  onOpenTerminalFile: (request: FileRequest, line?: number) => void
+  onToggleFollowEdits: () => void
+  onDetachTerminals: () => void
+  onOpenDetachedTerminals: () => void
+  onAttachTerminals: () => void
 }): JSX.Element {
   const { planUsage, planError } = usageState
   const sessionBrowser = useProjectSessionBrowserState({
@@ -976,6 +1384,61 @@ function ClaudeWorkspace({
     onToggleHistorySidebar
   )
   const newSession = isPendingSessionId(selectedSessionId)
+  const selectedProject = sessionBrowser.selectedProject
+  const watchRoot = useMemo<ProjectFileWatchRequest | null>(
+    () =>
+      selectedProject?.path
+        ? { rootPath: selectedProject.path, distro: selectedProject.origin?.distro ?? null }
+        : null,
+    [selectedProject]
+  )
+  const fileChangeState = useProjectFileWatcher(watchRoot, terminalsDetached && followEdits)
+  const activePreview = previewSelection?.projectId === selectedProject?.id ? previewSelection : null
+  const previewExtraActions = (
+    <>
+      <button type="button" onClick={onOpenDetachedTerminals}>
+        Open detached
+      </button>
+      <button type="button" onClick={onAttachTerminals}>
+        Show terminals here
+      </button>
+    </>
+  )
+
+  const handlePreviewFile = useCallback(
+    (relPath: string) => {
+      if (!selectedProject?.path) return
+      onPreviewFile({
+        projectId: selectedProject.id,
+        request: {
+          rootPath: selectedProject.path,
+          distro: selectedProject.origin?.distro ?? null,
+          relPath
+        }
+      })
+    },
+    [onPreviewFile, selectedProject]
+  )
+
+  // Auto-follow: react only to genuinely new watcher events. `onPreviewFile` is a
+  // fresh closure on every App render, so without this per-sequence guard the
+  // effect would re-run on every incidental re-render (e.g. opening a search
+  // result) while an event is present and loop setState → render → setState.
+  const lastFollowedSequenceRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (!terminalsDetached || !followEdits || !selectedProject?.id || !fileChangeState.event) return
+    if (lastFollowedSequenceRef.current === fileChangeState.sequence) return
+    lastFollowedSequenceRef.current = fileChangeState.sequence
+    onPreviewFile({
+      projectId: selectedProject.id,
+      request: {
+        rootPath: fileChangeState.event.rootPath,
+        distro: fileChangeState.event.distro,
+        relPath: fileChangeState.event.relPath
+      },
+      changeToken: fileChangeState.sequence
+    })
+  }, [fileChangeState.event, fileChangeState.sequence, followEdits, onPreviewFile, selectedProject, terminalsDetached])
 
   const statusLabel = planError
     ? 'error'
@@ -1014,6 +1477,7 @@ function ClaudeWorkspace({
             projectName={sessionBrowser.selectedProject?.name ?? null}
             open={filesPanelOpen}
             onToggle={onToggleFilesPanel}
+            onPreviewFile={terminalsDetached ? handlePreviewFile : undefined}
           />
           <div className="main-stack">
             <SessionDetailAccordion
@@ -1022,18 +1486,39 @@ function ClaudeWorkspace({
               open={sessionDetailOpen}
               onToggle={onToggleSessionDetail}
             />
-            <TerminalDeck
-              platform="claude"
-              tabs={visibleTabs}
-              defaultCwd={sessionBrowser.selectedProject?.path ?? null}
-              defaultWslDistro={sessionBrowser.selectedProject?.origin?.distro ?? null}
-              projectName={sessionBrowser.selectedProject?.name ?? null}
-              statusLabel={statusLabel}
-              backgroundTabCount={backgroundTabCount}
-              backgroundSessionCount={backgroundSessionCount}
-              onAdd={handleAddTerminal}
-              onClose={closeTerminal}
-            />
+            {terminalsDetached ? (
+              <FilePreviewPane
+                request={activePreview?.request ?? null}
+                highlight={activePreview?.highlight}
+                followEdits={followEdits}
+                watchMode={fileChangeState.mode}
+                watchError={fileChangeState.error}
+                changeToken={activePreview?.changeToken}
+                onToggleFollowEdits={onToggleFollowEdits}
+                extraActions={previewExtraActions}
+                onOpenExternally={() =>
+                  activePreview
+                    ? window.dashboard.projectFiles.open(activePreview.request)
+                    : Promise.resolve({ ok: false, error: 'No file selected' })
+                }
+              />
+            ) : (
+              <TerminalDeck
+                platform="claude"
+                tabs={visibleTabs}
+                defaultCwd={sessionBrowser.selectedProject?.path ?? null}
+                defaultWslDistro={sessionBrowser.selectedProject?.origin?.distro ?? null}
+                projectName={sessionBrowser.selectedProject?.name ?? null}
+                statusLabel={statusLabel}
+                loading={sessionBrowser.loading && !sessionBrowser.selectedProject}
+                backgroundTabCount={backgroundTabCount}
+                backgroundSessionCount={backgroundSessionCount}
+                onAdd={handleAddTerminal}
+                onClose={closeTerminal}
+                onOpenFile={onOpenTerminalFile}
+                onDetach={onDetachTerminals}
+              />
+            )}
             <ProjectWorkspaceDock
               projectId={sessionBrowser.selectedProject?.id ?? null}
               projectName={sessionBrowser.selectedProject?.name ?? null}
@@ -1063,12 +1548,21 @@ function CodexWorkspace({
   historySidebarOpen,
   workspaceDockOpen,
   filesPanelOpen,
+  terminalsDetached,
+  followEdits,
+  previewSelection,
   onSelectedProjectIdChange,
   onSelectedSessionIdChange,
   onToggleSessionDetail,
   onToggleHistorySidebar,
   onToggleWorkspaceDock,
-  onToggleFilesPanel
+  onToggleFilesPanel,
+  onPreviewFile,
+  onOpenTerminalFile,
+  onToggleFollowEdits,
+  onDetachTerminals,
+  onOpenDetachedTerminals,
+  onAttachTerminals
 }: {
   onReady: () => void
   usageState: PlanUsageState<CodexPlanUsage>
@@ -1078,12 +1572,21 @@ function CodexWorkspace({
   historySidebarOpen: boolean
   workspaceDockOpen: boolean
   filesPanelOpen: boolean
+  terminalsDetached: boolean
+  followEdits: boolean
+  previewSelection: FilePreviewSelection | null
   onSelectedProjectIdChange: (projectId: string | null) => void
   onSelectedSessionIdChange: (sessionId: string | null) => void
   onToggleSessionDetail: () => void
   onToggleHistorySidebar: () => void
   onToggleWorkspaceDock: () => void
   onToggleFilesPanel: () => void
+  onPreviewFile: (selection: FilePreviewSelection) => void
+  onOpenTerminalFile: (request: FileRequest, line?: number) => void
+  onToggleFollowEdits: () => void
+  onDetachTerminals: () => void
+  onOpenDetachedTerminals: () => void
+  onAttachTerminals: () => void
 }): JSX.Element {
   const { planUsage, planError } = usageState
   const sessionBrowser = useProjectSessionBrowserState({
@@ -1115,6 +1618,61 @@ function CodexWorkspace({
     onToggleHistorySidebar
   )
   const newSession = isPendingSessionId(selectedSessionId)
+  const selectedProject = sessionBrowser.selectedProject
+  const watchRoot = useMemo<ProjectFileWatchRequest | null>(
+    () =>
+      selectedProject?.path
+        ? { rootPath: selectedProject.path, distro: selectedProject.origin?.distro ?? null }
+        : null,
+    [selectedProject]
+  )
+  const fileChangeState = useProjectFileWatcher(watchRoot, terminalsDetached && followEdits)
+  const activePreview = previewSelection?.projectId === selectedProject?.id ? previewSelection : null
+  const previewExtraActions = (
+    <>
+      <button type="button" onClick={onOpenDetachedTerminals}>
+        Open detached
+      </button>
+      <button type="button" onClick={onAttachTerminals}>
+        Show terminals here
+      </button>
+    </>
+  )
+
+  const handlePreviewFile = useCallback(
+    (relPath: string) => {
+      if (!selectedProject?.path) return
+      onPreviewFile({
+        projectId: selectedProject.id,
+        request: {
+          rootPath: selectedProject.path,
+          distro: selectedProject.origin?.distro ?? null,
+          relPath
+        }
+      })
+    },
+    [onPreviewFile, selectedProject]
+  )
+
+  // Auto-follow: react only to genuinely new watcher events. `onPreviewFile` is a
+  // fresh closure on every App render, so without this per-sequence guard the
+  // effect would re-run on every incidental re-render (e.g. opening a search
+  // result) while an event is present and loop setState → render → setState.
+  const lastFollowedSequenceRef = useRef<number | null>(null)
+  useEffect(() => {
+    if (!terminalsDetached || !followEdits || !selectedProject?.id || !fileChangeState.event) return
+    if (lastFollowedSequenceRef.current === fileChangeState.sequence) return
+    lastFollowedSequenceRef.current = fileChangeState.sequence
+    onPreviewFile({
+      projectId: selectedProject.id,
+      request: {
+        rootPath: fileChangeState.event.rootPath,
+        distro: fileChangeState.event.distro,
+        relPath: fileChangeState.event.relPath
+      },
+      changeToken: fileChangeState.sequence
+    })
+  }, [fileChangeState.event, fileChangeState.sequence, followEdits, onPreviewFile, selectedProject, terminalsDetached])
   const statusLabel = planError ? 'usage error' : planUsage ? 'live' : 'connecting'
 
   return (
@@ -1148,6 +1706,7 @@ function CodexWorkspace({
             projectName={sessionBrowser.selectedProject?.name ?? null}
             open={filesPanelOpen}
             onToggle={onToggleFilesPanel}
+            onPreviewFile={terminalsDetached ? handlePreviewFile : undefined}
           />
           <div className="main-stack">
             <SessionDetailAccordion
@@ -1156,18 +1715,39 @@ function CodexWorkspace({
               open={sessionDetailOpen}
               onToggle={onToggleSessionDetail}
             />
-            <TerminalDeck
-              platform="codex"
-              tabs={visibleTabs}
-              defaultCwd={sessionBrowser.selectedProject?.path ?? null}
-              defaultWslDistro={sessionBrowser.selectedProject?.origin?.distro ?? null}
-              projectName={sessionBrowser.selectedProject?.name ?? null}
-              statusLabel={statusLabel}
-              backgroundTabCount={backgroundTabCount}
-              backgroundSessionCount={backgroundSessionCount}
-              onAdd={handleAddTerminal}
-              onClose={closeTerminal}
-            />
+            {terminalsDetached ? (
+              <FilePreviewPane
+                request={activePreview?.request ?? null}
+                highlight={activePreview?.highlight}
+                followEdits={followEdits}
+                watchMode={fileChangeState.mode}
+                watchError={fileChangeState.error}
+                changeToken={activePreview?.changeToken}
+                onToggleFollowEdits={onToggleFollowEdits}
+                extraActions={previewExtraActions}
+                onOpenExternally={() =>
+                  activePreview
+                    ? window.dashboard.projectFiles.open(activePreview.request)
+                    : Promise.resolve({ ok: false, error: 'No file selected' })
+                }
+              />
+            ) : (
+              <TerminalDeck
+                platform="codex"
+                tabs={visibleTabs}
+                defaultCwd={sessionBrowser.selectedProject?.path ?? null}
+                defaultWslDistro={sessionBrowser.selectedProject?.origin?.distro ?? null}
+                projectName={sessionBrowser.selectedProject?.name ?? null}
+                statusLabel={statusLabel}
+                loading={sessionBrowser.loading && !sessionBrowser.selectedProject}
+                backgroundTabCount={backgroundTabCount}
+                backgroundSessionCount={backgroundSessionCount}
+                onAdd={handleAddTerminal}
+                onClose={closeTerminal}
+                onOpenFile={onOpenTerminalFile}
+                onDetach={onDetachTerminals}
+              />
+            )}
             <ProjectWorkspaceDock
               projectId={sessionBrowser.selectedProject?.id ?? null}
               projectName={sessionBrowser.selectedProject?.name ?? null}

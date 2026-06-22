@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { clipboard, contextBridge, ipcRenderer } from 'electron'
 import type { ClaudePlanUsage } from '@shared/claude-plan-usage'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import type { PlatformId } from '@shared/platform'
@@ -10,7 +10,19 @@ import type {
 } from '@shared/sessions'
 import type { SessionMetadata } from '@shared/session-metadata'
 import type { ProjectWorkspace } from '@shared/project-workspace'
-import type { DirListing, FileKind, FileOpResult, FilePreview, FileRequest } from '@shared/project-files'
+import type {
+  DirListing,
+  FileKind,
+  FileOpResult,
+  FilePreview,
+  FileRequest,
+  ProjectFileStat,
+  ProjectFileChangedEvent,
+  ProjectFileWatchRequest,
+  ProjectFileWatchResult
+} from '@shared/project-files'
+import type { SearchQuery, SearchResults } from '@shared/search'
+import type { MemoryFileContent, MemoryWriteResult, ProjectMemory } from '@shared/memory'
 import type { TerminalDataEvent, TerminalPlatform, TerminalStartResult } from '@shared/terminal'
 import type { ClaudeUsageSummary } from '@shared/usage'
 import type { Workspace } from '@shared/workspaces'
@@ -24,6 +36,10 @@ const api = {
   app: {
     platform: process.platform,
     getVersion: (): Promise<string> => ipcRenderer.invoke('app:version')
+  },
+  clipboard: {
+    readText: (): string => clipboard.readText(),
+    writeText: (text: string): void => clipboard.writeText(text)
   },
   usage: {
     getClaudeSummary: (): Promise<ClaudeUsageSummary> => ipcRenderer.invoke('usage:claude-summary'),
@@ -55,6 +71,17 @@ const api = {
       return () => ipcRenderer.removeListener('sessions:updated', listener)
     }
   },
+  search: {
+    query: (query: SearchQuery): Promise<SearchResults> => ipcRenderer.invoke('search:query', query)
+  },
+  memory: {
+    list: (platform: PlatformId, projectId: string | null): Promise<ProjectMemory> =>
+      ipcRenderer.invoke('memory:list', platform, projectId),
+    read: (platform: PlatformId, projectId: string | null, id: string): Promise<MemoryFileContent> =>
+      ipcRenderer.invoke('memory:read', platform, projectId, id),
+    write: (platform: PlatformId, projectId: string | null, id: string, text: string): Promise<MemoryWriteResult> =>
+      ipcRenderer.invoke('memory:write', platform, projectId, id, text)
+  },
   workspaces: {
     list: (): Promise<Workspace[]> => ipcRenderer.invoke('workspaces:list'),
     attach: (): Promise<Workspace | null> => ipcRenderer.invoke('workspaces:attach')
@@ -67,15 +94,26 @@ const api = {
   projectFiles: {
     list: (req: FileRequest): Promise<DirListing> => ipcRenderer.invoke('project-files:list', req),
     preview: (req: FileRequest): Promise<FilePreview> => ipcRenderer.invoke('project-files:preview', req),
+    exists: (req: FileRequest): Promise<ProjectFileStat> => ipcRenderer.invoke('project-files:exists', req),
     rename: (req: FileRequest, newName: string): Promise<FileOpResult> =>
       ipcRenderer.invoke('project-files:rename', req, newName),
     create: (req: FileRequest, name: string, kind: FileKind): Promise<FileOpResult> =>
       ipcRenderer.invoke('project-files:create', req, name, kind),
     delete: (req: FileRequest): Promise<FileOpResult> => ipcRenderer.invoke('project-files:delete', req),
     reveal: (req: FileRequest): Promise<FileOpResult> => ipcRenderer.invoke('project-files:reveal', req),
-    open: (req: FileRequest): Promise<FileOpResult> => ipcRenderer.invoke('project-files:open', req)
+    open: (req: FileRequest): Promise<FileOpResult> => ipcRenderer.invoke('project-files:open', req),
+    watch: (req: ProjectFileWatchRequest): Promise<ProjectFileWatchResult> =>
+      ipcRenderer.invoke('project-files:watch', req),
+    unwatch: (): void => ipcRenderer.send('project-files:unwatch'),
+    onChanged: (callback: (event: ProjectFileChangedEvent) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: ProjectFileChangedEvent): void => callback(payload)
+      ipcRenderer.on('project-files:changed', listener)
+      return () => ipcRenderer.removeListener('project-files:changed', listener)
+    }
   },
   terminal: {
+    openDetached: (platform: TerminalPlatform): Promise<boolean> =>
+      ipcRenderer.invoke('terminal:open-detached', platform),
     start: (
       terminalId: string,
       platform: TerminalPlatform,

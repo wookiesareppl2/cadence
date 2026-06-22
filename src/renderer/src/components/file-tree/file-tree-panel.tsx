@@ -29,7 +29,8 @@ export function FileTreePanel({
   projectId,
   projectName,
   open,
-  onToggle
+  onToggle,
+  onPreviewFile
 }: {
   rootPath: string | null
   distro: string | null
@@ -37,6 +38,7 @@ export function FileTreePanel({
   projectName: string | null
   open: boolean
   onToggle: () => void
+  onPreviewFile?: (relPath: string, name: string) => void
 }): JSX.Element {
   const tree = useProjectFileTree(rootPath, distro, projectId)
   const [preview, setPreview] = useState<{ relPath: string; name: string } | null>(null)
@@ -47,6 +49,11 @@ export function FileTreePanel({
 
   const displayPath = (relPath: string): string =>
     distro ? `${rootPath}/${relPath}` : `${rootPath}\\${relPath.replace(/\//g, '\\')}`
+
+  const previewFile = (relPath: string, name: string): void => {
+    if (onPreviewFile) onPreviewFile(relPath, name)
+    else setPreview({ relPath, name })
+  }
 
   if (!open) {
     return (
@@ -121,7 +128,8 @@ export function FileTreePanel({
                 if (name) await tree.create(parentRel, name, kind)
               }}
               onCreateCancel={() => setCreating(null)}
-              onPreview={(relPath, name) => setPreview({ relPath, name })}
+              onPreview={previewFile}
+              onSelectPreview={onPreviewFile ? previewFile : undefined}
               onMenu={(event, relPath, entry) => {
                 event.preventDefault()
                 setMenu({ x: event.clientX, y: event.clientY, relPath, entry })
@@ -136,7 +144,7 @@ export function FileTreePanel({
           menu={menu}
           onClose={() => setMenu(null)}
           onPreview={() => {
-            setPreview({ relPath: menu.relPath, name: menu.entry.name })
+            previewFile(menu.relPath, menu.entry.name)
             setMenu(null)
           }}
           onOpen={() => {
@@ -231,6 +239,7 @@ function FileTreeLevel({
   onCreateCommit,
   onCreateCancel,
   onPreview,
+  onSelectPreview,
   onMenu
 }: {
   parentRel: string
@@ -243,6 +252,7 @@ function FileTreeLevel({
   onCreateCommit: (parentRel: string, name: string, kind: FileKind) => void
   onCreateCancel: () => void
   onPreview: (relPath: string, name: string) => void
+  onSelectPreview?: (relPath: string, name: string) => void
   onMenu: (event: React.MouseEvent, relPath: string, entry: FileEntry) => void
 }): JSX.Element {
   const entries = tree.childrenOf(parentRel)
@@ -282,7 +292,15 @@ function FileTreeLevel({
                   onCancel={onRenameCancel}
                 />
               ) : (
-                <TreeRow entry={entry} relPath={relPath} depth={depth} tree={tree} onPreview={onPreview} onMenu={onMenu} />
+                <TreeRow
+                  entry={entry}
+                  relPath={relPath}
+                  depth={depth}
+                  tree={tree}
+                  onPreview={onPreview}
+                  onSelectPreview={onSelectPreview}
+                  onMenu={onMenu}
+                />
               )}
               {entry.kind === 'dir' && tree.isExpanded(relPath) ? (
                 <FileTreeLevel
@@ -296,6 +314,7 @@ function FileTreeLevel({
                   onCreateCommit={onCreateCommit}
                   onCreateCancel={onCreateCancel}
                   onPreview={onPreview}
+                  onSelectPreview={onSelectPreview}
                   onMenu={onMenu}
                 />
               ) : null}
@@ -313,6 +332,7 @@ function TreeRow({
   depth,
   tree,
   onPreview,
+  onSelectPreview,
   onMenu
 }: {
   entry: FileEntry
@@ -320,6 +340,7 @@ function TreeRow({
   depth: number
   tree: FileTreeState
   onPreview: (relPath: string, name: string) => void
+  onSelectPreview?: (relPath: string, name: string) => void
   onMenu: (event: React.MouseEvent, relPath: string, entry: FileEntry) => void
 }): JSX.Element {
   const isDir = entry.kind === 'dir'
@@ -331,6 +352,7 @@ function TreeRow({
   const activate = (): void => {
     tree.select(relPath)
     if (isDir) tree.toggleDir(relPath)
+    else onSelectPreview?.(relPath, entry.name)
   }
 
   return (

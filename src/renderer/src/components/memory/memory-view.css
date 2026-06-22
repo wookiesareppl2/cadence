@@ -1,0 +1,289 @@
+/* Project Memory & Context viewer — a full-area overlay (like the cheat sheet)
+   with a grouped file list on the left and a view/edit pane on the right.
+   Token-only per docs/DESIGN.md; reuses the shared .panel / .panel-header base. */
+
+.memory-view {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 10px;
+}
+
+.memory-bar {
+  min-height: 44px;
+}
+
+.memory-heading {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.memory-heading h1 {
+  margin: 0;
+  color: var(--text-1);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.memory-heading span {
+  overflow: hidden;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.memory-close {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    border-color 160ms ease;
+}
+
+.memory-close:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+  border-color: var(--surface-4);
+}
+
+.memory-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* ── Left: grouped file list ──────────────────────────────────────────────── */
+.memory-list {
+  flex: 0 0 clamp(220px, 24%, 320px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+}
+
+.memory-filter {
+  margin: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-0);
+  color: var(--text-1);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  outline: none;
+}
+
+.memory-filter:focus-visible {
+  border-color: var(--accent);
+}
+
+.memory-filter::placeholder {
+  color: var(--text-3);
+}
+
+.memory-list-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 6px 10px;
+}
+
+.memory-group + .memory-group {
+  margin-top: 14px;
+}
+
+.memory-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 8px 5px;
+  color: var(--text-3);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.memory-group-count {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.memory-file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-1);
+  text-align: left;
+  cursor: pointer;
+}
+
+.memory-file-row:hover,
+.memory-file-row.active {
+  background: var(--surface-2);
+}
+
+.memory-file-row.active {
+  border-color: var(--accent);
+}
+
+.memory-file-name {
+  overflow: hidden;
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.memory-file-size {
+  flex: 0 0 auto;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+/* ── Right: view / edit pane ──────────────────────────────────────────────── */
+.memory-detail {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.memory-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.memory-detail-title {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.memory-detail-name {
+  overflow: hidden;
+  color: var(--text-1);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.memory-detail-meta {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+.memory-detail-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+
+.memory-action {
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    border-color 160ms ease;
+}
+
+.memory-action:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text-1);
+  border-color: var(--surface-4);
+}
+
+.memory-action.primary {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.memory-action.primary:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--surface-0);
+}
+
+.memory-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.memory-save-error {
+  padding: 8px 14px;
+  background: var(--surface-2);
+  color: var(--caution);
+  font-size: 11px;
+}
+
+.memory-detail-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.memory-markdown {
+  padding: 14px 16px;
+}
+
+.memory-editor {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 14px 16px;
+  border: 0;
+  background: var(--surface-0);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  resize: none;
+  outline: none;
+}
+
+.memory-msg {
+  padding: 16px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.memory-msg.error {
+  color: var(--caution);
+}

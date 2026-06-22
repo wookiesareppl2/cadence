@@ -15,7 +15,8 @@ import {
   type FileKind,
   type FileOpResult,
   type FilePreview,
-  type FileRequest
+  type FileRequest,
+  type ProjectFileStat
 } from '@shared/project-files'
 
 const IMAGE_MIME: Record<string, string> = {
@@ -121,6 +122,19 @@ export async function listDirectory(req: FileRequest): Promise<DirListing> {
         : 1
   )
   return { relPath, entries, truncated }
+}
+
+// Cheap existence/kind probe (no file read) used to validate terminal file-link
+// candidates on hover before they become clickable links.
+export async function statProjectFile(req: FileRequest): Promise<ProjectFileStat> {
+  const resolved = resolveRequest(req)
+  if (!resolved) return { exists: false }
+  try {
+    const info = await stat(resolved.native)
+    return { exists: true, kind: info.isDirectory() ? 'dir' : 'file' }
+  } catch {
+    return { exists: false }
+  }
 }
 
 export async function readFilePreview(req: FileRequest): Promise<FilePreview> {

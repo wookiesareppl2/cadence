@@ -414,6 +414,13 @@
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
 }
 
+.files-preview-pane {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .files-preview-header {
   display: flex;
   align-items: center;
@@ -436,7 +443,26 @@
 .files-preview-actions {
   flex: 0 0 auto;
   display: flex;
+  align-items: center;
   gap: 6px;
+}
+
+.files-preview-live {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.files-preview-watch-state {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.files-preview-watch-state.error {
+  color: var(--caution);
 }
 
 .files-preview-actions button {
@@ -460,6 +486,45 @@
   cursor: wait;
 }
 
+.files-preview-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-0);
+}
+
+.files-preview-actions .files-preview-mode-toggle button {
+  height: 24px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.files-preview-actions .files-preview-mode-toggle button + button {
+  border-left: 1px solid var(--border);
+}
+
+.files-preview-actions .files-preview-mode-toggle button:hover {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+
+.files-preview-actions .files-preview-mode-toggle button.active {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-1));
+  color: var(--accent);
+  cursor: default;
+}
+
+.files-preview-actions .files-preview-mode-toggle button.active:hover {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-1));
+  color: var(--accent);
+}
+
 .files-preview-close {
   width: 28px;
   padding: 0;
@@ -477,17 +542,78 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
+  background: var(--surface-0);
 }
 
-.files-preview-text {
-  margin: 0;
-  padding: 12px 14px;
+.files-preview-code {
+  min-width: 100%;
+  padding: 8px 0 12px;
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.files-preview-code-line {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  min-height: 18px;
+}
+
+.files-preview-code-line:hover {
+  background: var(--surface-1);
+}
+
+.files-preview-code-line.changed {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-0));
+}
+
+.files-preview-code-line.changed .files-preview-line-no {
+  color: var(--accent);
+}
+
+/* Target line of a terminal file:line jump — a steady accent band so the line
+   stays identifiable after the scroll, plus an accent line number. */
+.files-preview-code-line.target {
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface-0));
+}
+
+.files-preview-code-line.target .files-preview-line-no {
+  color: var(--accent);
+}
+
+.files-preview-line-no {
+  padding: 0 10px 0 8px;
+  border-right: 1px solid var(--border-subtle);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-align: right;
+  user-select: none;
+}
+
+.files-preview-code-line code {
+  min-width: 0;
+  padding: 0 14px;
   color: var(--text-1);
+  font-family: inherit;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* Search-term highlight inside the text preview (term arrived-at from search).
+   Solid accent fill on dark text so matches clearly stand out; the first match
+   (scrolled into view) gets an extra ring to mark where to start reading. */
+.files-preview-match {
+  padding: 0 2px;
+  border-radius: 3px;
+  background: var(--accent);
+  color: var(--surface-0);
+  font-weight: 600;
+}
+
+.files-preview-match-first {
+  outline: 2px solid var(--text-1);
+  outline-offset: 1px;
 }
 
 /* Rendered markdown preview reuses the shared .history-md / .md-* styles. */

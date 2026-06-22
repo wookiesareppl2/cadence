@@ -121,6 +121,64 @@ button {
   flex-direction: column;
 }
 
+.detached-terminal-shell {
+  background: var(--surface-0);
+}
+
+.detached-terminal-titlebar {
+  position: relative;
+  flex: 0 0 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 150px 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-1);
+  -webkit-app-region: drag;
+}
+
+.detached-terminal-heading {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-1);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.detached-terminal-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  -webkit-app-region: no-drag;
+}
+
+.detached-terminal-project {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detached-terminal-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  padding: 10px;
+}
+
+.detached-terminal-body .terminal-panel {
+  flex: 1;
+}
+
 /* Splash / loading screen — covers the whole shell from the first window paint
    until the active platform's first project scan resolves, then fades out. Uses
    the per-platform --accent already set on .app-shell. */
@@ -247,13 +305,9 @@ button {
   letter-spacing: 0.02em;
 }
 
-/* Opens the terminal-commands cheat sheet. Pinned just left of the window
-   controls so it never disturbs the centered platform switcher. */
+/* Opens the terminal-commands cheat sheet. Lives in the right-aligned titlebar
+   group, to the right of the centered platform switcher. */
 .titlebar-action {
-  position: absolute;
-  top: 50%;
-  right: 180px;
-  transform: translateY(-50%);
   height: 28px;
   display: flex;
   align-items: center;
@@ -295,13 +349,24 @@ button {
   opacity: 0.8;
 }
 
-.panel-layout-actions {
+/* Right-aligned group holding every titlebar action (panel layout, Commands,
+   search) to the right of the centered platform switcher, just left of the window
+   controls. Absolutely positioned so the switcher stays the only centered item. */
+.titlebar-right {
   position: absolute;
-  top: 50%;
-  left: 168px;
+  top: 0;
+  right: 146px;
+  height: 100%;
   display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
+}
+
+.panel-layout-actions {
+  display: flex;
+  align-items: center;
   gap: 4px;
-  transform: translateY(-50%);
   -webkit-app-region: no-drag;
 }
 

@@ -29,17 +29,24 @@ import {
   openExternally,
   readFilePreview,
   renameEntry,
-  revealInExplorer
+  revealInExplorer,
+  statProjectFile
 } from './projects/project-files-service'
-import type { FileKind, FileRequest } from '@shared/project-files'
+import { unwatchProjectFiles, watchProjectFiles } from './projects/project-file-watch-service'
+import type { FileKind, FileRequest, ProjectFileWatchRequest } from '@shared/project-files'
 import { attachWorkspace, listWorkspaces } from './workspaces/workspace-service'
+import { searchWorkspace } from './search/search-service'
+import type { SearchQuery } from '@shared/search'
+import { getProjectMemory, readMemoryFile, writeMemoryFile } from './memory/memory-service'
 import { initAutoUpdates } from './updater'
 import { DEFAULT_WINDOW_BOUNDS } from './window-state-utils'
 import { readWindowState, registerWindowStatePersistence } from './window-state'
-import type { PlatformId } from '@shared/platform'
+import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
 import { APP_NAME } from '@shared/brand'
 
 let restoreBounds: Rectangle | null = null
+const UI_ZOOM_FACTOR = 1.1
+const detachedTerminalWindows: Partial<Record<PlatformId, BrowserWindow>> = {}
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
 if (process.platform === 'linux') {
@@ -63,7 +70,6 @@ function createMainWindow(): BrowserWindow {
   // Scale the whole UI up a notch so text reads comfortably. A browser-level zoom
   // keeps everything proportional and, unlike CSS zoom, leaves JS-positioned
   // overlays (tooltips, context menus) correctly placed.
-  const UI_ZOOM_FACTOR = 1.1
   const mainWindow = new BrowserWindow({
     ...initialBounds,
     minWidth: 1180,
@@ -135,6 +141,71 @@ function createMainWindow(): BrowserWindow {
   }
 
   return mainWindow
+}
+
+function loadRenderer(window: BrowserWindow, query: Record<string, string> = {}): void {
+  if (is.dev && process.env.ELECTRON_RENDERER_URL) {
+    const url = new URL(process.env.ELECTRON_RENDERER_URL)
+    for (const [key, value] of Object.entries(query)) {
+      url.searchParams.set(key, value)
+    }
+    window.loadURL(url.toString())
+  } else {
+    window.loadFile(join(__dirname, '../renderer/index.html'), { query })
+  }
+}
+
+function openDetachedTerminalWindow(platform: PlatformId): boolean {
+  const existing = detachedTerminalWindows[platform]
+  if (existing && !existing.isDestroyed()) {
+    if (existing.isMinimized()) existing.restore()
+    existing.show()
+    existing.focus()
+    return true
+  }
+
+  const owner = BrowserWindow.getFocusedWindow()
+  const workArea = (owner ? screen.getDisplayMatching(owner.getBounds()) : screen.getPrimaryDisplay()).workArea
+  const width = Math.min(1180, Math.max(900, Math.floor(workArea.width * 0.72)))
+  const height = Math.min(820, Math.max(640, Math.floor(workArea.height * 0.76)))
+  const terminalWindow = new BrowserWindow({
+    x: workArea.x + Math.max(0, Math.floor((workArea.width - width) / 2)),
+    y: workArea.y + Math.max(0, Math.floor((workArea.height - height) / 2)),
+    width,
+    height,
+    minWidth: 760,
+    minHeight: 520,
+    show: false,
+    frame: false,
+    backgroundColor: '#1e1b19',
+    title: `${PLATFORM_CONFIG[platform].label} Terminals`,
+    icon: is.dev ? join(app.getAppPath(), 'build', 'icon.png') : undefined,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.mjs'),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false
+    }
+  })
+
+  detachedTerminalWindows[platform] = terminalWindow
+
+  terminalWindow.on('ready-to-show', () => {
+    terminalWindow.show()
+  })
+  terminalWindow.on('closed', () => {
+    if (detachedTerminalWindows[platform] === terminalWindow) delete detachedTerminalWindows[platform]
+  })
+  terminalWindow.webContents.on('console-message', (details) => {
+    if (!shouldForwardRendererConsole(details)) return
+    console.log(`[renderer:${details.level}] ${details.message} (${details.sourceId}:${details.lineNumber})`)
+  })
+  terminalWindow.webContents.on('did-finish-load', () => {
+    terminalWindow.webContents.setZoomFactor(UI_ZOOM_FACTOR)
+  })
+
+  loadRenderer(terminalWindow, { view: 'terminals', platform })
+  return true
 }
 
 function focusExistingWindow(): BrowserWindow | null {
@@ -240,6 +311,16 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     invalidateSessionCache(platform)
     return result
   })
+  ipcMain.handle('search:query', (event, query: SearchQuery) => searchWorkspace(query, event.sender))
+  ipcMain.handle('memory:list', (event, platform: PlatformId, projectId: string | null) =>
+    getProjectMemory(platform, projectId, event.sender)
+  )
+  ipcMain.handle('memory:read', (event, platform: PlatformId, projectId: string | null, id: string) =>
+    readMemoryFile(platform, projectId, id, event.sender)
+  )
+  ipcMain.handle('memory:write', (event, platform: PlatformId, projectId: string | null, id: string, text: string) =>
+    writeMemoryFile(platform, projectId, id, text, event.sender)
+  )
   ipcMain.handle('workspaces:list', () => listWorkspaces())
   ipcMain.handle('workspaces:attach', (event) => attachWorkspace(BrowserWindow.fromWebContents(event.sender)))
   ipcMain.handle('project-workspace:get', (_event, projectId: string) => getProjectWorkspace(projectId))
@@ -248,6 +329,11 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   )
   ipcMain.handle('project-files:list', (_event, req: FileRequest) => listDirectory(req))
   ipcMain.handle('project-files:preview', (_event, req: FileRequest) => readFilePreview(req))
+  ipcMain.handle('project-files:exists', (_event, req: FileRequest) => statProjectFile(req))
+  ipcMain.handle('project-files:watch', (event, req: ProjectFileWatchRequest) =>
+    watchProjectFiles(req, event.sender)
+  )
+  ipcMain.on('project-files:unwatch', (event) => unwatchProjectFiles(event.sender))
   ipcMain.handle('project-files:rename', (_event, req: FileRequest, newName: string) => renameEntry(req, newName))
   ipcMain.handle('project-files:create', (_event, req: FileRequest, name: string, kind: FileKind) =>
     createEntry(req, name, kind)
@@ -258,6 +344,10 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   ipcMain.handle('terminal:start', (event, terminalId: string, platform: string, cwd?: string, wslDistro?: string) =>
     startTerminal(terminalId, platform, event.sender, cwd, wslDistro)
   )
+  ipcMain.handle('terminal:open-detached', (_event, platform: PlatformId) => {
+    if (!PLATFORM_CONFIG[platform]) return false
+    return openDetachedTerminalWindow(platform)
+  })
   ipcMain.handle('terminal:restart', (event, terminalId: string) => restartTerminal(terminalId, event.sender))
   ipcMain.on('terminal:input', (_event, terminalId: string, data: string) => writeTerminal(terminalId, data))
   ipcMain.on('terminal:resize', (_event, terminalId: string, cols: number, rows: number) => {

@@ -3,6 +3,8 @@ import type { JSX } from 'react'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
+import type { FileRequest } from '@shared/project-files'
+import { findFilePathCandidates, offsetToCell } from '@shared/terminal-links'
 import type { TerminalPlatform, TerminalStartResult } from '@shared/terminal'
 
 export type TerminalTab = {
@@ -39,7 +41,11 @@ const TERMINAL_THEME = {
   background: '#191614',
   foreground: '#e7ded7',
   cursor: '#e07a5f',
-  selectionBackground: '#3b322d',
+  // A clearly visible translucent highlight (the old near-black #3b322d was almost
+  // invisible against the terminal background, so drag-selection looked broken).
+  // Translucent keeps the selected text readable on top.
+  selectionBackground: 'rgba(224, 122, 95, 0.40)',
+  selectionInactiveBackground: 'rgba(224, 122, 95, 0.26)',
   black: '#1e1b19',
   blue: '#7aa2d6',
   brightBlack: '#5e544d',
@@ -75,9 +81,8 @@ function isTerminalTab(value: unknown): value is TerminalTab {
   )
 }
 
-function loadTabs(platform: TerminalPlatform): TerminalTab[] {
+function parseStoredTabs(raw: string | null): TerminalTab[] {
   try {
-    const raw = window.localStorage.getItem(storageKey(platform))
     if (raw) {
       const parsed: unknown = JSON.parse(raw)
       if (Array.isArray(parsed) && parsed.every(isTerminalTab)) {
@@ -110,6 +115,14 @@ function loadTabs(platform: TerminalPlatform): TerminalTab[] {
   return []
 }
 
+function loadTabs(platform: TerminalPlatform): TerminalTab[] {
+  return parseStoredTabs(window.localStorage.getItem(storageKey(platform)))
+}
+
+function sameTabs(a: TerminalTab[], b: TerminalTab[]): boolean {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
+
 // Number a new terminal within its own session so every session's deck starts at
 // "Terminal 1" (callers pass the tabs already filtered to that session).
 function nextDefaultTitle(tabs: TerminalTab[]): string {
@@ -133,6 +146,18 @@ export function useTerminalDeck(platform: TerminalPlatform): TerminalDeckState {
       // Persistence is best-effort; ignore quota/availability failures.
     }
   }, [platform, tabs])
+
+  useEffect(() => {
+    const key = storageKey(platform)
+    const handleStorage = (event: StorageEvent): void => {
+      if (event.storageArea !== window.localStorage || event.key !== key) return
+      const next = parseStoredTabs(event.newValue)
+      setTabs((current) => (sameTabs(current, next) ? current : next))
+    }
+
+    window.addEventListener('storage', handleStorage)
+    return () => window.removeEventListener('storage', handleStorage)
+  }, [platform])
 
   const addTerminal = useCallback(
     (sessionKey: string, cwd?: string | null, title?: string, wslDistro?: string | null) => {
@@ -169,6 +194,29 @@ export function useTerminalDeck(platform: TerminalPlatform): TerminalDeckState {
   return { tabs, addTerminal, closeTerminal, retagSession }
 }
 
+// xterm hands a link provider one buffer row at a time, but a long path wider
+// than the terminal wraps onto several rows. Rebuild the full logical line by
+// joining wrapped continuation rows so the path is detected as one token; the
+// returned startRow + cols let the caller map character offsets back to cells
+// (each wrapped row is exactly `cols` wide).
+const MAX_WRAP_ROWS = 64
+type LogicalLine = { text: string; startRow: number; cols: number }
+function readLogicalLine(terminal: Terminal, bufferLineNumber: number): LogicalLine {
+  const buffer = terminal.buffer.active
+  const cols = Math.max(1, terminal.cols)
+  let startRow = bufferLineNumber - 1
+  while (startRow > 0 && buffer.getLine(startRow)?.isWrapped) startRow -= 1
+  let text = ''
+  for (let row = startRow; row < startRow + MAX_WRAP_ROWS; row += 1) {
+    const line = buffer.getLine(row)
+    if (!line) break
+    text += line.translateToString(false)
+    const next = buffer.getLine(row + 1)
+    if (!next || !next.isWrapped) break
+  }
+  return { text, startRow, cols }
+}
+
 export const TerminalDeck = memo(function TerminalDeck({
   platform,
   tabs,
@@ -176,10 +224,13 @@ export const TerminalDeck = memo(function TerminalDeck({
   defaultWslDistro,
   projectName,
   statusLabel,
+  loading = false,
   backgroundTabCount = 0,
   backgroundSessionCount = 0,
   onAdd,
-  onClose
+  onClose,
+  onOpenFile,
+  onDetach
 }: {
   platform: TerminalPlatform
   tabs: TerminalTab[]
@@ -187,13 +238,23 @@ export const TerminalDeck = memo(function TerminalDeck({
   defaultWslDistro?: string | null
   projectName?: string | null
   statusLabel: string
+  // Open a file the user clicked inside a terminal session (a path the AI agent
+  // printed) in a preview surface owned by the host window, optionally scrolled
+  // to a 1-based line parsed from a `file.ts:42` mention.
+  onOpenFile?: (request: FileRequest, line?: number) => void
+  // The active project is still being resolved (e.g. a freshly opened detached
+  // window scanning sessions). Distinguishes "loading" from "no project picked"
+  // so the add control doesn't wrongly tell the user to select a project.
+  loading?: boolean
   // Live terminals that belong to other sessions: kept running in the background
   // and surfaced here so they aren't silently lost while hidden.
   backgroundTabCount?: number
   backgroundSessionCount?: number
   onAdd: (cwd?: string | null, title?: string, wslDistro?: string | null) => void
   onClose: (id: string) => void
+  onDetach?: () => void
 }): JSX.Element {
+  const noProjectLabel = loading ? 'Loading project…' : 'Select a project to open a terminal'
   const backgroundNote =
     backgroundTabCount > 0
       ? `${backgroundTabCount} ${backgroundTabCount === 1 ? 'terminal' : 'terminals'} running in ` +
@@ -214,16 +275,17 @@ export const TerminalDeck = memo(function TerminalDeck({
         </div>
         <div className="terminal-actions">
           <span className="status-pill">{statusLabel}</span>
+          {onDetach ? (
+            <button type="button" className="terminal-action" onClick={onDetach} title="Detach terminals to a separate window">
+              Detach
+            </button>
+          ) : null}
           <button
             type="button"
             className="terminal-action"
             onClick={() => onAdd(defaultCwd, undefined, defaultWslDistro)}
             disabled={!defaultCwd}
-            title={
-              defaultCwd
-                ? `Open a new terminal in ${defaultCwd}`
-                : 'Select a project to open a terminal'
-            }
+            title={defaultCwd ? `Open a new terminal in ${defaultCwd}` : noProjectLabel}
           >
             + Add terminal
           </button>
@@ -243,7 +305,7 @@ export const TerminalDeck = memo(function TerminalDeck({
               </button>
             </>
           ) : (
-            <span>Select a project to open a terminal.</span>
+            <span>{noProjectLabel}.</span>
           )}
         </div>
       ) : (
@@ -257,6 +319,7 @@ export const TerminalDeck = memo(function TerminalDeck({
               wslDistro={tab.wslDistro ?? null}
               title={tab.title}
               onClose={() => onClose(tab.id)}
+              onOpenFile={onOpenFile}
             />
           ))}
         </div>
@@ -271,7 +334,8 @@ function TerminalPane({
   cwd,
   wslDistro,
   title,
-  onClose
+  onClose,
+  onOpenFile
 }: {
   terminalId: string
   platform: TerminalPlatform
@@ -279,6 +343,7 @@ function TerminalPane({
   wslDistro: string | null
   title: string
   onClose: () => void
+  onOpenFile?: (request: FileRequest, line?: number) => void
 }): JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -286,6 +351,11 @@ function TerminalPane({
   const resizeFitTimerRef = useRef<number | null>(null)
   const [session, setSession] = useState<TerminalStartResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // Held in a ref so the (re)render-unstable callback never forces the terminal
+  // open effect to re-run, which would tear down and respawn the pty.
+  const onOpenFileRef = useRef(onOpenFile)
+  onOpenFileRef.current = onOpenFile
 
   const fitTerminal = useCallback(() => {
     const terminal = terminalRef.current
@@ -328,6 +398,23 @@ function TerminalPane({
       })
   }, [fitTerminal, terminalId])
 
+  const pasteClipboardText = useCallback(() => {
+    const terminal = terminalRef.current
+    const text = window.dashboard.clipboard.readText()
+    if (!terminal || text.length === 0) return
+
+    terminal.paste(text)
+  }, [])
+
+  const copySelection = useCallback((): boolean => {
+    const terminal = terminalRef.current
+    if (!terminal || !terminal.hasSelection()) return false
+    const selected = terminal.getSelection()
+    if (!selected) return false
+    window.dashboard.clipboard.writeText(selected)
+    return true
+  }, [])
+
   useEffect(() => {
     if (!hostRef.current) return
 
@@ -347,6 +434,29 @@ function TerminalPane({
     terminal.open(hostRef.current)
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type !== 'keydown') return true
+
+      const key = event.key.toLowerCase()
+      const isPasteShortcut =
+        ((event.ctrlKey || event.metaKey) && key === 'v') || (event.shiftKey && event.key === 'Insert')
+      if (isPasteShortcut) {
+        event.preventDefault()
+        pasteClipboardText()
+        return false
+      }
+
+      // Copy the selection on Ctrl+Shift+C / Cmd+C (Ctrl+C alone stays SIGINT).
+      // Only consume the keystroke when there's actually a selection to copy.
+      const isCopyShortcut =
+        ((event.ctrlKey && event.shiftKey) || event.metaKey) && key === 'c'
+      if (isCopyShortcut && copySelection()) {
+        event.preventDefault()
+        return false
+      }
+
+      return true
+    })
 
     const dataDisposable = terminal.onData((data) => window.dashboard.terminal.input(terminalId, data))
     const resizeDisposable = terminal.onResize(({ cols, rows }) => {
@@ -355,7 +465,66 @@ function TerminalPane({
     const removeDataListener = window.dashboard.terminal.onData((event) => {
       if (event.terminalId === terminalId) terminal.write(event.data)
     })
+    // Make file paths the AI agent prints clickable: detect path-like tokens on
+    // the hovered line, confirm each is a real file under the project root, and
+    // open the preview on click. cwd is the terminal's project root.
+    const linkProvider = terminal.registerLinkProvider({
+      provideLinks(bufferLineNumber, callback) {
+        const root = cwd
+        if (!root) {
+          callback(undefined)
+          return
+        }
+        const { text, startRow, cols } = readLogicalLine(terminal, bufferLineNumber)
+        const candidates = findFilePathCandidates(text)
+        if (candidates.length === 0) {
+          callback(undefined)
+          return
+        }
+        Promise.all(
+          candidates.map(async (candidate) => {
+            const request: FileRequest = { rootPath: root, distro: wslDistro, relPath: candidate.relPath }
+            try {
+              const result = await window.dashboard.projectFiles.exists(request)
+              return result.exists && result.kind === 'file' ? { candidate, request } : null
+            } catch {
+              return null
+            }
+          })
+        )
+          .then((resolved) => {
+            const links = resolved.flatMap((entry) => {
+              if (entry === null) return []
+              const { candidate, request } = entry
+              // Map the offsets within the joined line back to (col, row) cells.
+              // A range may span rows when the path crosses a wrap boundary.
+              return [
+                {
+                  text: text.slice(candidate.start, candidate.end),
+                  range: {
+                    start: offsetToCell(candidate.start, cols, startRow),
+                    end: offsetToCell(candidate.end - 1, cols, startRow)
+                  },
+                  decorations: { pointerCursor: true, underline: true },
+                  activate: () => onOpenFileRef.current?.(request, candidate.line ?? undefined)
+                }
+              ]
+            })
+            callback(links.length > 0 ? links : undefined)
+          })
+          .catch(() => callback(undefined))
+      }
+    })
+
     const observer = new ResizeObserver(scheduleResizeFit)
+
+    // Copy-on-select: once a drag-selection settles, put it on the clipboard so
+    // the user can paste it elsewhere without a separate copy keystroke. A plain
+    // click leaves no selection, so this no-ops then.
+    const handleMouseUp = (): void => {
+      copySelection()
+    }
+    terminal.element?.addEventListener('mouseup', handleMouseUp)
 
     observer.observe(hostRef.current)
     window.requestAnimationFrame(fitTerminal)
@@ -376,6 +545,8 @@ function TerminalPane({
         window.clearTimeout(resizeFitTimerRef.current)
         resizeFitTimerRef.current = null
       }
+      terminal.element?.removeEventListener('mouseup', handleMouseUp)
+      linkProvider.dispose()
       removeDataListener()
       dataDisposable.dispose()
       resizeDisposable.dispose()
@@ -383,7 +554,7 @@ function TerminalPane({
       terminalRef.current = null
       fitAddonRef.current = null
     }
-  }, [terminalId, platform, cwd, wslDistro, fitTerminal, scheduleResizeFit])
+  }, [terminalId, platform, cwd, wslDistro, fitTerminal, scheduleResizeFit, pasteClipboardText, copySelection])
 
   const shellLabel = session ? `${session.shell} pid ${session.pid}` : 'starting'
 

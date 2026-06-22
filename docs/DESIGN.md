@@ -76,6 +76,63 @@ Fade out with `--motion-panel`/`--ease-out-expo` via the `.splash-leaving` modif
 keep it mounted through the fade, then unmount. A minimum visible time avoids a flash
 on a warm cache, and a max timeout guarantees it never traps the user.
 
+## Segmented toggle (e.g. Auto-follow / Pinned)
+
+A two-option pill for picking one of a small set of mutually-exclusive modes (the
+File Preview "Auto-follow" vs "Pinned" update mode). Use `.files-preview-mode-toggle`
+as the model: an `inline-flex` group with a `1px solid var(--border)` outline,
+`6px` radius, `--surface-0` background, and `overflow: hidden` so the segments share
+one rounded frame.
+- **Segments:** borderless 24px buttons, `--text-3`, 11px; a `1px solid var(--border)`
+  divider only *between* segments (`button + button`).
+- **Hover (inactive segment):** `background: var(--surface-2); color: var(--text-1)`.
+- **Active segment:** `background: color-mix(in srgb, var(--accent) 16%, var(--surface-1));
+  color: var(--accent); cursor: default` (and the same on hover — the active one
+  doesn't react). Mark it with `aria-pressed` and the `.active` class.
+- Pair with a quiet `--font-mono` 10.5px status word when the mode has live state
+  (e.g. `watching` / `polling`, switching to `--caution` on `watch error`).
+
+## File preview line states
+
+Two accent bands distinguish *why* a code line is marked, so don't reuse one for the other:
+- **`.changed`** — a transient edit highlight in Auto-follow: faint band
+  `color-mix(in srgb, var(--accent) 12%, var(--surface-0))` + accent line number.
+- **`.target`** — the line a terminal `file.ts:42` jump landed on: a steadier band
+  `color-mix(in srgb, var(--accent) 22%, var(--surface-0))` + accent line number, so
+  the line stays identifiable after the scroll settles.
+
+Loading vs empty must read as different states, never one ambiguous spinner: a brief
+`Loading...` message while the file resolves, and a distinct empty line ("Select a
+file from Files." / "Waiting for source edits…") when there's nothing to show. The
+terminal deck mirrors this — `Loading project…` while a project is still resolving
+vs. `Select a project to open a terminal` when none is picked.
+
+## Terminals
+
+- **Detached terminal window:** reuse `.detached-terminal-shell` (full window on
+  `--surface-0`). Its own 44px `.detached-terminal-titlebar` on `--surface-1` is
+  `-webkit-app-region: drag` with right padding reserved for the OS window controls;
+  interactive children (`.detached-terminal-actions`) opt back out with
+  `-webkit-app-region: no-drag`. Body is `.detached-terminal-body` holding the same
+  `.terminal-panel` as the docked deck, so a detached window looks identical to its
+  in-app counterpart.
+- **Action buttons** use `.terminal-action` (26px, `--surface-2`, `--border`, hover →
+  `border-color: var(--accent); color: var(--text-1)`) — the deck's Detach / + Add /
+  Restart controls share this one class. The close button adds `.terminal-close` and
+  uses the standard `✕` glyph.
+- **Selection colour:** xterm renders its own canvas, so selection is set in the JS
+  `TERMINAL_THEME`, not via a CSS token — this is the one sanctioned place to write a
+  concrete colour. Use a **translucent accent** so selected text stays readable:
+  `selectionBackground: rgba(224, 122, 95, 0.40)` (active) / `…0.26` (inactive). That
+  RGB is `--accent`; keep them in step if the accent changes.
+- **Clickable `file.ts:42` mentions:** real project files the agent prints become
+  links (`pointerCursor` + `underline`) that open the File Preview scrolled to the
+  line. Only paths that exist under the project root are linked — never style arbitrary
+  path-like text as a link.
+- **Copy:** drag-select copies on mouse-up (copy-on-select) and `Ctrl+Shift+C` /
+  `Cmd+C` copy an existing selection; `Ctrl+C` alone stays SIGINT. A plain click
+  leaves no selection and copies nothing.
+
 ## Default toggle animation
 
 For non-sidebar show/hide (vertical reveal), use the shared `.collapsible-content` + `.collapsible-inner` classes (grid-rows `0fr→1fr` with `--motion-panel`/`--ease-out-expo`), toggled via `data-open`. This is the Session Details accordion motion.

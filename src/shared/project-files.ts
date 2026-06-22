@@ -32,9 +32,33 @@ export type FilePreview = {
 
 export type FileOpResult = { ok: boolean; error?: string }
 
+// Lightweight existence/kind probe used to validate terminal file-link
+// candidates before they are turned into clickable links.
+export type ProjectFileStat = { exists: boolean; kind?: FileKind }
+
 // A request always identifies the project root (POSIX path + distro for WSL, or a
 // native Windows path) plus a forward-slash path relative to that root.
 export type FileRequest = { rootPath: string; distro: string | null; relPath: string }
+
+export type ProjectFileWatchRequest = Pick<FileRequest, 'rootPath' | 'distro'>
+
+export type ProjectFileWatchMode = 'native' | 'poll'
+
+export type ProjectFileWatchResult = {
+  ok: boolean
+  mode?: ProjectFileWatchMode
+  error?: string
+}
+
+export type ProjectFileChangedEvent = {
+  rootPath: string
+  distro: string | null
+  relPath: string
+  name: string
+  size: number
+  modifiedMs: number
+  mode: ProjectFileWatchMode
+}
 
 export const MAX_DIR_ENTRIES = 2000
 export const MAX_TEXT_PREVIEW_BYTES = 262_144 // 256 KiB
