@@ -19,6 +19,49 @@
   border-color: var(--accent);
 }
 
+/* Compact search: below the width where the full input no longer fits, the bar
+   collapses to its glyph (click it to focus — the input stays present at zero
+   width) and expands on focus. It lifts out of the titlebar flow when expanded so
+   it overlays leftward instead of shoving the other actions. The breakpoint
+   matches the 1240px tier in styles.css. */
+@media (max-width: 1240px) {
+  .titlebar-search {
+    width: 32px;
+    padding: 0;
+    justify-content: center;
+    cursor: text;
+  }
+
+  .titlebar-search .titlebar-search-input {
+    width: 0;
+    flex: 0 0 0;
+  }
+
+  .titlebar-search .titlebar-search-clear {
+    display: none;
+  }
+
+  .titlebar-search:focus-within {
+    position: absolute;
+    top: 9px;
+    right: 138px;
+    width: min(300px, calc(100vw - 360px));
+    padding: 0 8px;
+    justify-content: flex-start;
+    background: var(--surface-0);
+    z-index: 97;
+  }
+
+  .titlebar-search:focus-within .titlebar-search-input {
+    width: auto;
+    flex: 1 1 auto;
+  }
+
+  .titlebar-search:focus-within .titlebar-search-clear {
+    display: flex;
+  }
+}
+
 .titlebar-search-glyph {
   display: flex;
   align-items: center;

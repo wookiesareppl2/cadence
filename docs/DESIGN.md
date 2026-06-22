@@ -170,3 +170,34 @@ vs. `Select a project to open a terminal` when none is picked.
 ## Default toggle animation
 
 For non-sidebar show/hide (vertical reveal), use the shared `.collapsible-content` + `.collapsible-inner` classes (grid-rows `0fr→1fr` with `--motion-panel`/`--ease-out-expo`), toggled via `data-open`. This is the Session Details accordion motion.
+
+## Titlebar (responsive)
+
+The 46px titlebar **flows** — it is `display: flex` with three regions: `.titlebar-brand`
+(left), `.platform-switcher` (center), `.titlebar-right` (the action group). The brand
+and right regions are `flex: 1 1 0; min-width: 0`, which keeps the switcher centered
+when there's room yet lets both sides shrink so nothing ever overlaps. **Never pin
+titlebar regions with `position: absolute`** — that was the old approach and it let the
+right group slide under the centered switcher on smaller windows. The only absolute
+child is `.window-controls` (the OS min/max/close strip, pinned `right: 0`); the
+titlebar reserves it with `padding-right: 138px` (3 × 46px).
+
+As the window narrows, the right group declutters in tiers (media queries in
+`styles.css`, tracking the 1180px minimum window width) instead of crowding:
+- **≤1460px** — hide `.app-version`; shrink the switcher button `min-width`.
+- **≤1340px** — Memory / Commands go **icon-only** (the `.titlebar-action-label` span hides).
+- **≤1240px** — Collapse all / Expand all swap their `.panel-layout-action-label` for the
+  `.panel-layout-action-icon` (stacked chevrons); the search collapses (see below).
+- **≤1190px** — `.titlebar-brand-name` hides, leaving the logo only.
+
+**Collapsible label pattern:** any titlebar action that must survive narrowing carries
+both an SVG icon and a label in a dedicated span (`.titlebar-action-label` /
+`.panel-layout-action-label`); the media tiers toggle which one shows. Use this instead
+of duplicating buttons. New action icons follow the SVG line-icon recipe above and reuse
+`.titlebar-action-icon`.
+
+**Compact search:** below 1240px the `.titlebar-search` collapses to just its glyph (the
+input stays present at zero width; the container's `onClick` focuses it so the glyph is
+tappable) and expands on `:focus-within`. When expanded it lifts to `position: absolute`
+(`right: 138px`, clearing the window controls) so it overlays leftward rather than shoving
+the other actions.

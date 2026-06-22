@@ -18,6 +18,7 @@ import { ProjectWorkspaceDock } from '@renderer/components/project-workspace'
 import { FileTreePanel, FilePreviewModal, FilePreviewPane } from '@renderer/components/file-tree'
 import { TitlebarSearch } from '@renderer/components/search/TitlebarSearch'
 import { MemoryView } from '@renderer/components/memory/MemoryView'
+import { SetupGate } from '@renderer/components/setup/SetupGate'
 import type { ClaudePlanUsage, PlanUsageRefreshMeta, UsageWindow } from '@shared/claude-plan-usage'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
@@ -436,6 +437,11 @@ export function App(): JSX.Element {
 
 function DashboardApp(): JSX.Element {
   const [platform, setPlatform] = useState<PlatformId>('claude')
+  // First-run onboarding gate: shown until the user connects a tool or skips, then
+  // remembered so it doesn't reappear on later launches.
+  const [setupState, setSetupState] = usePersistentState<{ done: boolean }>('setup:completed:v1', {
+    done: false
+  })
   const [cheatSheetOpen, setCheatSheetOpen] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
   const memorySelectionSequenceRef = useRef(0)
@@ -705,6 +711,7 @@ function DashboardApp(): JSX.Element {
   return (
     <div className="app-shell" style={cssVars} data-platform={platform}>
       <SplashScreen active={!appReady} />
+      {setupState.done ? null : <SetupGate onDone={() => setSetupState({ done: true })} />}
       <Titlebar
         platform={platform}
         onPlatformChange={setPlatform}
@@ -989,7 +996,8 @@ function Titlebar({
             disabled={panelsAllCollapsed}
             title={`Collapse all ${platformLabel} panels`}
           >
-            Collapse all
+            <CollapseAllIcon />
+            <span className="panel-layout-action-label">Collapse all</span>
           </button>
           <button
             type="button"
@@ -998,7 +1006,8 @@ function Titlebar({
             disabled={panelsAllExpanded}
             title={`Expand all ${platformLabel} panels`}
           >
-            Expand all
+            <ExpandAllIcon />
+            <span className="panel-layout-action-label">Expand all</span>
           </button>
         </div>
         <button
@@ -1009,7 +1018,7 @@ function Titlebar({
           title="Project memory & context"
         >
           <MemoryIcon />
-          Memory
+          <span className="titlebar-action-label">Memory</span>
         </button>
         <button
           type="button"
@@ -1019,7 +1028,7 @@ function Titlebar({
           title="Terminal commands cheat sheet"
         >
           <CommandsIcon />
-          Commands
+          <span className="titlebar-action-label">Commands</span>
         </button>
         <TitlebarSearch platform={platform} projectId={selectedProjectId} onActivate={onSearchActivate} />
       </div>
@@ -1050,6 +1059,27 @@ function CommandsIcon(): JSX.Element {
       <rect x="1.75" y="3" width="12.5" height="10" rx="1.5" />
       <path d="M4.5 6.5l2 1.75-2 1.75" />
       <path d="M8 10.25h3.5" />
+    </svg>
+  )
+}
+
+// Collapse-all / expand-all: stacked chevrons that point inward (collapse) or
+// outward (expand), mirroring the vertical panel motion they control. Shown only
+// at narrow widths where the "Collapse all" / "Expand all" labels are hidden.
+function CollapseAllIcon(): JSX.Element {
+  return (
+    <svg className="titlebar-action-icon panel-layout-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M5 4l3 3 3-3" />
+      <path d="M5 12l3-3 3 3" />
+    </svg>
+  )
+}
+
+function ExpandAllIcon(): JSX.Element {
+  return (
+    <svg className="titlebar-action-icon panel-layout-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M5 6l3-3 3 3" />
+      <path d="M5 10l3 3 3-3" />
     </svg>
   )
 }

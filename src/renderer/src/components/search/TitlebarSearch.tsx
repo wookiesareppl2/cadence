@@ -123,7 +123,11 @@ export function TitlebarSearch({
   let runningIndex = -1
 
   return (
-    <div className="titlebar-search" ref={containerRef}>
+    <div
+      className="titlebar-search"
+      ref={containerRef}
+      onClick={() => inputRef.current?.focus()}
+    >
       <span className="titlebar-search-glyph" aria-hidden="true">
         ⌕
       </span>

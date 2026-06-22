@@ -22,6 +22,7 @@ import type {
   ProjectFileWatchResult
 } from '@shared/project-files'
 import type { SearchQuery, SearchResults } from '@shared/search'
+import type { SetupAction, SetupCommand, SetupStatus } from '@shared/setup'
 import type { MemoryFileContent, MemoryWriteResult, ProjectMemory } from '@shared/memory'
 import {
   TERMINAL_DETACHED_CLOSED_CHANNEL,
@@ -41,7 +42,9 @@ const api = {
   },
   app: {
     platform: process.platform,
-    getVersion: (): Promise<string> => ipcRenderer.invoke('app:version')
+    getVersion: (): Promise<string> => ipcRenderer.invoke('app:version'),
+    // Relaunch so a freshly-installed CLI is picked up on the new process's PATH.
+    relaunch: (): void => ipcRenderer.send('app:relaunch')
   },
   clipboard: {
     readText: (): string => clipboard.readText(),
@@ -79,6 +82,11 @@ const api = {
   },
   search: {
     query: (query: SearchQuery): Promise<SearchResults> => ipcRenderer.invoke('search:query', query)
+  },
+  setup: {
+    getStatus: (): Promise<SetupStatus> => ipcRenderer.invoke('setup:status'),
+    getCommand: (platform: PlatformId, action: SetupAction): Promise<SetupCommand> =>
+      ipcRenderer.invoke('setup:command', platform, action)
   },
   memory: {
     list: (platform: PlatformId, projectId: string | null): Promise<ProjectMemory> =>

@@ -261,25 +261,29 @@ button {
   height: 46px;
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 12px;
   flex: 0 0 auto;
   position: relative;
+  /* Reserve the OS window-control strip (3 × 46px) on the right so the flowing
+     content never slides under it. */
+  padding: 0 138px 0 14px;
   border-bottom: 1px solid var(--border);
   background: var(--surface-1);
   -webkit-app-region: drag;
 }
 
-/* Brand lockup pinned top-left: the Cadence mark + wordmark + version, like most
-   desktop apps. Absolutely positioned so it stays out of the centered platform
-   switcher's flow. */
+/* Brand lockup at the left of the flowing titlebar (Cadence mark + wordmark +
+   version). flex:1 here — mirrored by the right action group — keeps the platform
+   switcher centered when there's room, while letting both sides shrink (dropping
+   the version, then the wordmark) on narrow windows instead of ever overlapping
+   the switcher. See the responsive block below. */
 .titlebar-brand {
-  position: absolute;
-  left: 14px;
-  top: 0;
-  height: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
 }
 
 .titlebar-logo {
@@ -356,16 +360,17 @@ button {
   stroke-linejoin: round;
 }
 
-/* Right-aligned group holding every titlebar action (panel layout, Commands,
-   search) to the right of the centered platform switcher, just left of the window
-   controls. Absolutely positioned so the switcher stays the only centered item. */
+/* Right-aligned group holding every titlebar action (panel layout, Memory,
+   Commands, search). Flows in the titlebar (never absolute) so it can't overlap
+   the centered switcher; flex:1 mirrors the brand so the switcher stays centered
+   when space allows, and the group shrinks/swaps to icons when it doesn't. */
 .titlebar-right {
-  position: absolute;
-  top: 0;
-  right: 146px;
-  height: 100%;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
   gap: 8px;
   -webkit-app-region: no-drag;
 }
@@ -377,7 +382,16 @@ button {
   -webkit-app-region: no-drag;
 }
 
+/* Action labels that collapse to their icon on narrow windows. */
+.titlebar-action-label,
+.panel-layout-action-label {
+  white-space: nowrap;
+}
+
 .panel-layout-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   height: 28px;
   padding: 0 9px;
   border: 1px solid transparent;
@@ -471,6 +485,70 @@ button {
 .platform-switcher button.active {
   background: var(--accent);
   color: var(--surface-0);
+}
+
+/* The collapse/expand icons replace their text label only on narrow windows. */
+.panel-layout-action-icon {
+  display: none;
+}
+
+/* --- Responsive titlebar --------------------------------------------------
+   The titlebar flows (brand | switcher | actions), so groups push each other and
+   nothing overlaps at any width. These tiers progressively declutter the right
+   group as space tightens — hide the version, swap action labels for icons, then
+   collapse the search to a glyph that expands on focus (see search.css). Widths
+   track the 1180px minimum window width. */
+
+@media (max-width: 1460px) {
+  .app-version {
+    display: none;
+  }
+
+  .platform-switcher button {
+    min-width: 104px;
+  }
+}
+
+@media (max-width: 1340px) {
+  /* Memory / Commands become icon-only. */
+  .titlebar-action .titlebar-action-label {
+    display: none;
+  }
+
+  .titlebar-action {
+    padding: 0 8px;
+  }
+
+  .titlebar-right {
+    gap: 6px;
+  }
+}
+
+@media (max-width: 1240px) {
+  /* Collapse all / Expand all swap their text for compact icons. */
+  .panel-layout-action-label {
+    display: none;
+  }
+
+  .panel-layout-action-icon {
+    display: block;
+  }
+
+  .panel-layout-action {
+    padding: 0 7px;
+    gap: 0;
+  }
+
+  .platform-switcher button {
+    min-width: 92px;
+  }
+}
+
+@media (max-width: 1190px) {
+  /* Logo-only brand at the smallest sizes. */
+  .titlebar-brand-name {
+    display: none;
+  }
 }
 
 .window-controls {

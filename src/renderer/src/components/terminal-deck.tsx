@@ -405,14 +405,15 @@ export const TerminalDeck = memo(function TerminalDeck({
   )
 })
 
-function TerminalPane({
+export function TerminalPane({
   terminalId,
   platform,
   cwd,
   wslDistro,
   title,
   onClose,
-  onOpenFile
+  onOpenFile,
+  initialInput
 }: {
   terminalId: string
   platform: TerminalPlatform
@@ -421,6 +422,10 @@ function TerminalPane({
   title: string
   onClose: () => void
   onOpenFile?: (request: FileRequest, line?: number) => void
+  // Optional command auto-typed into the shell once it's ready (onboarding runs the
+  // install / sign-in command this way). Sent only on a fresh start, never on a
+  // reconnect that replays existing scrollback.
+  initialInput?: string
 }): JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -433,6 +438,10 @@ function TerminalPane({
   // open effect to re-run, which would tear down and respawn the pty.
   const onOpenFileRef = useRef(onOpenFile)
   onOpenFileRef.current = onOpenFile
+
+  // Held in a ref so the command can't retrigger the terminal open effect.
+  const initialInputRef = useRef(initialInput)
+  initialInputRef.current = initialInput
 
   const fitTerminal = useCallback(() => {
     const terminal = terminalRef.current
@@ -611,6 +620,11 @@ function TerminalPane({
         setSession(result)
         if (result.replay) terminal.write(result.replay)
         fitTerminal()
+        // Auto-run the onboarding command on a fresh shell (no replayed scrollback
+        // means this pty wasn't already running the command before a reload).
+        if (initialInputRef.current && !result.replay) {
+          window.dashboard.terminal.input(terminalId, `${initialInputRef.current}\r`)
+        }
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : 'Terminal failed to start')
