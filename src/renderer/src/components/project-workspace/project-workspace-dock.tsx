@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import type { ProjectTask } from '@shared/project-workspace'
-import { NotesEditor } from './notes-editor'
+// Lazy-loaded so TipTap/ProseMirror (~900 kB) is only fetched when the user opens
+// the Notes dock, instead of being parsed at every startup. The dock is collapsed
+// by default, so most sessions never load it.
+const NotesEditor = lazy(() => import('./notes-editor').then((module) => ({ default: module.NotesEditor })))
 import { useProjectWorkspace, type ProjectWorkspaceState } from './use-project-workspace'
 import './project-workspace-dock.css'
 
@@ -272,7 +275,9 @@ function NotesPanel({
   return (
     <div className="workspace-notes">
       {/* Re-key per project so the editor re-initializes with that project's notes. */}
-      <NotesEditor key={projectId ?? 'none'} initialHtml={notes} onChange={onChange} />
+      <Suspense fallback={<div className="workspace-notes-loading">Loading editor…</div>}>
+        <NotesEditor key={projectId ?? 'none'} initialHtml={notes} onChange={onChange} />
+      </Suspense>
     </div>
   )
 }

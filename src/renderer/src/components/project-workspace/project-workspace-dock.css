@@ -395,3 +395,10 @@
 .workspace-notes-area::placeholder {
   color: var(--text-3);
 }
+
+/* Brief fallback while the lazy-loaded Notes editor (TipTap) chunk loads. */
+.workspace-notes-loading {
+  padding: 12px;
+  color: var(--text-3);
+  font-size: 12px;
+}
