@@ -65,6 +65,18 @@ export function SetupGate({
     [refresh]
   )
 
+  // Escape closes the gate (matching the app's other overlays); while a setup
+  // command is running it first closes that embedded terminal.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      if (running) stopAction()
+      else onDone()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [running, stopAction, onDone])
+
   const anyConnected = Boolean(status && (status.claude.connected || status.codex.connected))
 
   return (

@@ -322,6 +322,17 @@ if (hasSingleInstanceLock) {
   })
 }
 
+// Last-resort logging so an unexpected error in the main process is recorded
+// instead of vanishing (the renderer already has its own error boundary + global
+// handlers). We log rather than quit: an unhandled rejection is rarely fatal, and
+// abruptly exiting would be a worse experience than carrying on.
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught exception in main process', error)
+})
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection in main process', reason)
+})
+
 if (hasSingleInstanceLock) app.whenReady().then(() => {
   electronApp.setAppUserModelId('dev.cadence.app')
 
