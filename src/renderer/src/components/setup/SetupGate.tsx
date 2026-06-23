@@ -13,7 +13,15 @@ type RunningAction = { platform: PlatformId; action: SetupAction; command: strin
 // walks the user through installing / connecting whichever they want — running the
 // official command in an embedded terminal and watching the status flip. The app
 // can be entered once at least one platform is connected (or skipped entirely).
-export function SetupGate({ onDone }: { onDone: () => void }): JSX.Element {
+export function SetupGate({
+  onDone,
+  mode = 'onboarding'
+}: {
+  onDone: () => void
+  // 'onboarding' = first-run gate (Skip / Continue). 'manage' = re-opened from the
+  // titlebar to connect or disconnect tools later (single Done button).
+  mode?: 'onboarding' | 'manage'
+}): JSX.Element {
   const [status, setStatus] = useState<SetupStatus | null>(null)
   const [running, setRunning] = useState<RunningAction | null>(null)
 
@@ -49,16 +57,25 @@ export function SetupGate({ onDone }: { onDone: () => void }): JSX.Element {
     void refresh()
   }, [refresh])
 
+  const disconnect = useCallback(
+    async (platform: PlatformId) => {
+      await window.dashboard.setup.disconnect(platform)
+      await refresh()
+    },
+    [refresh]
+  )
+
   const anyConnected = Boolean(status && (status.claude.connected || status.codex.connected))
 
   return (
     <div className="setup-gate" role="dialog" aria-modal="true" aria-label="Set up Cadence">
       <div className="setup-panel">
         <header className="setup-head">
-          <h1>Welcome to Cadence</h1>
+          <h1>{mode === 'manage' ? 'Connections' : 'Welcome to Cadence'}</h1>
           <p>
-            Connect the AI coding tools you use. Cadence detects and sets them up for you — pick one
-            or both. You can change this later.
+            {mode === 'manage'
+              ? 'Connect or disconnect your AI coding tools. Cadence detects and sets them up for you.'
+              : 'Connect the AI coding tools you use. Cadence detects and sets them up for you — pick one or both. You can change this later.'}
           </p>
         </header>
 
@@ -71,6 +88,7 @@ export function SetupGate({ onDone }: { onDone: () => void }): JSX.Element {
               busy={running?.platform === platform}
               onInstall={() => startAction(platform, 'install')}
               onConnect={() => startAction(platform, 'connect')}
+              onDisconnect={() => disconnect(platform)}
             />
           ))}
         </div>
@@ -117,12 +135,20 @@ export function SetupGate({ onDone }: { onDone: () => void }): JSX.Element {
             {anyConnected ? 'You’re connected — you can start using Cadence.' : 'Connect at least one tool to begin.'}
           </span>
           <div className="setup-foot-actions">
-            <button type="button" className="setup-skip" onClick={onDone}>
-              Skip for now
-            </button>
-            <button type="button" className="setup-continue" disabled={!anyConnected} onClick={onDone}>
-              Continue
-            </button>
+            {mode === 'manage' ? (
+              <button type="button" className="setup-continue" onClick={onDone}>
+                Done
+              </button>
+            ) : (
+              <>
+                <button type="button" className="setup-skip" onClick={onDone}>
+                  Skip for now
+                </button>
+                <button type="button" className="setup-continue" disabled={!anyConnected} onClick={onDone}>
+                  Continue
+                </button>
+              </>
+            )}
           </div>
         </footer>
       </div>
@@ -139,16 +165,20 @@ function SetupCard({
   setup,
   busy,
   onInstall,
-  onConnect
+  onConnect,
+  onDisconnect
 }: {
   platform: PlatformId
   setup: PlatformSetup | null
   busy: boolean
   onInstall: () => void
   onConnect: () => void
+  onDisconnect: () => void
 }): JSX.Element {
   const label = PLATFORM_CONFIG[platform].label
   const state = cardState(setup)
+  // Two-step inline confirm for the (recoverable) disconnect, per the design system.
+  const [confirming, setConfirming] = useState(false)
 
   return (
     <div className="setup-card" data-state={state.key} data-platform={platform}>
@@ -161,9 +191,31 @@ function SetupCard({
         {state.key === 'checking' ? (
           <span className="setup-card-checking">Checking…</span>
         ) : state.key === 'connected' ? (
-          <span className="setup-card-done" aria-hidden="true">
-            ✓ Connected
-          </span>
+          <div className="setup-card-connected">
+            <span className="setup-card-done">✓ Connected</span>
+            {confirming ? (
+              <span className="setup-card-confirm">
+                <span>Sign out?</span>
+                <button
+                  type="button"
+                  className="setup-card-confirm-yes"
+                  onClick={() => {
+                    setConfirming(false)
+                    onDisconnect()
+                  }}
+                >
+                  Yes
+                </button>
+                <button type="button" className="setup-card-confirm-no" onClick={() => setConfirming(false)}>
+                  No
+                </button>
+              </span>
+            ) : (
+              <button type="button" className="setup-card-disconnect" onClick={() => setConfirming(true)}>
+                Disconnect
+              </button>
+            )}
+          </div>
         ) : state.key === 'not-installed' ? (
           <button type="button" className="setup-action" disabled={busy} onClick={onInstall}>
             Set up {label}

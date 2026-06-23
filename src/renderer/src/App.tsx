@@ -442,6 +442,38 @@ function DashboardApp(): JSX.Element {
   const [setupState, setSetupState] = usePersistentState<{ done: boolean }>('setup:completed:v1', {
     done: false
   })
+  // Which platforms are connected (signed in) — drives whether the platform switcher
+  // appears. Refreshed on mount and whenever the connections screen closes.
+  const [connectedPlatforms, setConnectedPlatforms] = useState<PlatformId[] | null>(null)
+  const [connectionsOpen, setConnectionsOpen] = useState(false)
+
+  const refreshConnections = useCallback(async () => {
+    try {
+      const status = await window.dashboard.setup.getStatus()
+      setConnectedPlatforms((Object.keys(status) as PlatformId[]).filter((id) => status[id].connected))
+    } catch {
+      // Keep the last known set; the next refresh retries.
+    }
+  }, [])
+
+  useEffect(() => {
+    refreshConnections()
+  }, [refreshConnections])
+
+  // Active platforms = those connected. Until the first status lands, or if none are
+  // connected (e.g. onboarding was skipped), keep all platforms available so the app
+  // isn't a dead end. The switcher only appears when more than one is active.
+  const activePlatforms = useMemo<PlatformId[]>(() => {
+    const all = Object.keys(PLATFORM_CONFIG) as PlatformId[]
+    if (!connectedPlatforms || connectedPlatforms.length === 0) return all
+    return all.filter((id) => connectedPlatforms.includes(id))
+  }, [connectedPlatforms])
+
+  // Never leave the app showing a platform that isn't active.
+  useEffect(() => {
+    if (!activePlatforms.includes(platform)) setPlatform(activePlatforms[0])
+  }, [activePlatforms, platform])
+
   const [cheatSheetOpen, setCheatSheetOpen] = useState(false)
   const [memoryOpen, setMemoryOpen] = useState(false)
   const memorySelectionSequenceRef = useRef(0)
@@ -711,10 +743,21 @@ function DashboardApp(): JSX.Element {
   return (
     <div className="app-shell" style={cssVars} data-platform={platform}>
       <SplashScreen active={!appReady} />
-      {setupState.done ? null : <SetupGate onDone={() => setSetupState({ done: true })} />}
+      {!setupState.done || connectionsOpen ? (
+        <SetupGate
+          mode={setupState.done ? 'manage' : 'onboarding'}
+          onDone={() => {
+            if (!setupState.done) setSetupState({ done: true })
+            setConnectionsOpen(false)
+            void refreshConnections()
+          }}
+        />
+      ) : null}
       <Titlebar
         platform={platform}
+        platforms={activePlatforms}
         onPlatformChange={setPlatform}
+        onOpenConnections={() => setConnectionsOpen(true)}
         cheatSheetOpen={cheatSheetOpen}
         onToggleCheatSheet={() => {
           setCheatSheetOpen((open) => !open)
@@ -932,7 +975,9 @@ function DetachedTerminalWindow({ platform }: { platform: PlatformId }): JSX.Ele
 
 function Titlebar({
   platform,
+  platforms,
   onPlatformChange,
+  onOpenConnections,
   cheatSheetOpen,
   onToggleCheatSheet,
   memoryOpen,
@@ -945,7 +990,11 @@ function Titlebar({
   onSearchActivate
 }: {
   platform: PlatformId
+  // Connected platforms. The switcher shows only when more than one is active;
+  // with a single platform it collapses to a static label.
+  platforms: PlatformId[]
   onPlatformChange: (platform: PlatformId) => void
+  onOpenConnections: () => void
   cheatSheetOpen: boolean
   onToggleCheatSheet: () => void
   memoryOpen: boolean
@@ -973,20 +1022,26 @@ function Titlebar({
           </span>
         ) : null}
       </div>
-      <div className="platform-switcher" role="tablist" aria-label="Platform">
-        {Object.values(PLATFORM_CONFIG).map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            role="tab"
-            aria-selected={platform === item.id}
-            className={platform === item.id ? 'active' : 'inactive'}
-            onClick={() => onPlatformChange(item.id)}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
+      {platforms.length > 1 ? (
+        <div className="platform-switcher" role="tablist" aria-label="Platform">
+          {platforms.map((id) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={platform === id}
+              className={platform === id ? 'active' : 'inactive'}
+              onClick={() => onPlatformChange(id)}
+            >
+              {PLATFORM_CONFIG[id].label}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="platform-indicator" aria-label="Platform">
+          {PLATFORM_CONFIG[platforms[0] ?? platform].label}
+        </div>
+      )}
       <div className="titlebar-right">
         <div className="panel-layout-actions" role="group" aria-label={`${platformLabel} panel layout`}>
           <button
@@ -1010,6 +1065,15 @@ function Titlebar({
             <span className="panel-layout-action-label">Expand all</span>
           </button>
         </div>
+        <button
+          type="button"
+          className="titlebar-action"
+          onClick={onOpenConnections}
+          title="Manage connected AI tools"
+        >
+          <ConnectionsIcon />
+          <span className="titlebar-action-label">Connections</span>
+        </button>
         <button
           type="button"
           className={`titlebar-action ${memoryOpen ? 'active' : ''}`}
@@ -1059,6 +1123,17 @@ function CommandsIcon(): JSX.Element {
       <rect x="1.75" y="3" width="12.5" height="10" rx="1.5" />
       <path d="M4.5 6.5l2 1.75-2 1.75" />
       <path d="M8 10.25h3.5" />
+    </svg>
+  )
+}
+
+// Connections / setup: a gear, the universal "settings" affordance. Opens the
+// connect-and-disconnect screen for the Claude/Codex tools.
+function ConnectionsIcon(): JSX.Element {
+  return (
+    <svg className="titlebar-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <circle cx="8" cy="8" r="2.25" />
+      <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4" />
     </svg>
   )
 }

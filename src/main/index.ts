@@ -38,7 +38,7 @@ import { attachWorkspace, listWorkspaces } from './workspaces/workspace-service'
 import { searchWorkspace } from './search/search-service'
 import type { SearchQuery } from '@shared/search'
 import { getProjectMemory, readMemoryFile, writeMemoryFile } from './memory/memory-service'
-import { getSetupCommand, getSetupStatus } from './setup/setup-service'
+import { disconnectPlatform, getSetupCommand, getSetupStatus } from './setup/setup-service'
 import type { SetupAction } from '@shared/setup'
 import { initAutoUpdates } from './updater'
 import { DEFAULT_WINDOW_BOUNDS } from './window-state-utils'
@@ -373,6 +373,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   ipcMain.handle('setup:command', (_event, platform: PlatformId, action: SetupAction) =>
     getSetupCommand(platform, action)
   )
+  ipcMain.handle('setup:disconnect', (_event, platform: PlatformId) => disconnectPlatform(platform))
 
   ipcMain.handle('workspaces:list', () => listWorkspaces())
   ipcMain.handle('workspaces:attach', (event) => attachWorkspace(BrowserWindow.fromWebContents(event.sender)))

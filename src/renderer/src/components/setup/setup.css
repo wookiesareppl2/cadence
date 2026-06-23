@@ -124,6 +124,62 @@
   font-weight: 600;
 }
 
+.setup-card-connected {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.setup-card-disconnect {
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 4px;
+  transition: color 160ms ease;
+}
+
+.setup-card-disconnect:hover {
+  color: var(--caution);
+}
+
+.setup-card-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.setup-card-confirm-yes,
+.setup-card-confirm-no {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px;
+}
+
+.setup-card-confirm-yes {
+  color: var(--caution);
+}
+
+.setup-card-confirm-no {
+  color: var(--text-3);
+}
+
+.setup-card-confirm-yes:focus-visible,
+.setup-card-confirm-no:focus-visible,
+.setup-card-disconnect:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* Primary/accent button per the design system. */
 .setup-action,
 .setup-continue {

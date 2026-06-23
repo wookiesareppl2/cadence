@@ -1,5 +1,6 @@
-import { app } from 'electron'
+import { app, shell } from 'electron'
 import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -43,10 +44,19 @@ function nonEmptyString(value: unknown): boolean {
   return typeof value === 'string' && value.length > 0
 }
 
+// The credential file each CLI writes on sign-in; the usage services read the same
+// files. Disconnecting trashes the file (recoverable) the way the CLIs' own logout
+// just clears local credentials.
+function credentialPath(platform: PlatformId): string {
+  return platform === 'claude'
+    ? join(app.getPath('home'), '.claude', '.credentials.json')
+    : join(app.getPath('home'), '.codex', 'auth.json')
+}
+
 // "Connected" mirrors the credential files the usage services already read:
 // Claude's OAuth access token, Codex's auth token.
 async function claudeConnected(): Promise<boolean> {
-  const path = join(app.getPath('home'), '.claude', '.credentials.json')
+  const path = credentialPath('claude')
   return (
     (await readJsonField(path, (data) =>
       nonEmptyString((data as { claudeAiOauth?: { accessToken?: unknown } })?.claudeAiOauth?.accessToken)
@@ -55,7 +65,7 @@ async function claudeConnected(): Promise<boolean> {
 }
 
 async function codexConnected(): Promise<boolean> {
-  const path = join(app.getPath('home'), '.codex', 'auth.json')
+  const path = credentialPath('codex')
   return (
     (await readJsonField(path, (data) =>
       nonEmptyString((data as { tokens?: { access_token?: unknown } })?.tokens?.access_token)
@@ -97,4 +107,18 @@ const COMMANDS: Record<PlatformId, Record<SetupAction, SetupCommand>> = {
 
 export function getSetupCommand(platform: PlatformId, action: SetupAction): SetupCommand {
   return COMMANDS[platform][action]
+}
+
+// Disconnect = local credential cleanup (the CLIs' own logout does only this). Send
+// the credential file to the OS trash so it's recoverable; the next status check
+// then reports the platform disconnected. A missing file already counts as done.
+export async function disconnectPlatform(platform: PlatformId): Promise<{ ok: boolean }> {
+  const path = credentialPath(platform)
+  if (!existsSync(path)) return { ok: true }
+  try {
+    await shell.trashItem(path)
+    return { ok: true }
+  } catch {
+    return { ok: false }
+  }
 }

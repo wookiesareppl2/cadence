@@ -86,7 +86,9 @@ const api = {
   setup: {
     getStatus: (): Promise<SetupStatus> => ipcRenderer.invoke('setup:status'),
     getCommand: (platform: PlatformId, action: SetupAction): Promise<SetupCommand> =>
-      ipcRenderer.invoke('setup:command', platform, action)
+      ipcRenderer.invoke('setup:command', platform, action),
+    disconnect: (platform: PlatformId): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('setup:disconnect', platform)
   },
   memory: {
     list: (platform: PlatformId, projectId: string | null): Promise<ProjectMemory> =>
