@@ -360,10 +360,14 @@ button {
   stroke-linejoin: round;
 }
 
-/* Right-aligned group holding every titlebar action (panel layout, Memory,
-   Commands, search). Flows in the titlebar (never absolute) so it can't overlap
-   the centered switcher; flex:1 mirrors the brand so the switcher stays centered
-   when space allows, and the group shrinks/swaps to icons when it doesn't. */
+/* Right-aligned group holding every titlebar action (panel layout, Connections,
+   Memory, Commands, search). Flows in the titlebar (never absolute) so it can't
+   overlap the centered switcher; flex:1 mirrors the brand so the switcher stays
+   centered when space allows, and the group shrinks/swaps to icons when it doesn't.
+   NOTE: this container is intentionally NOT `-webkit-app-region: no-drag` — that
+   would make the group's empty space undraggable (half the titlebar). Drag flows
+   from `.titlebar`; each interactive child opts out individually (`.titlebar-action`,
+   `.panel-layout-actions`, `.titlebar-search`). */
 .titlebar-right {
   display: flex;
   align-items: center;
@@ -372,7 +376,6 @@ button {
   min-width: 0;
   height: 100%;
   gap: 8px;
-  -webkit-app-region: no-drag;
 }
 
 .panel-layout-actions {
@@ -513,18 +516,18 @@ button {
    collapse the search to a glyph that expands on focus (see search.css). Widths
    track the 1180px minimum window width. */
 
-@media (max-width: 1460px) {
+/* Tier 1 — declutter early (covers common laptop widths ≈1366–1536) so the right
+   action group can never grow into the centered switcher. Hide the version and
+   collapse EVERY action — panel layout (Collapse all / Expand all), Connections,
+   Memory, Commands — to its icon at once. Doing them together (rather than in
+   separate sub-tiers) keeps the group compact regardless of how many actions exist.
+   IMPORTANT: any new titlebar action must carry an icon + a `*-action-label` span so
+   it collapses here too — otherwise it can re-introduce the overlap. */
+@media (max-width: 1560px) {
   .app-version {
     display: none;
   }
 
-  .platform-switcher button {
-    min-width: 104px;
-  }
-}
-
-@media (max-width: 1340px) {
-  /* Memory / Commands become icon-only. */
   .titlebar-action .titlebar-action-label {
     display: none;
   }
@@ -533,13 +536,6 @@ button {
     padding: 0 8px;
   }
 
-  .titlebar-right {
-    gap: 6px;
-  }
-}
-
-@media (max-width: 1240px) {
-  /* Collapse all / Expand all swap their text for compact icons. */
   .panel-layout-action-label {
     display: none;
   }
@@ -553,13 +549,24 @@ button {
     gap: 0;
   }
 
+  .titlebar-right {
+    gap: 6px;
+  }
+
+  .platform-switcher button {
+    min-width: 104px;
+  }
+}
+
+/* Tier 2 — collapse the search to its glyph (expands on focus; see search.css). */
+@media (max-width: 1340px) {
   .platform-switcher button {
     min-width: 92px;
   }
 }
 
-@media (max-width: 1190px) {
-  /* Logo-only brand at the smallest sizes. */
+/* Tier 3 — logo-only brand at the smallest sizes. */
+@media (max-width: 1200px) {
   .titlebar-brand-name {
     display: none;
   }

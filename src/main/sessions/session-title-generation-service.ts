@@ -445,6 +445,11 @@ async function drainTitleQueue(provider: TitleProvider): Promise<void> {
     queueRunning = false
     runtimeStatus.running = false
     runtimeStatus.pending = queuedJobs.size
+    // Reset the per-burst job counter so `maxJobsPerRun` caps work per drain cycle
+    // (the intent), not per app launch. Without this reset the counter only ever
+    // grows, so after `maxJobsPerRun` titles the app silently stops generating any
+    // more — leaving stale sessions stuck showing "AI generated, updating" forever.
+    jobsStartedThisRun = 0
   }
 }
 

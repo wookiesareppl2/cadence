@@ -213,7 +213,9 @@ export const SessionDetailAccordion = memo(function SessionDetailAccordion({
                 <Fact label="Path" value={session.projectPath ?? 'Unavailable'} />
                 <Fact label="Branch" value={branchLabel(session)} />
                 <Fact label="Updated" value={formatUpdatedAt(session.updatedAt)} />
-                <Fact label="Title" value={titleSourceLabel(session)} />
+                {titleSourceLabel(session) ? (
+                  <Fact label="Title source" value={titleSourceLabel(session) as string} />
+                ) : null}
                 {session.rawTitle && session.rawTitle !== session.title ? (
                   <Fact label="Source" value={session.rawTitle} />
                 ) : null}
@@ -343,12 +345,16 @@ function branchLabel(session: AssistantSession): string {
   return session.branch
 }
 
-function titleSourceLabel(session: AssistantSession): string {
+// The "Title source" row only speaks up when the title isn't a plain, settled
+// AI-generated one. A clean AI title is the expected default, so it returns null
+// (the row is hidden) — the field is for the noteworthy cases: a manual rename, a
+// non-AI heuristic/provider title, or an AI title that's mid-update or failed.
+function titleSourceLabel(session: AssistantSession): string | null {
   if (session.titleSource === 'manual') return 'Manual override'
   if (session.titleSource === 'generated') {
     if (session.titleStatus === 'stale') return 'AI generated, updating'
     if (session.titleStatus === 'failed') return 'AI generated, update failed'
-    return 'AI generated'
+    return null
   }
   if (session.titleStatus === 'pending') return 'Heuristic, AI pending'
   if (session.titleStatus === 'disabled') return 'Heuristic, AI disabled'

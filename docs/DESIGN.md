@@ -175,28 +175,38 @@ For non-sidebar show/hide (vertical reveal), use the shared `.collapsible-conten
 
 The 46px titlebar **flows** — it is `display: flex` with three regions: `.titlebar-brand`
 (left), `.platform-switcher` (center), `.titlebar-right` (the action group). The brand
-and right regions are `flex: 1 1 0; min-width: 0`, which keeps the switcher centered
-when there's room yet lets both sides shrink so nothing ever overlaps. **Never pin
-titlebar regions with `position: absolute`** — that was the old approach and it let the
-right group slide under the centered switcher on smaller windows. The only absolute
-child is `.window-controls` (the OS min/max/close strip, pinned `right: 0`); the
-titlebar reserves it with `padding-right: 138px` (3 × 46px).
+and right regions are `flex: 1 1 0; min-width: 0`, which keeps the switcher centered when
+there's room. **Never pin titlebar regions with `position: absolute`** — that was the old
+approach and it let the right group slide under the centered switcher. The only absolute
+child is `.window-controls` (the OS min/max/close strip, pinned `right: 0`); the titlebar
+reserves it with `padding-right: 138px` (3 × 46px).
 
-As the window narrows, the right group declutters in tiers (media queries in
-`styles.css`, tracking the 1180px minimum window width) instead of crowding:
-- **≤1460px** — hide `.app-version`; shrink the switcher button `min-width`.
-- **≤1340px** — Memory / Commands go **icon-only** (the `.titlebar-action-label` span hides).
-- **≤1240px** — Collapse all / Expand all swap their `.panel-layout-action-label` for the
-  `.panel-layout-action-icon` (stacked chevrons); the search collapses (see below).
-- **≤1190px** — `.titlebar-brand-name` hides, leaving the logo only.
+**Overlap is NOT automatic — it is prevented by keeping the right group narrow.** With the
+equal-flex centering, if the right group's content is wider than its half of the bar it
+overflows *leftward over the switcher* (justify-content is flex-end). Buttons don't shrink,
+so the only way to keep it narrow is to collapse action labels to icons early enough. The
+tiers below (media queries in `styles.css`, tracking the 1180px minimum window width) do
+that:
+- **≤1560px** — hide `.app-version`, and collapse **every** action to its icon at once:
+  Connections / Memory / Commands (`.titlebar-action-label` hides) **and** Collapse all /
+  Expand all (`.panel-layout-action-label` → `.panel-layout-action-icon`). Shrink the
+  switcher `min-width`. Early + all-together so the group stays compact on common laptop
+  widths (≈1366–1536) no matter how many actions exist.
+- **≤1340px** — the search collapses to its glyph (see below); switcher `min-width` shrinks again.
+- **≤1200px** — `.titlebar-brand-name` hides, leaving the logo only.
 
-**Collapsible label pattern:** any titlebar action that must survive narrowing carries
-both an SVG icon and a label in a dedicated span (`.titlebar-action-label` /
-`.panel-layout-action-label`); the media tiers toggle which one shows. Use this instead
-of duplicating buttons. New action icons follow the SVG line-icon recipe above and reuse
-`.titlebar-action-icon`.
+> **Rule when adding/removing a titlebar action (this is mandatory, not optional):** give
+> it an SVG icon **and** a label in a `*-action-label` span so it collapses in the ≤1560
+> tier; never add a label-only action. After adding one, re-check that the ≤1560 icon-mode
+> group still clears the centered switcher at the 1180px minimum width. Adding an action
+> without doing this is exactly what re-introduces the "Collapse all overlaps the switcher"
+> bug.
 
-**Compact search:** below 1240px the `.titlebar-search` collapses to just its glyph (the
+**Collapsible label pattern:** an action carries both an SVG icon (per the line-icon recipe
+above, reusing `.titlebar-action-icon`) and a `.titlebar-action-label` / `.panel-layout-action-label`
+span; the tier toggles which shows. Use this instead of duplicating buttons.
+
+**Compact search:** below 1340px the `.titlebar-search` collapses to just its glyph (the
 input stays present at zero width; the container's `onClick` focuses it so the glyph is
 tappable) and expands on `:focus-within`. When expanded it lifts to `position: absolute`
 (`right: 138px`, clearing the window controls) so it overlays leftward rather than shoving

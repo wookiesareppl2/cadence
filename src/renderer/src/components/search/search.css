@@ -23,8 +23,8 @@
    collapses to its glyph (click it to focus — the input stays present at zero
    width) and expands on focus. It lifts out of the titlebar flow when expanded so
    it overlays leftward instead of shoving the other actions. The breakpoint
-   matches the 1240px tier in styles.css. */
-@media (max-width: 1240px) {
+   matches the tier-2 width in styles.css. */
+@media (max-width: 1340px) {
   .titlebar-search {
     width: 32px;
     padding: 0;
