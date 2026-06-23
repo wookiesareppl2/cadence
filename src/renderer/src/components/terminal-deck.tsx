@@ -484,9 +484,10 @@ export function TerminalPane({
       })
   }, [fitTerminal, terminalId])
 
-  const pasteClipboardText = useCallback(() => {
+  const pasteClipboardText = useCallback(async () => {
+    // Clipboard reads are async now (routed through the main process for sandboxing).
+    const text = await window.dashboard.clipboard.readText()
     const terminal = terminalRef.current
-    const text = window.dashboard.clipboard.readText()
     if (!terminal || text.length === 0) return
 
     terminal.paste(text)
@@ -528,7 +529,7 @@ export function TerminalPane({
         ((event.ctrlKey || event.metaKey) && key === 'v') || (event.shiftKey && event.key === 'Insert')
       if (isPasteShortcut) {
         event.preventDefault()
-        pasteClipboardText()
+        void pasteClipboardText()
         return false
       }
 

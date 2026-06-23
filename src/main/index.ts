@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, screen, type Rectangle, type WebContentsConsoleMessageEventParams } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, screen, session, type Rectangle, type WebContentsConsoleMessageEventParams } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { join } from 'node:path'
 import {
@@ -91,12 +91,23 @@ function createMainWindow(): BrowserWindow {
     icon: is.dev ? join(app.getAppPath(), 'build', 'icon.png') : undefined,
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
+      // sandbox stays false: with sandbox:true the renderer fails to launch
+      // (render-process-gone 'launch-failed', exit 18) whenever the app runs
+      // elevated/as Administrator — Chromium's sandbox can't initialize under
+      // elevation (electron/electron#49167). The app keeps its other protections
+      // (contextIsolation, nodeIntegration:false, strict script CSP, navigation +
+      // window-open guards, deny-all permissions). Re-enabling sandbox would also
+      // require a CommonJS preload (this is an ESM project).
       sandbox: false,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      // Disable middle-click auxclick so it can't open links in new windows,
+      // beyond the setWindowOpenHandler deny in hardenWindow().
+      disableBlinkFeatures: 'Auxclick'
     }
   })
   dashboardWindow = mainWindow
+  hardenWindow(mainWindow)
 
   if (savedWindowState?.isFullScreen) {
     mainWindow.setFullScreen(true)
@@ -195,6 +206,28 @@ function loadRenderer(window: BrowserWindow, query: Record<string, string> = {})
   }
 }
 
+// Lock a window down per the Electron security checklist: refuse renderer-initiated
+// new windows and block any navigation away from the app. Our UI is a local
+// single-page app that never navigates its top frame or opens child windows
+// (detached terminals are created here in the main process), so both are pure
+// denials — except same-origin dev-server reloads, which must still work under HMR.
+function hardenWindow(window: BrowserWindow): void {
+  const devOrigin =
+    is.dev && process.env.ELECTRON_RENDERER_URL ? new URL(process.env.ELECTRON_RENDERER_URL).origin : null
+
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  window.webContents.on('will-navigate', (event, url) => {
+    if (devOrigin) {
+      try {
+        if (new URL(url).origin === devOrigin) return
+      } catch {
+        // Unparseable URL → fall through and block.
+      }
+    }
+    event.preventDefault()
+  })
+}
+
 function openDetachedTerminalWindow(platform: PlatformId): boolean {
   const existing = detachedTerminalWindows[platform]
   if (existing && !existing.isDestroyed()) {
@@ -222,13 +255,24 @@ function openDetachedTerminalWindow(platform: PlatformId): boolean {
     icon: is.dev ? join(app.getAppPath(), 'build', 'icon.png') : undefined,
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
+      // sandbox stays false: with sandbox:true the renderer fails to launch
+      // (render-process-gone 'launch-failed', exit 18) whenever the app runs
+      // elevated/as Administrator — Chromium's sandbox can't initialize under
+      // elevation (electron/electron#49167). The app keeps its other protections
+      // (contextIsolation, nodeIntegration:false, strict script CSP, navigation +
+      // window-open guards, deny-all permissions). Re-enabling sandbox would also
+      // require a CommonJS preload (this is an ESM project).
       sandbox: false,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      // Disable middle-click auxclick so it can't open links in new windows,
+      // beyond the setWindowOpenHandler deny in hardenWindow().
+      disableBlinkFeatures: 'Auxclick'
     }
   })
 
   detachedTerminalWindows[platform] = terminalWindow
+  hardenWindow(terminalWindow)
 
   terminalWindow.on('ready-to-show', () => {
     terminalWindow.show()
@@ -281,6 +325,12 @@ if (hasSingleInstanceLock) {
 if (hasSingleInstanceLock) app.whenReady().then(() => {
   electronApp.setAppUserModelId('dev.cadence.app')
 
+  // Deny every renderer permission request (camera, mic, geolocation, notifications,
+  // etc.). The UI needs none — native usage alerts use the main-process Notification
+  // API, not the renderer's. (Electronegativity: missing permission request handler.)
+  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false))
+  session.defaultSession.setPermissionCheckHandler(() => false)
+
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
@@ -320,6 +370,12 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   })
 
   ipcMain.handle('app:version', () => app.getVersion())
+  // Clipboard moved to the main process so the renderer can run under sandbox:true
+  // (the sandboxed preload can't import electron's clipboard module directly).
+  ipcMain.handle('clipboard:read', () => clipboard.readText())
+  ipcMain.on('clipboard:write', (_event, text: string) => {
+    if (typeof text === 'string') clipboard.writeText(text)
+  })
   ipcMain.on('app:relaunch', () => {
     app.relaunch()
     app.quit()

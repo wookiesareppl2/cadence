@@ -1,4 +1,4 @@
-import { clipboard, contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron'
 import type { ClaudePlanUsage } from '@shared/claude-plan-usage'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import type { PlatformId } from '@shared/platform'
@@ -47,8 +47,10 @@ const api = {
     relaunch: (): void => ipcRenderer.send('app:relaunch')
   },
   clipboard: {
-    readText: (): string => clipboard.readText(),
-    writeText: (text: string): void => clipboard.writeText(text)
+    // Routed through the main process so the renderer can run sandboxed (a sandboxed
+    // preload has no direct access to electron's clipboard module).
+    readText: (): Promise<string> => ipcRenderer.invoke('clipboard:read'),
+    writeText: (text: string): void => ipcRenderer.send('clipboard:write', text)
   },
   usage: {
     getClaudeSummary: (): Promise<ClaudeUsageSummary> => ipcRenderer.invoke('usage:claude-summary'),
