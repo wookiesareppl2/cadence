@@ -3,6 +3,8 @@
   "version": "0.1.9",
   "description": "Desktop control room for AI coding assistants",
   "private": true,
+  "license": "MIT",
+  "author": "Sheldon Kumm",
   "packageManager": "pnpm@11.8.0",
   "type": "module",
   "main": "./out/main/index.js",
