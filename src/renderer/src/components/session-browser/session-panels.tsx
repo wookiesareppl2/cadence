@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { JSX } from 'react'
 import type {
@@ -6,6 +6,7 @@ import type {
   AssistantSessionHistoryEntry
 } from '@shared/sessions'
 import { HistoryMarkdown } from '../history-markdown'
+import { GitHubImportModal } from './github-import-modal'
 import { ProjectList, SessionList } from './session-rows'
 import {
   isPendingSessionId,
@@ -52,6 +53,7 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
   onAbandonPendingSession: (id: string) => Promise<{ trashed: number }>
   onRenamePendingSession: (id: string, title: string | null) => Promise<void>
 }): JSX.Element {
+  const [githubImportOpen, setGithubImportOpen] = useState(false)
   const projectEmptyMessage =
     browser.projects.length > 0 && browser.filteredProjects.length === 0 ? 'No matching projects' : emptyLabel
   const selectedProject = browser.selectedProject
@@ -66,77 +68,103 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
     browser.selectedSession?.id ?? (isPendingSessionId(browser.selectedSessionId) ? browser.selectedSessionId : null)
 
   return (
-    <aside className="sidebar project-sidebar" aria-label={ariaLabel}>
-      <div className="sidebar-header">
-        <h2>{title}</h2>
-        <button
-          type="button"
-          className="sidebar-action"
-          onClick={() => browser.attachWorkspace()}
-          title="Attach an existing folder or create a new project workspace"
-        >
-          + New Project
-        </button>
-      </div>
-      <input
-        className="sidebar-search"
-        placeholder="Search projects"
-        aria-label={`Search ${ariaLabel}`}
-        value={browser.query}
-        onChange={(event) => browser.setQuery(event.target.value)}
-      />
-      <div className="project-list" aria-label={`${ariaLabel} projects`}>
-        <ProjectList
-          projects={browser.filteredProjects}
-          loading={browser.loading}
-          error={browser.error}
-          emptyLabel={projectEmptyMessage}
-          selectedProjectId={selectedProject?.id ?? null}
-          onSelectProject={browser.selectProject}
-          onRenameProject={browser.renameProject}
-          onDeleteProject={browser.deleteProject}
-        />
-      </div>
-      <div className="session-stack">
-        <div className="session-stack-header">
-          <span className="session-stack-title">
-            Sessions
-            <TitleGenerationStatus browser={browser} />
-          </span>
-          <button
-            type="button"
-            className="session-start-action"
-            disabled={!canStartSession}
-            title={
-              canStartSession
-                ? `Start a new terminal session in ${selectedProject?.path}`
-                : 'Select a project with a folder to start a session'
-            }
-            onClick={() => selectedProject && onStartSession(selectedProject)}
-          >
-            + New Session
-          </button>
+    <>
+      <aside className="sidebar project-sidebar" aria-label={ariaLabel}>
+        <div className="sidebar-header">
+          <h2>{title}</h2>
+          <div className="sidebar-actions">
+            <button
+              type="button"
+              className="sidebar-action"
+              onClick={() => browser.attachWorkspace()}
+              title="Attach an existing folder or create a new project workspace"
+            >
+              + New
+            </button>
+            <button
+              type="button"
+              className="sidebar-action"
+              onClick={() => setGithubImportOpen(true)}
+              title="Import from GitHub"
+              aria-haspopup="dialog"
+            >
+              <GitHubImportIcon />
+              GitHub
+            </button>
+          </div>
         </div>
-        <div className="session-list compact" aria-label={`${ariaLabel} sessions`}>
-          <SessionList
-            sessions={sessionRows}
+        <input
+          className="sidebar-search"
+          placeholder="Search projects"
+          aria-label={`Search ${ariaLabel}`}
+          value={browser.query}
+          onChange={(event) => browser.setQuery(event.target.value)}
+        />
+        <div className="project-list" aria-label={`${ariaLabel} projects`}>
+          <ProjectList
+            projects={browser.filteredProjects}
             loading={browser.loading}
             error={browser.error}
-            emptyLabel={selectedProject ? 'No sessions yet — start one' : 'Select a project'}
-            selectedSessionId={highlightSessionId}
-            onSelectSession={browser.selectSession}
-            onRenameSession={(id, titleValue) =>
-              isPendingSessionId(id) ? onRenamePendingSession(id, titleValue) : browser.renameSession(id, titleValue)
-            }
-            onDeleteSession={(id) =>
-              isPendingSessionId(id) ? onAbandonPendingSession(id) : browser.deleteSession(id)
-            }
+            emptyLabel={projectEmptyMessage}
+            selectedProjectId={selectedProject?.id ?? null}
+            onSelectProject={browser.selectProject}
+            onRenameProject={browser.renameProject}
+            onDeleteProject={browser.deleteProject}
           />
         </div>
-      </div>
-    </aside>
+        <div className="session-stack">
+          <div className="session-stack-header">
+            <span className="session-stack-title">
+              Sessions
+              <TitleGenerationStatus browser={browser} />
+            </span>
+            <button
+              type="button"
+              className="session-start-action"
+              disabled={!canStartSession}
+              title={
+                canStartSession
+                  ? `Start a new terminal session in ${selectedProject?.path}`
+                  : 'Select a project with a folder to start a session'
+              }
+              onClick={() => selectedProject && onStartSession(selectedProject)}
+            >
+              + New Session
+            </button>
+          </div>
+          <div className="session-list compact" aria-label={`${ariaLabel} sessions`}>
+            <SessionList
+              sessions={sessionRows}
+              loading={browser.loading}
+              error={browser.error}
+              emptyLabel={selectedProject ? 'No sessions yet — start one' : 'Select a project'}
+              selectedSessionId={highlightSessionId}
+              onSelectSession={browser.selectSession}
+              onRenameSession={(id, titleValue) =>
+                isPendingSessionId(id) ? onRenamePendingSession(id, titleValue) : browser.renameSession(id, titleValue)
+              }
+              onDeleteSession={(id) =>
+                isPendingSessionId(id) ? onAbandonPendingSession(id) : browser.deleteSession(id)
+              }
+            />
+          </div>
+        </div>
+      </aside>
+      {githubImportOpen ? <GitHubImportModal browser={browser} onClose={() => setGithubImportOpen(false)} /> : null}
+    </>
   )
 })
+
+function GitHubImportIcon(): JSX.Element {
+  return (
+    <svg className="sidebar-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M3.25 6.5V4.4a1.4 1.4 0 0 1 1.4-1.4h6.7a1.4 1.4 0 0 1 1.4 1.4v2.1" />
+      <path d="M8 5.2v6.3" />
+      <path d="M5.55 9.05 8 11.5l2.45-2.45" />
+      <path d="M3.25 12.75h9.5" />
+    </svg>
+  )
+}
 
 function TitleGenerationStatus({ browser }: { browser: ProjectSessionBrowserState }): JSX.Element | null {
   const status = browser.titleGenerationStatus

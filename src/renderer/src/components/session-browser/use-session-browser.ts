@@ -9,6 +9,16 @@ import type {
 } from '@shared/sessions'
 import { WINDOWS_ORIGIN } from '@shared/sessions'
 import type { Workspace } from '@shared/workspaces'
+import type {
+  GitHubAuthStatus,
+  GitHubContextSyncRequest,
+  GitHubContextSyncResult,
+  GitHubDeviceFlowPollResult,
+  GitHubDeviceFlowStartResult,
+  GitHubImportRequest,
+  GitHubImportResult,
+  GitHubRepositoryListResult
+} from '@shared/github-import'
 import type { SessionMetadata } from '@shared/session-metadata'
 import { applyProjectAlias, applySessionAlias, emptyMetadata } from '@shared/session-metadata'
 
@@ -48,6 +58,7 @@ type UseProjectSessionBrowserStateArgs = {
 }
 
 export type ProjectSessionBrowserState = {
+  platform: PlatformId
   sessions: AssistantSession[]
   projects: ProjectSessionGroup[]
   filteredProjects: ProjectSessionGroup[]
@@ -65,6 +76,17 @@ export type ProjectSessionBrowserState = {
   selectSession: (sessionId: string) => void
   refreshSessions: () => Promise<void>
   attachWorkspace: () => Promise<void>
+  getGitHubAuthStatus: () => Promise<GitHubAuthStatus | null>
+  startGitHubDeviceFlow: (clientId?: string | null) => Promise<GitHubDeviceFlowStartResult>
+  pollGitHubDeviceFlow: () => Promise<GitHubDeviceFlowPollResult>
+  openGitHubDevicePage: () => Promise<{ ok: boolean; error?: string }>
+  signOutGitHub: () => Promise<GitHubAuthStatus | null>
+  listGitHubRepositories: (page?: number) => Promise<GitHubRepositoryListResult>
+  chooseGithubImportDirectory: () => Promise<string | null>
+  importGithubProject: (request: Omit<GitHubImportRequest, 'platform'>) => Promise<GitHubImportResult>
+  syncProjectContext: (
+    request: Omit<GitHubContextSyncRequest, 'platform'>
+  ) => Promise<GitHubContextSyncResult>
   renameProject: (projectId: string, name: string | null) => Promise<void>
   renameSession: (sessionId: string, title: string | null) => Promise<void>
   deleteProject: (projectId: string) => Promise<{ trashed: number }>
@@ -200,6 +222,76 @@ export function useProjectSessionBrowserState({
     onSelectedSessionIdChange(null)
   }, [onSelectedProjectIdChange, onSelectedSessionIdChange, platform, refreshWorkspaces])
 
+  const chooseGithubImportDirectory = useCallback(async (): Promise<string | null> => {
+    return (await window.dashboard?.github?.chooseImportDirectory?.()) ?? null
+  }, [])
+
+  const getGitHubAuthStatus = useCallback(async (): Promise<GitHubAuthStatus | null> => {
+    return (await window.dashboard?.github?.getAuthStatus?.()) ?? null
+  }, [])
+
+  const startGitHubDeviceFlow = useCallback(
+    async (clientId?: string | null): Promise<GitHubDeviceFlowStartResult> => {
+      const start = window.dashboard?.github?.startDeviceFlow
+      if (!start) return { ok: false, error: 'GitHub auth API unavailable' }
+      return start(clientId)
+    },
+    []
+  )
+
+  const pollGitHubDeviceFlow = useCallback(async (): Promise<GitHubDeviceFlowPollResult> => {
+    const poll = window.dashboard?.github?.pollDeviceFlow
+    if (!poll) return { status: 'error', error: 'GitHub auth API unavailable' }
+    return poll()
+  }, [])
+
+  const openGitHubDevicePage = useCallback(async (): Promise<{ ok: boolean; error?: string }> => {
+    const open = window.dashboard?.github?.openDevicePage
+    if (!open) return { ok: false, error: 'GitHub auth API unavailable' }
+    return open()
+  }, [])
+
+  const signOutGitHub = useCallback(async (): Promise<GitHubAuthStatus | null> => {
+    return (await window.dashboard?.github?.signOut?.()) ?? null
+  }, [])
+
+  const listGitHubRepositories = useCallback(async (page?: number): Promise<GitHubRepositoryListResult> => {
+    const list = window.dashboard?.github?.listRepositories
+    if (!list) return { ok: false, error: 'GitHub repository API unavailable' }
+    return list(page)
+  }, [])
+
+  const importGithubProject = useCallback(
+    async (request: Omit<GitHubImportRequest, 'platform'>): Promise<GitHubImportResult> => {
+      const importer = window.dashboard?.github?.importProject
+      if (!importer) return { ok: false, error: 'GitHub import API unavailable' }
+      const result = await importer({ ...request, platform })
+      if (result.ok && result.workspace) {
+        await Promise.all([refreshWorkspaces(), refreshSessions(), refreshMetadata()])
+        onSelectedProjectIdChange(`${platform}:${workspaceProjectKey(result.workspace.path)}`)
+        onSelectedSessionIdChange(null)
+      }
+      return result
+    },
+    [
+      onSelectedProjectIdChange,
+      onSelectedSessionIdChange,
+      platform,
+      refreshMetadata,
+      refreshSessions,
+      refreshWorkspaces
+    ]
+  )
+
+  const syncProjectContext = useCallback(
+    async (request: Omit<GitHubContextSyncRequest, 'platform'>): Promise<GitHubContextSyncResult> => {
+      const sync = window.dashboard?.github?.syncProjectContext
+      if (!sync) return { ok: false, error: 'Context vault API unavailable' }
+      return sync({ ...request, platform })
+    },
+    [platform]
+  )
+
   const renameProject = useCallback(
     async (projectId: string, name: string | null) => {
       await window.dashboard?.sessions?.setProjectAlias(projectId, name)
@@ -255,6 +347,7 @@ export function useProjectSessionBrowserState({
 
   return useMemo(
     () => ({
+      platform,
       sessions,
       projects,
       filteredProjects,
@@ -272,12 +365,22 @@ export function useProjectSessionBrowserState({
       selectSession,
       refreshSessions,
       attachWorkspace,
+      getGitHubAuthStatus,
+      startGitHubDeviceFlow,
+      pollGitHubDeviceFlow,
+      openGitHubDevicePage,
+      signOutGitHub,
+      listGitHubRepositories,
+      chooseGithubImportDirectory,
+      importGithubProject,
+      syncProjectContext,
       renameProject,
       renameSession,
       deleteProject,
       deleteSession
     }),
     [
+      platform,
       sessions,
       projects,
       filteredProjects,
@@ -295,6 +398,15 @@ export function useProjectSessionBrowserState({
       selectSession,
       refreshSessions,
       attachWorkspace,
+      getGitHubAuthStatus,
+      startGitHubDeviceFlow,
+      pollGitHubDeviceFlow,
+      openGitHubDevicePage,
+      signOutGitHub,
+      listGitHubRepositories,
+      chooseGithubImportDirectory,
+      importGithubProject,
+      syncProjectContext,
       renameProject,
       renameSession,
       deleteProject,

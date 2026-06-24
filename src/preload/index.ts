@@ -24,6 +24,16 @@ import type {
 import type { SearchQuery, SearchResults } from '@shared/search'
 import type { SetupAction, SetupCommand, SetupStatus } from '@shared/setup'
 import type { MemoryFileContent, MemoryWriteResult, ProjectMemory } from '@shared/memory'
+import type {
+  GitHubAuthStatus,
+  GitHubContextSyncRequest,
+  GitHubContextSyncResult,
+  GitHubDeviceFlowPollResult,
+  GitHubDeviceFlowStartResult,
+  GitHubImportRequest,
+  GitHubImportResult,
+  GitHubRepositoryListResult
+} from '@shared/github-import'
 import {
   TERMINAL_DETACHED_CLOSED_CHANNEL,
   type TerminalDataEvent,
@@ -103,6 +113,22 @@ const api = {
   workspaces: {
     list: (): Promise<Workspace[]> => ipcRenderer.invoke('workspaces:list'),
     attach: (): Promise<Workspace | null> => ipcRenderer.invoke('workspaces:attach')
+  },
+  github: {
+    getAuthStatus: (): Promise<GitHubAuthStatus> => ipcRenderer.invoke('github:auth-status'),
+    startDeviceFlow: (clientId?: string | null): Promise<GitHubDeviceFlowStartResult> =>
+      ipcRenderer.invoke('github:auth-start-device-flow', clientId),
+    pollDeviceFlow: (): Promise<GitHubDeviceFlowPollResult> => ipcRenderer.invoke('github:auth-poll-device-flow'),
+    openDevicePage: (): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('github:auth-open-device-page'),
+    signOut: (): Promise<GitHubAuthStatus> => ipcRenderer.invoke('github:auth-sign-out'),
+    listRepositories: (page?: number): Promise<GitHubRepositoryListResult> =>
+      ipcRenderer.invoke('github:list-repositories', page),
+    chooseImportDirectory: (): Promise<string | null> => ipcRenderer.invoke('github:choose-import-directory'),
+    importProject: (request: GitHubImportRequest): Promise<GitHubImportResult> =>
+      ipcRenderer.invoke('github:import-project', request),
+    syncProjectContext: (request: GitHubContextSyncRequest): Promise<GitHubContextSyncResult> =>
+      ipcRenderer.invoke('github:sync-project-context', request)
   },
   projectWorkspace: {
     get: (projectId: string): Promise<ProjectWorkspace> => ipcRenderer.invoke('project-workspace:get', projectId),

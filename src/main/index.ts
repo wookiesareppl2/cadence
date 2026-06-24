@@ -35,11 +35,25 @@ import {
 import { unwatchProjectFiles, watchProjectFiles } from './projects/project-file-watch-service'
 import type { FileKind, FileRequest, ProjectFileWatchRequest } from '@shared/project-files'
 import { attachWorkspace, listWorkspaces } from './workspaces/workspace-service'
+import {
+  chooseGithubImportDirectory,
+  importGithubProject,
+  syncProjectContextToVault
+} from './github/github-import-service'
+import {
+  getGitHubAuthStatus,
+  listGitHubRepositories,
+  openGitHubDevicePage,
+  pollGitHubDeviceFlow,
+  signOutGitHub,
+  startGitHubDeviceFlow
+} from './github/github-auth-service'
 import { searchWorkspace } from './search/search-service'
 import type { SearchQuery } from '@shared/search'
 import { getProjectMemory, readMemoryFile, writeMemoryFile } from './memory/memory-service'
 import { disconnectPlatform, getSetupCommand, getSetupStatus } from './setup/setup-service'
 import type { SetupAction } from '@shared/setup'
+import type { GitHubContextSyncRequest, GitHubImportRequest } from '@shared/github-import'
 import { initAutoUpdates } from './updater'
 import { DEFAULT_WINDOW_BOUNDS } from './window-state-utils'
 import { readWindowState, registerWindowStatePersistence } from './window-state'
@@ -444,6 +458,23 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
 
   ipcMain.handle('workspaces:list', () => listWorkspaces())
   ipcMain.handle('workspaces:attach', (event) => attachWorkspace(BrowserWindow.fromWebContents(event.sender)))
+  ipcMain.handle('github:auth-status', () => getGitHubAuthStatus())
+  ipcMain.handle('github:auth-start-device-flow', (_event, clientId?: string | null) =>
+    startGitHubDeviceFlow(clientId)
+  )
+  ipcMain.handle('github:auth-poll-device-flow', () => pollGitHubDeviceFlow())
+  ipcMain.handle('github:auth-open-device-page', () => openGitHubDevicePage())
+  ipcMain.handle('github:auth-sign-out', () => signOutGitHub())
+  ipcMain.handle('github:list-repositories', (_event, page?: number) => listGitHubRepositories(page))
+  ipcMain.handle('github:choose-import-directory', (event) =>
+    chooseGithubImportDirectory(BrowserWindow.fromWebContents(event.sender))
+  )
+  ipcMain.handle('github:import-project', (event, request: GitHubImportRequest) =>
+    importGithubProject(request, event.sender)
+  )
+  ipcMain.handle('github:sync-project-context', (event, request: GitHubContextSyncRequest) =>
+    syncProjectContextToVault(request, event.sender)
+  )
   ipcMain.handle('project-workspace:get', (_event, projectId: string) => getProjectWorkspace(projectId))
   ipcMain.handle('project-workspace:save', (_event, projectId: string, data: unknown) =>
     saveProjectWorkspace(projectId, data)

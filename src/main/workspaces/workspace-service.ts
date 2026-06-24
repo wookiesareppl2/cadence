@@ -36,6 +36,13 @@ export async function removeWorkspace(id: string): Promise<void> {
   if (next.length !== workspaces.length) await writeStore(next)
 }
 
+export async function attachWorkspacePath(path: string): Promise<Workspace> {
+  const workspace = createWorkspace(path)
+  const existing = await readStore()
+  await writeStore(dedupeWorkspaces([workspace, ...existing]))
+  return workspace
+}
+
 export async function attachWorkspace(window: BrowserWindow | null): Promise<Workspace | null> {
   const options: Electron.OpenDialogOptions = {
     title: 'Attach Workspace',
@@ -50,8 +57,5 @@ export async function attachWorkspace(window: BrowserWindow | null): Promise<Wor
     : await dialog.showOpenDialog(options)
   if (result.canceled || result.filePaths.length === 0) return null
 
-  const workspace = createWorkspace(result.filePaths[0])
-  const existing = await readStore()
-  await writeStore(dedupeWorkspaces([workspace, ...existing]))
-  return workspace
+  return attachWorkspacePath(result.filePaths[0])
 }
