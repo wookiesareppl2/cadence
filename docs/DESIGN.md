@@ -88,6 +88,30 @@ Use a **two-step inline confirm**, not a blocking dialog: the `🗑` swaps to `D
 - **Modals** (`*-modal-backdrop` + dialog): `position: fixed; inset: 46px 0 0 0` (below the titlebar), centered, `rgba(0,0,0,0.5)` backdrop, dialog on `--surface-1` with a soft shadow; close on backdrop click + Esc.
 - **Tooltips/menus/context menus**: `position: fixed`, positioned in JS from a rect (so they escape scroll clipping); dismiss on Esc / outside-click / scroll.
 
+### Repository import / account modals
+
+Use the `github-import-*` modal family as the canonical pattern for account-backed
+project import flows (GitHub OAuth, repository picking, context-vault sync). It is
+a compact operational dialog, not a setup wizard or landing page.
+
+- **Mode switch:** use the same segmented-toggle model as File Preview modes:
+  a two-segment control (`GitHub` / `Manual`) with shared border, `--surface-0`
+  background, inactive `--text-3`, active `color-mix(... var(--accent) 16% ...)`,
+  and `aria-pressed`.
+- **Account state:** show sign-in state as a dense bordered row on `--surface-0`.
+  Display the account/login and storage state as compact text; keep access tokens
+  and credential details out of the renderer UI.
+- **Device codes:** render OAuth device codes as a mono, high-contrast status row
+  with a separate `Open` action. Do not place codes in helper copy or hidden text.
+- **Repository pickers:** use a bordered scroll list of full-width row buttons.
+  Rows show `owner/repo` plus a small mono visibility label (`public`/`private`);
+  active rows use `border-color: var(--accent)` and hover uses `--surface-2`.
+- **Vault state:** show the resolved private vault repo as a quiet mono fact row,
+  not as another card. Manual fallback may expose a vault URL field; OAuth mode
+  must prefer the managed private `cadence-context-vault` repo.
+- **Security messaging:** UI may show high-level states (`encrypted`, `memory`,
+  `private`) but must not display tokens, raw auth headers, or decrypted context.
+
 ## Splash / loading screen
 
 Shown on launch until the active platform's first project scan resolves, then faded
