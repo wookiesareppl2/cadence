@@ -118,12 +118,12 @@ function NotesToolbar({ editor }: { editor: Editor }): JSX.Element {
 function BulletedListIcon(): JSX.Element {
   return (
     <svg className="notes-format-icon notes-list-icon" viewBox="0 0 18 18" aria-hidden="true" focusable="false">
-      <circle cx="4" cy="5" r="0.9" />
-      <circle cx="4" cy="9" r="0.9" />
-      <circle cx="4" cy="13" r="0.9" />
-      <path d="M7.25 5h6.75" />
-      <path d="M7.25 9h6.75" />
-      <path d="M7.25 13h6.75" />
+      <circle cx="4" cy="4" r="1.2" />
+      <circle cx="4" cy="9" r="1.2" />
+      <circle cx="4" cy="14" r="1.2" />
+      <path d="M7.75 4h6.25" />
+      <path d="M7.75 9h6.25" />
+      <path d="M7.75 14h6.25" />
     </svg>
   )
 }
@@ -131,12 +131,12 @@ function BulletedListIcon(): JSX.Element {
 function NumberedListIcon(): JSX.Element {
   return (
     <svg className="notes-format-icon notes-list-icon" viewBox="0 0 18 18" aria-hidden="true" focusable="false">
-      <text x="2.1" y="6.2">1</text>
-      <text x="2.1" y="10.4">2</text>
-      <text x="2.1" y="14.6">3</text>
-      <path d="M7.25 5h6.75" />
-      <path d="M7.25 9h6.75" />
-      <path d="M7.25 13h6.75" />
+      <text x="1.3" y="6.15">1</text>
+      <text x="1.3" y="11.15">2</text>
+      <text x="1.3" y="16.15">3</text>
+      <path d="M7.75 4h6.25" />
+      <path d="M7.75 9h6.25" />
+      <path d="M7.75 14h6.25" />
     </svg>
   )
 }
