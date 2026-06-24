@@ -27,7 +27,7 @@ const SESSION_POLL_INTERVAL_MS = 60_000
 // Sentinel selection for a freshly started session: nothing exists on disk yet,
 // so the History panel is intentionally empty and no list row is highlighted
 // until the user's first prompt creates a real transcript the poll can pick up.
-export const NEW_SESSION_ID = '__new__'
+const NEW_SESSION_ID = '__new__'
 
 // Per-start pending ids extend the bare sentinel so several started-but-unsaved
 // sessions can coexist (each scoping its own terminals) until their transcripts

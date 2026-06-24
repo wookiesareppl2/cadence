@@ -22,7 +22,7 @@ const objectFromUnknown = (value: unknown): UnknownRecord | null =>
 
 export const getDefaultClaudeProjectsRoot = (): string => join(homedir(), '.claude', 'projects')
 
-export async function discoverClaudeJsonlFiles(root = getDefaultClaudeProjectsRoot()): Promise<string[]> {
+async function discoverClaudeJsonlFiles(root = getDefaultClaudeProjectsRoot()): Promise<string[]> {
   const files: string[] = []
 
   async function visit(directory: string): Promise<void> {

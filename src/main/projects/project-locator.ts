@@ -27,7 +27,7 @@ export type ProjectLocation = {
 
 // The session's resolved project name, with a platform-specific fallback when it
 // has none. Mirrors the renderer's projectLabel (use-session-browser.ts).
-export function projectLabel(session: AssistantSession): string {
+function projectLabel(session: AssistantSession): string {
   if (session.project) return session.project
   return session.platform === 'codex' ? 'Unindexed' : 'Unavailable'
 }

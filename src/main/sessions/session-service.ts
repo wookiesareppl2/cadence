@@ -708,10 +708,6 @@ export async function getClaudeSessionsForOrigins(origins: SessionOriginRoot[]):
   return Promise.all(groups.flatMap(({ origin, drafts }) => drafts.map((draft) => mapClaudeSession(draft, origin))))
 }
 
-export async function getClaudeSessions(): Promise<AssistantSession[]> {
-  return getClaudeSessionsForOrigins(await getSessionOrigins())
-}
-
 async function visibleCodexDraftsForOrigin(origin: SessionOriginRoot): Promise<CodexSessionDraft[]> {
   const files = await findJsonlFiles(origin.codexSessionsDir)
 
@@ -807,10 +803,6 @@ export async function getCodexSessionsForOrigins(origins: SessionOriginRoot[]): 
   )
 }
 
-export async function getCodexSessions(): Promise<AssistantSession[]> {
-  return getCodexSessionsForOrigins(await getSessionOrigins())
-}
-
 async function getClaudeSessionFiles(
   sessionId: string
 ): Promise<Array<{ path: string; raw: string; source: SessionTranscriptSource }>> {
@@ -868,7 +860,7 @@ async function getCodexSessionFile(
   return null
 }
 
-export async function getClaudeSessionHistory(sessionId: string): Promise<AssistantSessionHistory> {
+async function getClaudeSessionHistory(sessionId: string): Promise<AssistantSessionHistory> {
   const matches = await getClaudeSessionFiles(sessionId)
   const drafts = await Promise.all(matches.map(({ path }) => readClaudeSession(path)))
   const session = dedupeById(drafts.filter((draft): draft is ClaudeSessionDraft => Boolean(draft)))[0]
@@ -917,7 +909,7 @@ export async function getClaudeSessionHistory(sessionId: string): Promise<Assist
   }
 }
 
-export async function getCodexSessionHistory(sessionId: string): Promise<AssistantSessionHistory> {
+async function getCodexSessionHistory(sessionId: string): Promise<AssistantSessionHistory> {
   const match = await getCodexSessionFile(sessionId)
   if (!match) {
     return {

@@ -19,7 +19,7 @@ export type DirListing = {
   error?: string
 }
 
-export type FilePreviewKind = 'text' | 'image' | 'binary' | 'too-large' | 'error'
+type FilePreviewKind = 'text' | 'image' | 'binary' | 'too-large' | 'error'
 
 export type FilePreview = {
   kind: FilePreviewKind

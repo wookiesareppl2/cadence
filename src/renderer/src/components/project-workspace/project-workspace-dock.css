@@ -109,8 +109,7 @@
 }
 
 .workspace-task-add input:focus-visible,
-.workspace-task-edit:focus-visible,
-.workspace-notes-area:focus-visible {
+.workspace-task-edit:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 1px;
 }
@@ -377,23 +376,6 @@
   min-height: 0;
   display: flex;
   border-left: 1px solid var(--border);
-}
-
-.workspace-notes-area {
-  flex: 1;
-  min-height: 0;
-  resize: none;
-  padding: 10px 12px;
-  border: 0;
-  background: transparent;
-  color: var(--text-1);
-  font-family: var(--font-ui);
-  font-size: 12.5px;
-  line-height: 1.5;
-}
-
-.workspace-notes-area::placeholder {
-  color: var(--text-3);
 }
 
 /* Brief fallback while the lazy-loaded Notes editor (TipTap) chunk loads. */

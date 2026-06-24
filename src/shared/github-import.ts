@@ -86,7 +86,7 @@ export type GitHubContextSyncRequest = {
   passphrase: string
 }
 
-export type GitHubContextFileTarget = 'project' | 'central-memory'
+type GitHubContextFileTarget = 'project' | 'central-memory'
 
 export type GitHubContextBundleFile = {
   target: GitHubContextFileTarget

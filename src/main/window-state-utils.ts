@@ -1,4 +1,4 @@
-export type WindowRectangle = {
+type WindowRectangle = {
   x: number
   y: number
   width: number
@@ -23,7 +23,7 @@ export type WindowStateSource = {
 }
 
 export const DEFAULT_WINDOW_BOUNDS = { width: 1440, height: 900 }
-export const MIN_WINDOW_SIZE = { width: 1180, height: 720 }
+const MIN_WINDOW_SIZE = { width: 1180, height: 720 }
 
 const MIN_VISIBLE_EDGE = 80
 

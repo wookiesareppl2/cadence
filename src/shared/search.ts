@@ -5,7 +5,7 @@
 import type { PlatformId } from './platform'
 import type { FileRequest } from './project-files'
 
-export type SearchKind = 'project' | 'session' | 'file' | 'history'
+type SearchKind = 'project' | 'session' | 'file' | 'history'
 
 // One contiguous match window pulled out of a larger body of text, with the
 // matched span marked so the renderer can highlight it. Offsets index into `text`.

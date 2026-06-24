@@ -89,10 +89,7 @@ export async function chooseGithubImportDirectory(window: BrowserWindow | null):
   return result.filePaths[0] ?? null
 }
 
-export async function importGithubProject(
-  request: GitHubImportRequest,
-  sender: WebContents
-): Promise<GitHubImportResult> {
+export async function importGithubProject(request: GitHubImportRequest): Promise<GitHubImportResult> {
   const repo = parseGitHubRepository(request.repositoryUrl)
   if (!repo) return { ok: false, error: 'Enter a valid GitHub repository URL.' }
   const cloneUrl = normalizedGitHubCloneUrl(request.repositoryUrl)

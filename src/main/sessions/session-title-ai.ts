@@ -36,7 +36,7 @@ export type SessionTitlePromptInput = {
   digest: CompactedSessionTitleDigest
 }
 
-export type ParsedSessionTitleGeneration = {
+type ParsedSessionTitleGeneration = {
   title: string
   summary: string
   shouldUpdate: boolean
@@ -78,7 +78,7 @@ function titleCase(value: string): string {
     .join(' ')
 }
 
-export function normalizeGeneratedSessionTitle(value: string): string | null {
+function normalizeGeneratedSessionTitle(value: string): string | null {
   const withoutQuotes = value.replace(/^["'`]+|["'`]+$/g, '')
   const withoutTrailingPunctuation = withoutQuotes.replace(/[.!?:;,]+$/g, '')
   const normalized = withoutTrailingPunctuation.replace(/\s+/g, ' ').trim()

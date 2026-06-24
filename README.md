@@ -1,56 +1,119 @@
 # Cadence
 
-Cadence is a desktop control room for AI coding assistants. It runs alongside the
-**Claude Code** and **OpenAI Codex** command-line tools and gives you one window for
-your projects and sessions, live plan-usage tracking, terminals, a file manager with
-live preview, per-project notes & tasks, global search, and a view into your project
-memory/context.
+<p align="center">
+  <img src="build/cadence-mark.png" alt="Cadence app mark" width="92" height="92">
+</p>
 
-You can connect **Claude, Codex, or both** — if you only use one, the platform
-switcher hides and the app simply becomes that tool.
+<p align="center">
+  <strong>A local desktop control room for AI coding sessions.</strong><br>
+  Run Claude Code and OpenAI Codex side by side, track usage, browse session history,
+  manage project context, and keep terminals, files, notes, and tasks in one focused workspace.
+</p>
 
-## Requirements
+<p align="center">
+  <a href="https://github.com/wookiesareppl2/cadence-releases/releases"><strong>Download for Windows</strong></a>
+  ·
+  <a href="docs/DESIGN.md">Design system</a>
+  ·
+  <a href="#development">Development</a>
+</p>
 
-- Windows 10/11
-- The **Claude Code** and/or **Codex** CLI. You don't need to install these yourself
-  first — on first launch Cadence detects what's present and walks you through
-  installing and signing in to whichever you use.
+---
+
+## What Cadence Is
+
+Cadence is an Electron desktop app for developers who work with AI coding assistants every day.
+It does not replace Claude Code or Codex. It wraps the command-line tools you already use in a
+single project-first interface so your sessions, terminals, usage, files, and context stay visible.
+
+The app is built for a dense, work-focused workflow: fewer windows, less terminal hunting, and a
+clear view of what each assistant session is doing.
+
+## Highlights
+
+- **Claude Code and Codex in one app** - connect either tool or both. If only one is connected,
+  Cadence hides the platform switcher and becomes a focused single-tool workspace.
+- **Project-first session browsing** - browse by workspace/project first, then inspect sessions,
+  titles, branches, age, transcript history, and active terminals.
+- **Usage tracking you can trust** - parse local usage/session data, dedupe records, and show
+  rolling plan windows so subscription limits are easier to monitor.
+- **Integrated terminals** - run assistant terminals inside Cadence, detach them to another window,
+  and jump back to terminals that are running in other sessions.
+- **Files and live preview** - browse project files, open previews, follow source edits as they
+  happen, and jump from terminal file references into the preview pane.
+- **Memory and context views** - open project memory/context files in a dedicated surface instead
+  of losing them in a generic file preview.
+- **GitHub project import** - sign in with GitHub, clone repositories, and optionally restore
+  encrypted project context from a private context vault.
+- **Per-project notes and tasks** - keep lightweight planning notes and task lists attached to
+  the project you are actively working in.
 
 ## Install
 
-Download the latest installer from the
-[Releases page](https://github.com/wookiesareppl2/cadence-releases/releases) and run it.
+Cadence currently targets Windows 10/11.
 
-> **Heads-up:** the installer is not yet code-signed, so Windows SmartScreen may show
-> an "unknown publisher" warning. Click **More info → Run anyway** to proceed. Code
-> signing is planned for a future release.
+1. Download the latest installer from
+   [cadence-releases](https://github.com/wookiesareppl2/cadence-releases/releases).
+2. Run the installer.
+3. On first launch, connect Claude Code, Codex, or both.
 
-On first launch, the setup screen checks whether the Claude/Codex tools are installed
-and signed in, and guides you through anything that's missing.
+The installer is not code-signed yet. Windows SmartScreen may show an "unknown publisher"
+warning; use **More info -> Run anyway** if you trust this build.
 
-## Privacy
+## Privacy And Security
 
-Cadence is **local-first and collects no telemetry or analytics**. It reads the
-credential and session files that the Claude/Codex CLIs already store on your computer
-to show your usage and history. Your access tokens stay on your device and are used
-only to call the official Anthropic/OpenAI usage endpoints — they are never sent
-anywhere else. Disconnecting a tool simply moves its local credential file to the
-Recycle Bin.
+Cadence is local-first and does not include telemetry or analytics.
+
+- Claude/Codex credentials stay on your machine and are read only when needed for local status or
+  usage checks.
+- GitHub OAuth tokens are handled in the main Electron process and stored with Electron
+  `safeStorage` when available, with an in-memory fallback when OS encryption is unavailable.
+- Project context vault snapshots are encrypted before they are written to GitHub.
+- Private context and memory files are not meant to be committed to the public app repository.
+
+## Repository Layout
+
+```text
+src/main/        Electron main-process services and IPC handlers
+src/preload/     Sandboxed preload bridge
+src/renderer/    React renderer app
+src/shared/      Dependency-light shared types and pure helpers
+tests/           Vitest coverage for shared and main-process logic
+docs/            Design system and app conventions
+scripts/         Build and release helpers
+```
 
 ## Development
 
-This repo holds the app code. pnpm is required.
+Cadence uses pnpm.
 
 ```bash
-pnpm install      # install dependencies
-pnpm dev          # run the app in development (rebuilds native modules for Electron)
-pnpm test         # run the test suite (stop the dev server first; rebuilds native ABI)
-pnpm run build    # type-check and build
-pnpm run dist     # build the distributable installer
+pnpm install
+pnpm dev
+pnpm typecheck
+npx vitest run
+npx electron-vite build
 ```
 
-Before working on any UI, read [`docs/DESIGN.md`](docs/DESIGN.md) — the design system
-and conventions the app follows.
+Useful notes:
+
+- `pnpm dev` rebuilds native modules for Electron before starting the app.
+- `pnpm test` rebuilds native modules for Node before running Vitest; stop the dev server first on
+  Windows if native files are locked.
+- Before UI work, read [`docs/DESIGN.md`](docs/DESIGN.md). It is the source of truth for tokens,
+  panel behavior, buttons, icons, overlays, and interaction patterns.
+
+## Release Builds
+
+The updater installer is published through the separate
+[`cadence-releases`](https://github.com/wookiesareppl2/cadence-releases/releases) repository.
+
+```bash
+pnpm release
+```
+
+The release script bumps the patch version, compiles the app, and publishes the Windows installer
+with `electron-builder`. Installed apps pick up the new release on next launch.
 
 ## License
 

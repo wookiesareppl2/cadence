@@ -39,7 +39,7 @@ export function createCachedPlanUsage<T extends PlanUsageWithRefresh>(
     lastError: null
   }
 
-  async function refresh(nowMs: number): Promise<T> {
+  async function refresh(): Promise<T> {
     state.inFlight ??= fetcher()
       .then((usage) => {
         state.value = usage
@@ -105,7 +105,7 @@ export function createCachedPlanUsage<T extends PlanUsageWithRefresh>(
       throw new Error(state.lastError)
     }
 
-    return refresh(nowMs)
+    return refresh()
   }
 }
 

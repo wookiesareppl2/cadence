@@ -23,7 +23,6 @@
     "release": "node scripts/release.mjs"
   },
   "dependencies": {
-    "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1",
     "@tiptap/pm": "^3.26.1",

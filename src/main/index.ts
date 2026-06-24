@@ -469,8 +469,8 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   ipcMain.handle('github:choose-import-directory', (event) =>
     chooseGithubImportDirectory(BrowserWindow.fromWebContents(event.sender))
   )
-  ipcMain.handle('github:import-project', (event, request: GitHubImportRequest) =>
-    importGithubProject(request, event.sender)
+  ipcMain.handle('github:import-project', (_event, request: GitHubImportRequest) =>
+    importGithubProject(request)
   )
   ipcMain.handle('github:sync-project-context', (event, request: GitHubContextSyncRequest) =>
     syncProjectContextToVault(request, event.sender)

@@ -7,7 +7,7 @@ import { getClaudeSessionsForOrigins, getCodexSessionsForOrigins } from './sessi
 // Channel the main process uses to push a completed full scan to the renderer
 // after the fast (Windows-only) first paint. Kept here so the IPC wiring and the
 // preload bridge agree on one name.
-export const SESSIONS_UPDATED_CHANNEL = 'sessions:updated'
+const SESSIONS_UPDATED_CHANNEL = 'sessions:updated'
 
 // Short TTL marking how long a full scan is "fresh" enough to serve without
 // re-reading disk (e.g. flipping between the Claude/Codex tabs or a quick

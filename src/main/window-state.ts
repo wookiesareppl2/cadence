@@ -17,7 +17,7 @@ export function readWindowState(): PersistedWindowState | null {
   }
 }
 
-export function writeWindowState(window: BrowserWindow): void {
+function writeWindowState(window: BrowserWindow): void {
   try {
     const path = windowStatePath()
     mkdirSync(dirname(path), { recursive: true })
