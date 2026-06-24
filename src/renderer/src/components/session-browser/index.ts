@@ -6,4 +6,4 @@ export {
   useSessionHistory
 } from './use-session-browser'
 export type { ProjectSessionGroup, ProjectSessionBrowserState, SessionHistoryState } from './use-session-browser'
-export { ProjectSessionSidebar, SessionDetailAccordion, SessionHistorySidebar } from './session-panels'
+export { ProjectSessionSidebar, SessionDetailModal, SessionHistorySidebar } from './session-panels'

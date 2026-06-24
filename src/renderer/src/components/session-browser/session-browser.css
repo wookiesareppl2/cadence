@@ -623,71 +623,127 @@
   border-color: color-mix(in srgb, var(--caution) 45%, var(--border));
 }
 
-.session-detail-accordion {
-  min-height: 0;
+/* Session details trigger: a compact info icon button in the History panel header
+   (so it costs no extra row) that opens the details modal. */
+.history-details-button {
   flex: 0 0 auto;
-  transition:
-    border-color 180ms var(--ease-out-expo),
-    background-color 180ms var(--ease-out-expo);
-}
-
-.session-detail-header {
-  min-height: 42px;
-  padding: 8px 14px;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3);
   cursor: pointer;
+  transition:
+    background-color 160ms var(--ease-out-expo),
+    color 160ms var(--ease-out-expo),
+    border-color 160ms var(--ease-out-expo);
 }
 
-/* Same hover model as History/Notes: chevron whitens when expanded; the collapsed
-   bar lights the real panel border so rounded corners stay clean. */
-.session-detail-header:hover .panel-collapse-toggle {
+.history-details-button:hover:not(:disabled) {
+  background: var(--surface-3);
+  border-color: var(--surface-4);
   color: var(--text-1);
 }
 
-.session-detail-accordion.collapsed:hover {
-  border-color: var(--accent);
-  background: var(--surface-2);
+.history-details-button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
-.session-detail-accordion.collapsed:hover .session-detail-header {
-  background: var(--surface-2);
+.history-details-button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
 }
 
-.session-detail-heading {
-  min-width: 0;
-  display: grid;
-  gap: 3px;
+.session-detail-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
-.session-detail-heading span {
-  min-width: 0;
+/* Session details modal — design-system overlay pattern (fixed backdrop below the
+   46px titlebar, dialog on --surface-1; reuses .session-detail-body/.session-facts). */
+.session-detail-modal-backdrop {
+  position: fixed;
+  inset: 46px 0 0 0;
+  z-index: 95;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.session-detail-modal {
+  width: min(640px, 92vw);
+  max-width: 100%;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-1);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
   overflow: hidden;
+}
+
+.session-detail-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.session-detail-modal-header h2 {
+  margin: 0;
+  color: var(--text-1);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.session-detail-modal-close {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  transition: color 160ms var(--ease-out-expo);
 }
 
-.session-detail-content {
-  display: grid;
-  grid-template-rows: 0fr;
-  opacity: 0;
-  transform: translateY(-3px);
-  transition:
-    grid-template-rows var(--motion-panel) var(--ease-out-expo),
-    opacity 150ms ease,
-    transform var(--motion-panel) var(--ease-out-expo);
+.session-detail-modal-close:hover {
+  color: var(--text-1);
 }
 
-.session-detail-accordion.expanded .session-detail-content {
-  grid-template-rows: 1fr;
-  opacity: 1;
-  transform: translateY(0);
+.session-detail-modal-close:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
 }
 
-.session-detail-content-inner {
-  min-height: 0;
-  overflow: hidden;
+/* In the modal there's room to show full values (e.g. long Paths) — let them wrap
+   instead of truncating with an ellipsis the way the cramped accordion did. */
+.session-detail-modal .fact-list dd {
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
 }
 
 .session-detail-body {
@@ -727,17 +783,6 @@
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.session-detail-empty {
-  margin: 14px;
-  padding: 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 4px;
-  background: var(--surface-0);
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: 11px;
 }
 
 .session-facts {

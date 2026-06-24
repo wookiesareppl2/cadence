@@ -4,7 +4,7 @@ import { flushSync } from 'react-dom'
 import {
   createPendingSessionId,
   isPendingSessionId,
-  SessionDetailAccordion,
+  SessionDetailModal,
   SessionHistorySidebar,
   ProjectSessionSidebar,
   useProjectSessionBrowserState,
@@ -492,10 +492,12 @@ function DashboardApp(): JSX.Element {
     'selection:projects:v1',
     { claude: null, codex: null }
   )
-  const [sessionDetailOpen, setSessionDetailOpen] = usePersistentState<Record<PlatformId, boolean>>(
-    'selection:session-detail-accordion:v1',
-    { claude: false, codex: false }
-  )
+  // Session details is now a modal popup (not a persistent panel), so this is a
+  // transient per-platform open flag, not persisted across launches.
+  const [sessionDetailOpen, setSessionDetailOpen] = useState<Record<PlatformId, boolean>>({
+    claude: false,
+    codex: false
+  })
   const [historySidebarOpen, setHistorySidebarOpen] = usePersistentState<Record<PlatformId, boolean>>(
     'selection:history-sidebar:v1',
     { claude: false, codex: false }
@@ -708,26 +710,22 @@ function DashboardApp(): JSX.Element {
     [setTerminalDetached]
   )
 
+  // Session details is a modal, not a collapsible panel, so it's excluded from the
+  // Collapse all / Expand all set.
   const activePanelStates = useMemo(
-    () => [
-      sessionDetailOpen[platform],
-      historySidebarOpen[platform],
-      workspaceDockOpen[platform],
-      filesPanelOpen[platform]
-    ],
-    [filesPanelOpen, historySidebarOpen, platform, sessionDetailOpen, workspaceDockOpen]
+    () => [historySidebarOpen[platform], workspaceDockOpen[platform], filesPanelOpen[platform]],
+    [filesPanelOpen, historySidebarOpen, platform, workspaceDockOpen]
   )
   const activePanelsAllCollapsed = activePanelStates.every((open) => !open)
   const activePanelsAllExpanded = activePanelStates.every(Boolean)
 
   const setActivePlatformPanelsOpen = useCallback(
     (open: boolean) => {
-      setSessionDetailOpen((current) => (current[platform] === open ? current : { ...current, [platform]: open }))
       setHistorySidebarOpen((current) => (current[platform] === open ? current : { ...current, [platform]: open }))
       setWorkspaceDockOpen((current) => (current[platform] === open ? current : { ...current, [platform]: open }))
       setFilesPanelOpen((current) => (current[platform] === open ? current : { ...current, [platform]: open }))
     },
-    [platform, setFilesPanelOpen, setHistorySidebarOpen, setSessionDetailOpen, setWorkspaceDockOpen]
+    [platform, setFilesPanelOpen, setHistorySidebarOpen, setWorkspaceDockOpen]
   )
 
   const cssVars = useMemo(
@@ -1704,12 +1702,9 @@ function ClaudeWorkspace({
             onPreviewFile={terminalsDetached ? handlePreviewFile : undefined}
           />
           <div className="main-stack">
-            <SessionDetailAccordion
-              session={sessionBrowser.selectedSession}
-              emptyLabel="No Claude session selected"
-              open={sessionDetailOpen}
-              onToggle={onToggleSessionDetail}
-            />
+            {sessionDetailOpen && sessionBrowser.selectedSession ? (
+              <SessionDetailModal session={sessionBrowser.selectedSession} onClose={onToggleSessionDetail} />
+            ) : null}
             {terminalsDetached ? (
               <FilePreviewPane
                 request={activePreview?.request ?? null}
@@ -1757,6 +1752,7 @@ function ClaudeWorkspace({
             newSession={newSession}
             open={historySidebarOpen}
             onToggle={toggleHistorySidebar}
+            onShowDetails={onToggleSessionDetail}
           />
         </div>
       </section>
@@ -1940,12 +1936,9 @@ function CodexWorkspace({
             onPreviewFile={terminalsDetached ? handlePreviewFile : undefined}
           />
           <div className="main-stack">
-            <SessionDetailAccordion
-              session={sessionBrowser.selectedSession}
-              emptyLabel="No Codex session selected"
-              open={sessionDetailOpen}
-              onToggle={onToggleSessionDetail}
-            />
+            {sessionDetailOpen && sessionBrowser.selectedSession ? (
+              <SessionDetailModal session={sessionBrowser.selectedSession} onClose={onToggleSessionDetail} />
+            ) : null}
             {terminalsDetached ? (
               <FilePreviewPane
                 request={activePreview?.request ?? null}
@@ -1993,6 +1986,7 @@ function CodexWorkspace({
             newSession={newSession}
             open={historySidebarOpen}
             onToggle={toggleHistorySidebar}
+            onShowDetails={onToggleSessionDetail}
           />
         </div>
       </section>

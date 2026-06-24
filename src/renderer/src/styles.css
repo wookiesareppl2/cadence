@@ -1192,9 +1192,11 @@ button {
   min-width: 0;
   min-height: 0;
   display: grid;
-  /* Rows: session detail · terminal deck · notes & tasks dock. The dock row is
-     auto so it grows/shrinks smoothly with its own collapse animation. */
-  grid-template-rows: auto minmax(140px, 1fr) auto;
+  /* Rows: terminal deck (fills) · notes & tasks dock. The dock row is auto so it
+     grows/shrinks smoothly with its own collapse animation, while the terminal
+     deck takes the remaining space. (Session detail moved to the History header +
+     a modal, so it's no longer a row here.) */
+  grid-template-rows: minmax(140px, 1fr) auto;
   gap: 8px;
   transform-origin: left center;
 }

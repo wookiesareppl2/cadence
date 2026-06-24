@@ -1,4 +1,5 @@
-import { memo, useMemo } from 'react'
+import { memo, useEffect, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import type { JSX } from 'react'
 import type {
   AssistantSession,
@@ -163,83 +164,97 @@ function TitleGenerationStatus({ browser }: { browser: ProjectSessionBrowserStat
   return null
 }
 
-export const SessionDetailAccordion = memo(function SessionDetailAccordion({
-  session,
-  emptyLabel,
-  open,
-  onToggle
-}: {
-  session: AssistantSession | null
-  emptyLabel: string
-  open: boolean
-  onToggle: () => void
-}): JSX.Element {
+// Info icon for the Session details pill (stroked currentColor SVG per the design
+// system line-icon recipe).
+function InfoIcon(): JSX.Element {
   return (
-    <section
-      className={`panel session-detail-accordion ${open ? 'expanded' : 'collapsed'}`}
-      aria-label="Session details"
-    >
-      <div className="panel-header session-detail-header" onClick={onToggle}>
-        <div className="session-detail-heading">
-          <h2>Session Detail</h2>
-          {open ? <span>{session ? session.title : emptyLabel}</span> : null}
-        </div>
-        <button
-          type="button"
-          className="panel-collapse-toggle"
-          aria-label={open ? 'Collapse session details' : 'Expand session details'}
-          aria-expanded={open}
-          onClick={(event) => {
-            event.stopPropagation()
-            onToggle()
-          }}
-          title={open ? 'Collapse session details' : 'Expand session details'}
-        >
-          {open ? '▴' : '▾'}
-        </button>
-      </div>
-      <div className="session-detail-content" aria-hidden={!open}>
-        <div className="session-detail-content-inner">
-          {!session ? (
-            <div className="session-detail-empty">{emptyLabel}</div>
-          ) : (
-            <div className="session-detail-body">
-              <div className="session-detail-summary">
-                <h3>{session.title}</h3>
-                {session.project && session.project !== session.title ? <p>{session.project}</p> : null}
-              </div>
-              <dl className="fact-list session-facts">
-                <Fact label="Project" value={projectLabel(session)} />
-                <Fact label="Path" value={session.projectPath ?? 'Unavailable'} />
-                <Fact label="Branch" value={branchLabel(session)} />
-                <Fact label="Updated" value={formatUpdatedAt(session.updatedAt)} />
-                {titleSourceLabel(session) ? (
-                  <Fact label="Title source" value={titleSourceLabel(session) as string} />
-                ) : null}
-                {session.rawTitle && session.rawTitle !== session.title ? (
-                  <Fact label="Source" value={session.rawTitle} />
-                ) : null}
-              </dl>
-            </div>
-          )}
-        </div>
-      </div>
-    </section>
+    <svg className="session-detail-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <circle cx="8" cy="8" r="6.25" />
+      <path d="M8 7.4v3.4" />
+      <path d="M8 5.15h.01" />
+    </svg>
   )
-})
+}
+
+// Modal popup with the selected session's facts. Reuses the design-system overlay
+// pattern (fixed backdrop below the titlebar, dialog on --surface-1, close on
+// backdrop click / Escape) and the shared `.session-detail-body`/`.session-facts`
+// styles the accordion used.
+export function SessionDetailModal({
+  session,
+  onClose
+}: {
+  session: AssistantSession
+  onClose: () => void
+}): JSX.Element {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  // Portal to <body> so the fixed overlay is never positioned relative to a
+  // transformed ancestor (the history-sidebar animation transforms `.main-stack`).
+  return createPortal(
+    <div className="session-detail-modal-backdrop" onMouseDown={onClose}>
+      <div
+        className="session-detail-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Session details"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="session-detail-modal-header">
+          <h2>Session details</h2>
+          <button
+            type="button"
+            className="session-detail-modal-close"
+            onClick={onClose}
+            aria-label="Close session details"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="session-detail-body">
+          <div className="session-detail-summary">
+            <h3>{session.title}</h3>
+            {session.project && session.project !== session.title ? <p>{session.project}</p> : null}
+          </div>
+          <dl className="fact-list session-facts">
+            <Fact label="Project" value={projectLabel(session)} />
+            <Fact label="Path" value={session.projectPath ?? 'Unavailable'} />
+            <Fact label="Branch" value={branchLabel(session)} />
+            <Fact label="Updated" value={formatUpdatedAt(session.updatedAt)} />
+            {titleSourceLabel(session) ? (
+              <Fact label="Title source" value={titleSourceLabel(session) as string} />
+            ) : null}
+            {session.rawTitle && session.rawTitle !== session.title ? (
+              <Fact label="Source" value={session.rawTitle} />
+            ) : null}
+          </dl>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+}
 
 export function SessionHistorySidebar({
   session,
   historyState,
   newSession = false,
   open,
-  onToggle
+  onToggle,
+  onShowDetails
 }: {
   session: AssistantSession | null
   historyState: SessionHistoryState
   newSession?: boolean
   open: boolean
   onToggle: () => void
+  onShowDetails: () => void
 }): JSX.Element {
   const { history, loading, error } = historyState
   const entryCount = history?.entries.length ?? 0
@@ -294,6 +309,17 @@ export function SessionHistorySidebar({
           <span>{session ? session.title : newSession ? 'New session' : 'No session selected'}</span>
         </div>
         <div className="history-actions">
+          <button
+            type="button"
+            className="history-details-button"
+            onClick={onShowDetails}
+            disabled={!session}
+            aria-haspopup="dialog"
+            aria-label="Session details"
+            title="Session details"
+          >
+            <InfoIcon />
+          </button>
           {session ? (
             <span className="status-pill">{loading && !history ? 'loading' : `${entryCount} entries`}</span>
           ) : null}
