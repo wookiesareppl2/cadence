@@ -1,9 +1,5 @@
 # Product
 
-## Register
-
-product
-
 ## Users
 
 Solo developer using this as a primary daily-driver coding interface. Context: managing multiple AI coding assistant sessions (Claude Code, OpenAI Codex), monitoring token usage against subscription limits, switching between projects and sessions throughout the workday. The user is an expert who knows what every number means; the interface should respect that expertise, not explain it.

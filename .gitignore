@@ -15,6 +15,7 @@ resources/node/
 # are local-only and must never be committed — the repo holds app code only.
 .claude/
 .codex/
+.agents/
 CLAUDE.md
 AGENTS.md
 **/.coverage
