@@ -65,7 +65,7 @@
       {
         "provider": "github",
         "owner": "wookiesareppl2",
-        "repo": "cadence-releases",
+        "repo": "cadence",
         "releaseType": "release"
       }
     ],

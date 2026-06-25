@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/wookiesareppl2/cadence-releases/releases"><strong>Download for Windows</strong></a>
+  <a href="https://github.com/wookiesareppl2/cadence/releases"><strong>Download for Windows</strong></a>
   ·
   <a href="docs/DESIGN.md">Design system</a>
   ·
@@ -52,8 +52,8 @@ clear view of what each assistant session is doing.
 
 Cadence currently targets Windows 10/11.
 
-1. Download the latest installer from
-   [cadence-releases](https://github.com/wookiesareppl2/cadence-releases/releases).
+1. Download the latest installer from the
+   [Releases page](https://github.com/wookiesareppl2/cadence/releases).
 2. Run the installer.
 3. On first launch, connect Claude Code, Codex, or both.
 
@@ -105,8 +105,8 @@ Useful notes:
 
 ## Release Builds
 
-The updater installer is published through the separate
-[`cadence-releases`](https://github.com/wookiesareppl2/cadence-releases/releases) repository.
+The updater installer is published as a GitHub Release on this
+[repository](https://github.com/wookiesareppl2/cadence/releases).
 
 ```bash
 pnpm release
