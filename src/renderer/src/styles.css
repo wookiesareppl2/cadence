@@ -264,9 +264,10 @@ button {
   gap: 12px;
   flex: 0 0 auto;
   position: relative;
-  /* Reserve the OS window-control strip (3 × 46px) on the right so the flowing
-     content never slides under it. */
-  padding: 0 138px 0 14px;
+  /* Reserve the OS window-control strip (3 × 46px = 138px) on the right plus an
+     8px gap (matching the inter-action gap) so the flowing content — notably the
+     search bar — never butts against the minimize button's hover fill. */
+  padding: 0 146px 0 14px;
   border-bottom: 1px solid var(--border);
   background: var(--surface-1);
   -webkit-app-region: drag;

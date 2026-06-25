@@ -203,7 +203,8 @@ and right regions are `flex: 1 1 0; min-width: 0`, which keeps the switcher cent
 there's room. **Never pin titlebar regions with `position: absolute`** — that was the old
 approach and it let the right group slide under the centered switcher. The only absolute
 child is `.window-controls` (the OS min/max/close strip, pinned `right: 0`); the titlebar
-reserves it with `padding-right: 138px` (3 × 46px).
+reserves it with `padding-right: 146px` (3 × 46px strip + an 8px gap, matching the
+inter-action gap, so the search bar doesn't butt against the minimize button's hover fill).
 
 **Overlap is NOT automatic — it is prevented by keeping the right group narrow.** With the
 equal-flex centering, if the right group's content is wider than its half of the bar it
@@ -233,5 +234,5 @@ span; the tier toggles which shows. Use this instead of duplicating buttons.
 **Compact search:** below 1340px the `.titlebar-search` collapses to just its glyph (the
 input stays present at zero width; the container's `onClick` focuses it so the glyph is
 tappable) and expands on `:focus-within`. When expanded it lifts to `position: absolute`
-(`right: 138px`, clearing the window controls) so it overlays leftward rather than shoving
-the other actions.
+(`right: 146px`, clearing the window controls with the same 8px gap) so it overlays leftward
+rather than shoving the other actions.
