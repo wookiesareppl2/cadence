@@ -24,18 +24,19 @@ Never hard-code a hex colour or a raw motion duration — use a token.
 - `--font-ui` (prose/labels), `--font-mono` (commands, counts, glyph icons).
 - `--ease-out-expo`; durations `--motion-panel` (220ms), `--motion-sidebar` (180ms). Respect `prefers-reduced-motion` (handled globally).
 
-## Collapsible panels (Files, Session Detail, History, Notes & Tasks)
+## Collapsible panels (Projects & Sessions, Files, History, Notes & Tasks)
 
 These MUST look and behave identically regardless of dock edge.
 
 - **Toggle glyph:** a single filled-triangle family pointing toward the dock edge when open, inward when collapsed: top `▴`/`▾`, bottom `▾`/`▴`, left `◂`/`▸`, right `▸`/`◂`. No other chevron families.
 - **Toggle icon style:** `--font-mono`, **15px**, colour `--text-2`, **no box** (no border/background). Use the shared `.panel-collapse-toggle` class for header toggles.
-- **Global panel controls:** `Collapse all` / `Expand all` live in the titlebar as compact text actions. They apply only to the active platform and set Files, Session Detail, History, and Notes & Tasks together.
+- **Global panel controls:** `Collapse all` / `Expand all` live in the titlebar as compact text actions. They apply only to the active platform and set Projects & Sessions, Files, History, and Notes & Tasks together.
 - **Hover model (matches the History panel):**
   - *Expanded* → only the triangle/chevron whitens to `--text-1`. No section/background highlight.
   - *Collapsed bar or rail* → the clickable region gets the **accent border**: `background: var(--surface-2); border-color: var(--accent);`. Use the element's real 1px border or the collapsed parent panel's border, not an inset box-shadow, so rounded corners render cleanly.
   - Differentiate states with the collapsed marker already on the element: `[aria-expanded="false"]` (header buttons) or the `.collapsed` class (accordion sections).
-- **Collapsed sidebars** (Files/History) become a 32px vertical rail: a chevron icon on top + a vertical `writing-mode: vertical-rl` label.
+- **Collapsed sidebars** (Projects & Sessions/Files/History) become a 32px vertical rail: a chevron icon on top + a vertical `writing-mode: vertical-rl` label.
+- **Open panel resize:** Projects & Sessions, Files, and History expose an invisible 8px vertical drag handle on their inner edge; Notes & Tasks exposes the same 8px handle on its top edge. Handles use the shared `.panel-resize-handle` classes, reveal an accent wash on hover/drag, and persist size per active platform without changing the 32px collapsed rail.
 
 ## Buttons
 

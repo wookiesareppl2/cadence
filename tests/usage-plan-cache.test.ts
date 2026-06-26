@@ -24,7 +24,7 @@ describe('createCachedPlanUsage', () => {
     const fetcher = vi
       .fn<() => Promise<ClaudePlanUsage>>()
       .mockResolvedValueOnce(usage('2026-06-03T00:00:00.000Z', 20))
-      .mockResolvedValueOnce(usage('2026-06-03T00:05:00.000Z', 30))
+      .mockResolvedValueOnce(usage('2026-06-03T00:00:30.000Z', 30))
     const getUsage = createCachedPlanUsage('Test', fetcher)
 
     const first = await getUsage()
@@ -35,7 +35,14 @@ describe('createCachedPlanUsage', () => {
     expect(cached.refresh?.state).toBe('cached')
     expect(cached.fiveHour?.utilization).toBe(20)
 
-    vi.advanceTimersByTime(5 * 60_000)
+    vi.advanceTimersByTime(29_000)
+    const stillCached = await getUsage()
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(stillCached.refresh?.state).toBe('cached')
+    expect(stillCached.fiveHour?.utilization).toBe(20)
+
+    vi.advanceTimersByTime(1_000)
     const refreshed = await getUsage()
 
     expect(fetcher).toHaveBeenCalledTimes(2)
@@ -87,7 +94,11 @@ describe('createCachedPlanUsage', () => {
     await expect(getUsage()).rejects.toThrow('credentials expired')
     expect(fetcher).toHaveBeenCalledTimes(1)
 
-    vi.advanceTimersByTime(2 * 60_000)
+    vi.advanceTimersByTime(59_000)
+    await expect(getUsage()).rejects.toThrow('credentials expired')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    vi.advanceTimersByTime(1_000)
     const refreshed = await getUsage()
 
     expect(fetcher).toHaveBeenCalledTimes(2)

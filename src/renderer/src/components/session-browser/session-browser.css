@@ -1,5 +1,83 @@
 .project-sidebar {
-  width: 310px;
+  position: relative;
+  width: var(--project-sidebar-width, 310px);
+  overflow: hidden;
+  transition: width var(--motion-sidebar) var(--ease-out-expo);
+}
+
+.project-sidebar.open {
+  width: var(--project-sidebar-width, 310px);
+}
+
+.project-sidebar.closed {
+  width: 32px;
+  border-right: 0;
+  background: transparent;
+}
+
+.project-sidebar-content {
+  width: var(--project-sidebar-width, 310px);
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.project-sidebar.closed .project-sidebar-content {
+  display: none;
+}
+
+.project-sidebar-rail {
+  width: 32px;
+  height: 100%;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 4px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-1);
+  color: var(--text-2);
+  cursor: pointer;
+  transition:
+    border-color 160ms var(--ease-out-expo),
+    background-color 160ms ease,
+    color 160ms ease;
+}
+
+.project-sidebar.closed .project-sidebar-rail {
+  display: flex;
+}
+
+.project-sidebar-rail:hover {
+  border-color: var(--accent);
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+
+.project-sidebar-rail:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.project-sidebar-rail-icon {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.project-sidebar-rail-label {
+  writing-mode: vertical-rl;
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.project-sidebar-rail:hover .project-sidebar-rail-label {
+  color: var(--text-1);
 }
 
 .sidebar-actions {
@@ -1192,6 +1270,7 @@
 }
 
 .history-placeholder {
+  flex: 1 1 auto;
   margin: 12px;
   padding: 12px;
   border: 1px solid var(--border-subtle);
@@ -1206,6 +1285,18 @@
 .history-placeholder.error {
   color: var(--caution);
   border-color: color-mix(in srgb, var(--caution) 45%, var(--border));
+}
+
+.history-entry-summary {
+  flex: 0 0 auto;
+  padding: 6px 12px 8px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-1);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.2;
+  text-align: right;
 }
 
 /* Session details trigger: a compact info icon button in the History panel header

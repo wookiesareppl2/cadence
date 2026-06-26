@@ -1,10 +1,11 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
-import type { CSSProperties, JSX } from 'react'
+import type { CSSProperties, JSX, PointerEvent as ReactPointerEvent } from 'react'
 import type { FileEntry, FileKind } from '@shared/project-files'
 import { FilePreviewModal } from './file-preview-modal'
 import { useProjectFileTree, type FileTreeState } from './use-project-file-tree'
 import './file-tree-panel.css'
 
+type CSSVars = CSSProperties & Record<`--${string}`, string | number>
 type MenuState = { x: number; y: number; relPath: string; entry: FileEntry }
 type DeleteState = { relPath: string; name: string }
 type CreateState = { parentRel: string; kind: FileKind }
@@ -15,6 +16,11 @@ function rowIndent(depth: number): CSSProperties {
 
 function joinRel(parentRel: string, name: string): string {
   return parentRel ? `${parentRel}/${name}` : name
+}
+
+function measuredPanelWidth(event: ReactPointerEvent<HTMLElement>, selector: string, fallback: number): number {
+  const element = event.currentTarget.closest(selector)
+  return element?.getBoundingClientRect().width ?? fallback
 }
 
 function formatSize(bytes: number): string {
@@ -30,6 +36,8 @@ export function FileTreePanel({
   projectName,
   open,
   onToggle,
+  width,
+  onResizeStart,
   onPreviewFile
 }: {
   rootPath: string | null
@@ -38,6 +46,8 @@ export function FileTreePanel({
   projectName: string | null
   open: boolean
   onToggle: () => void
+  width: number | null
+  onResizeStart: (event: ReactPointerEvent<HTMLElement>, startSize: number) => void
   onPreviewFile?: (relPath: string, name: string) => void
 }): JSX.Element {
   const tree = useProjectFileTree(rootPath, distro, projectId)
@@ -77,7 +87,16 @@ export function FileTreePanel({
   }
 
   return (
-    <div className="files-panel-shell open">
+    <div
+      className="files-panel-shell open"
+      style={
+        width === null
+          ? undefined
+          : ({
+              '--files-panel-width': `${width}px`
+            } as CSSVars)
+      }
+    >
       <section className="panel files-panel" aria-label="Project files">
         <div className="panel-header files-panel-header">
           <div className="files-panel-heading">
@@ -138,6 +157,16 @@ export function FileTreePanel({
           )}
         </div>
       </section>
+
+      <div
+        className="panel-resize-handle panel-resize-handle-right files-panel-resize"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize files"
+        onPointerDown={(event) =>
+          onResizeStart(event, measuredPanelWidth(event, '.files-panel-shell', width ?? 280))
+        }
+      />
 
       {menu ? (
         <FileContextMenu

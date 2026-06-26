@@ -1,5 +1,6 @@
 /* Collapsible left column inside .content-body; width animates closed↔open. */
 .files-panel-shell {
+  position: relative;
   flex: 0 0 auto;
   min-height: 0;
   display: flex;
@@ -12,7 +13,7 @@
 }
 
 .files-panel-shell.open {
-  width: clamp(240px, 22vw, 300px);
+  width: var(--files-panel-width, clamp(240px, 22vw, 300px));
 }
 
 .files-panel-rail {

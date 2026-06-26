@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { Dispatch, JSX, SetStateAction } from 'react'
+import type { CSSProperties, Dispatch, JSX, PointerEvent as ReactPointerEvent, SetStateAction } from 'react'
 import { flushSync } from 'react-dom'
 import {
   createPendingSessionId,
@@ -38,7 +38,7 @@ import type {
 } from '@shared/project-files'
 import type { SearchResultItem } from '@shared/search'
 
-const PLAN_POLL_INTERVAL_MS = 60_000
+const PLAN_POLL_INTERVAL_MS = 30_000
 // Splash: keep it on screen long enough to read (no jarring flash on a warm cache),
 // fade out once the active platform's first project scan resolves, and never trap
 // the user if a scan stalls.
@@ -49,6 +49,123 @@ const HISTORY_SIDEBAR_CLOSED_WIDTH = 32
 const HISTORY_SIDEBAR_MOTION_MS = 180
 const HISTORY_SIDEBAR_START_OFFSET_MS = -24
 const HISTORY_SIDEBAR_EASING = 'cubic-bezier(0.16, 1, 0.3, 1)'
+const PROJECT_SIDEBAR_DEFAULT_WIDTH = 310
+const FILES_PANEL_DEFAULT_WIDTH = 280
+const HISTORY_SIDEBAR_DEFAULT_WIDTH = 410
+const WORKSPACE_DOCK_DEFAULT_HEIGHT = 280
+
+type CSSVars = CSSProperties & Record<`--${string}`, string | number>
+type PanelSizeKey = 'projectSidebar' | 'filesPanel' | 'historySidebar' | 'workspaceDock'
+type PlatformPanelSizes = Record<PanelSizeKey, number | null>
+type PanelSizePreferences = Record<PlatformId, PlatformPanelSizes>
+type PanelResizeEdge = 'left' | 'right' | 'top'
+
+const DEFAULT_PANEL_SIZES: PanelSizePreferences = {
+  claude: {
+    projectSidebar: null,
+    filesPanel: null,
+    historySidebar: null,
+    workspaceDock: null
+  },
+  codex: {
+    projectSidebar: null,
+    filesPanel: null,
+    historySidebar: null,
+    workspaceDock: null
+  }
+}
+
+const PANEL_SIZE_LIMITS: Record<PanelSizeKey, { min: number; max: number }> = {
+  projectSidebar: { min: 240, max: 520 },
+  filesPanel: { min: 220, max: 520 },
+  historySidebar: { min: 320, max: 680 },
+  workspaceDock: { min: 190, max: 520 }
+}
+
+const PANEL_SIZE_FALLBACKS: Record<PanelSizeKey, number> = {
+  projectSidebar: PROJECT_SIDEBAR_DEFAULT_WIDTH,
+  filesPanel: FILES_PANEL_DEFAULT_WIDTH,
+  historySidebar: HISTORY_SIDEBAR_DEFAULT_WIDTH,
+  workspaceDock: WORKSPACE_DOCK_DEFAULT_HEIGHT
+}
+
+function clampPanelSize(key: PanelSizeKey, value: number): number {
+  const limit = PANEL_SIZE_LIMITS[key]
+  return Math.min(limit.max, Math.max(limit.min, Math.round(value)))
+}
+
+function normalizePanelSize(key: PanelSizeKey, value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? clampPanelSize(key, value) : null
+}
+
+function revivePanelSizePreferences(value: PanelSizePreferences): PanelSizePreferences {
+  return {
+    claude: {
+      projectSidebar: normalizePanelSize('projectSidebar', value.claude?.projectSidebar),
+      filesPanel: normalizePanelSize('filesPanel', value.claude?.filesPanel),
+      historySidebar: normalizePanelSize('historySidebar', value.claude?.historySidebar),
+      workspaceDock: normalizePanelSize('workspaceDock', value.claude?.workspaceDock)
+    },
+    codex: {
+      projectSidebar: normalizePanelSize('projectSidebar', value.codex?.projectSidebar),
+      filesPanel: normalizePanelSize('filesPanel', value.codex?.filesPanel),
+      historySidebar: normalizePanelSize('historySidebar', value.codex?.historySidebar),
+      workspaceDock: normalizePanelSize('workspaceDock', value.codex?.workspaceDock)
+    }
+  }
+}
+
+function startPanelResize({
+  event,
+  edge,
+  key,
+  startSize,
+  onResize
+}: {
+  event: ReactPointerEvent<HTMLElement>
+  edge: PanelResizeEdge
+  key: PanelSizeKey
+  startSize: number
+  onResize: (size: number) => void
+}): void {
+  if (event.button !== 0) return
+
+  event.preventDefault()
+  event.stopPropagation()
+
+  const handle = event.currentTarget
+  const startX = event.clientX
+  const startY = event.clientY
+  const initialSize = clampPanelSize(key, startSize || PANEL_SIZE_FALLBACKS[key])
+  const axis = edge === 'top' ? 'y' : 'x'
+
+  handle.classList.add('resizing')
+  document.body.dataset.panelResize = axis
+  handle.setPointerCapture?.(event.pointerId)
+
+  const move = (moveEvent: PointerEvent): void => {
+    moveEvent.preventDefault()
+    const delta =
+      edge === 'right'
+        ? moveEvent.clientX - startX
+        : edge === 'left'
+          ? startX - moveEvent.clientX
+          : startY - moveEvent.clientY
+    onResize(clampPanelSize(key, initialSize + delta))
+  }
+
+  const finish = (): void => {
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', finish)
+    window.removeEventListener('pointercancel', finish)
+    handle.classList.remove('resizing')
+    delete document.body.dataset.panelResize
+  }
+
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', finish)
+  window.addEventListener('pointercancel', finish)
+}
 
 function getDetachedTerminalPlatform(): PlatformId | null {
   const params = new URLSearchParams(window.location.search)
@@ -548,6 +665,10 @@ function DashboardApp(): JSX.Element {
     'selection:history-sidebar:v1',
     { claude: false, codex: false }
   )
+  const [projectSidebarOpen, setProjectSidebarOpen] = usePersistentState<Record<PlatformId, boolean>>(
+    'selection:project-sidebar:v1',
+    { claude: true, codex: true }
+  )
   const [workspaceDockOpen, setWorkspaceDockOpen] = usePersistentState<Record<PlatformId, boolean>>(
     'selection:workspace-dock:v1',
     { claude: false, codex: false }
@@ -555,6 +676,11 @@ function DashboardApp(): JSX.Element {
   const [filesPanelOpen, setFilesPanelOpen] = usePersistentState<Record<PlatformId, boolean>>(
     'selection:files-panel:v1',
     { claude: false, codex: false }
+  )
+  const [panelSizes, setPanelSizes] = usePersistentState<PanelSizePreferences>(
+    'selection:panel-sizes:v1',
+    DEFAULT_PANEL_SIZES,
+    revivePanelSizePreferences
   )
   const [terminalDetached, setTerminalDetached] = useState<Record<PlatformId, boolean>>({
     claude: false,
@@ -597,16 +723,19 @@ function DashboardApp(): JSX.Element {
     (item: SearchResultItem, query: string) => {
       if (item.kind === 'project') {
         setSelectedProjectIds((current) => ({ ...current, [platform]: item.projectId }))
+        setProjectSidebarOpen((current) => ({ ...current, [platform]: true }))
         return
       }
       if (item.kind === 'session') {
         setSelectedProjectIds((current) => ({ ...current, [platform]: item.projectId }))
         setSelectedSessionIds((current) => ({ ...current, [platform]: item.sessionId ?? null }))
+        setProjectSidebarOpen((current) => ({ ...current, [platform]: true }))
         return
       }
       if (item.kind === 'history') {
         setSelectedProjectIds((current) => ({ ...current, [platform]: item.projectId }))
         setSelectedSessionIds((current) => ({ ...current, [platform]: item.sessionId ?? null }))
+        setProjectSidebarOpen((current) => ({ ...current, [platform]: true }))
         setHistorySidebarOpen((current) => ({ ...current, [platform]: true }))
         return
       }
@@ -631,7 +760,14 @@ function DashboardApp(): JSX.Element {
         }
       }
     },
-    [platform, setHistorySidebarOpen, setSelectedProjectIds, setSelectedSessionIds, terminalDetached]
+    [
+      platform,
+      setHistorySidebarOpen,
+      setProjectSidebarOpen,
+      setSelectedProjectIds,
+      setSelectedSessionIds,
+      terminalDetached
+    ]
   )
 
   // A file clicked inside an (attached) terminal session opens in the shared
@@ -696,6 +832,14 @@ function DashboardApp(): JSX.Element {
     setHistorySidebarOpen((current) => ({ ...current, codex: !current.codex }))
   }, [setHistorySidebarOpen])
 
+  const toggleClaudeProjectSidebar = useCallback(() => {
+    setProjectSidebarOpen((current) => ({ ...current, claude: !current.claude }))
+  }, [setProjectSidebarOpen])
+
+  const toggleCodexProjectSidebar = useCallback(() => {
+    setProjectSidebarOpen((current) => ({ ...current, codex: !current.codex }))
+  }, [setProjectSidebarOpen])
+
   const toggleClaudeWorkspaceDock = useCallback(() => {
     setWorkspaceDockOpen((current) => ({ ...current, claude: !current.claude }))
   }, [setWorkspaceDockOpen])
@@ -711,6 +855,19 @@ function DashboardApp(): JSX.Element {
   const toggleCodexFilesPanel = useCallback(() => {
     setFilesPanelOpen((current) => ({ ...current, codex: !current.codex }))
   }, [setFilesPanelOpen])
+
+  const setPanelSize = useCallback(
+    (targetPlatform: PlatformId, key: PanelSizeKey, size: number) => {
+      setPanelSizes((current) => ({
+        ...current,
+        [targetPlatform]: {
+          ...current[targetPlatform],
+          [key]: clampPanelSize(key, size)
+        }
+      }))
+    },
+    [setPanelSizes]
+  )
 
   const detachTerminals = useCallback(
     (targetPlatform: PlatformId) => {
@@ -759,19 +916,25 @@ function DashboardApp(): JSX.Element {
   // Session details is a modal, not a collapsible panel, so it's excluded from the
   // Collapse all / Expand all set.
   const activePanelStates = useMemo(
-    () => [historySidebarOpen[platform], workspaceDockOpen[platform], filesPanelOpen[platform]],
-    [filesPanelOpen, historySidebarOpen, platform, workspaceDockOpen]
+    () => [
+      projectSidebarOpen[platform],
+      historySidebarOpen[platform],
+      workspaceDockOpen[platform],
+      filesPanelOpen[platform]
+    ],
+    [filesPanelOpen, historySidebarOpen, platform, projectSidebarOpen, workspaceDockOpen]
   )
   const activePanelsAllCollapsed = activePanelStates.every((open) => !open)
   const activePanelsAllExpanded = activePanelStates.every(Boolean)
 
   const setActivePlatformPanelsOpen = useCallback(
     (open: boolean) => {
+      setProjectSidebarOpen((current) => (current[platform] === open ? current : { ...current, [platform]: open }))
       setHistorySidebarOpen((current) => (current[platform] === open ? current : { ...current, [platform]: open }))
       setWorkspaceDockOpen((current) => (current[platform] === open ? current : { ...current, [platform]: open }))
       setFilesPanelOpen((current) => (current[platform] === open ? current : { ...current, [platform]: open }))
     },
-    [platform, setFilesPanelOpen, setHistorySidebarOpen, setWorkspaceDockOpen]
+    [platform, setFilesPanelOpen, setHistorySidebarOpen, setProjectSidebarOpen, setWorkspaceDockOpen]
   )
 
   const cssVars = useMemo(
@@ -780,7 +943,7 @@ function DashboardApp(): JSX.Element {
         '--accent': activePlatform.accent,
         '--accent-dim': activePlatform.accentDim,
         '--accent-hover': activePlatform.accentHover
-      }) as React.CSSProperties,
+      }) as CSSVars,
     [activePlatform]
   )
 
@@ -840,18 +1003,22 @@ function DashboardApp(): JSX.Element {
           selectedProjectId={selectedProjectIds.claude}
           selectedSessionId={selectedSessionIds.claude}
           sessionDetailOpen={sessionDetailOpen.claude}
+          projectSidebarOpen={projectSidebarOpen.claude}
           historySidebarOpen={historySidebarOpen.claude}
           workspaceDockOpen={workspaceDockOpen.claude}
           filesPanelOpen={filesPanelOpen.claude}
+          panelSizes={panelSizes.claude}
           terminalsDetached={terminalDetached.claude}
           followEdits={previewFollowEdits.claude}
           previewSelection={filePreviewSelections.claude}
           onSelectedProjectIdChange={selectClaudeProject}
           onSelectedSessionIdChange={selectClaudeSession}
           onToggleSessionDetail={toggleClaudeSessionDetail}
+          onToggleProjectSidebar={toggleClaudeProjectSidebar}
           onToggleHistorySidebar={toggleClaudeHistorySidebar}
           onToggleWorkspaceDock={toggleClaudeWorkspaceDock}
           onToggleFilesPanel={toggleClaudeFilesPanel}
+          onPanelResize={(key, size) => setPanelSize('claude', key, size)}
           onPreviewFile={(selection) =>
             setFilePreviewSelections((current) => ({ ...current, claude: selection }))
           }
@@ -870,18 +1037,22 @@ function DashboardApp(): JSX.Element {
           selectedProjectId={selectedProjectIds.codex}
           selectedSessionId={selectedSessionIds.codex}
           sessionDetailOpen={sessionDetailOpen.codex}
+          projectSidebarOpen={projectSidebarOpen.codex}
           historySidebarOpen={historySidebarOpen.codex}
           workspaceDockOpen={workspaceDockOpen.codex}
           filesPanelOpen={filesPanelOpen.codex}
+          panelSizes={panelSizes.codex}
           terminalsDetached={terminalDetached.codex}
           followEdits={previewFollowEdits.codex}
           previewSelection={filePreviewSelections.codex}
           onSelectedProjectIdChange={selectCodexProject}
           onSelectedSessionIdChange={selectCodexSession}
           onToggleSessionDetail={toggleCodexSessionDetail}
+          onToggleProjectSidebar={toggleCodexProjectSidebar}
           onToggleHistorySidebar={toggleCodexHistorySidebar}
           onToggleWorkspaceDock={toggleCodexWorkspaceDock}
           onToggleFilesPanel={toggleCodexFilesPanel}
+          onPanelResize={(key, size) => setPanelSize('codex', key, size)}
           onPreviewFile={(selection) =>
             setFilePreviewSelections((current) => ({ ...current, codex: selection }))
           }
@@ -963,7 +1134,7 @@ function DetachedTerminalWindow({ platform }: { platform: PlatformId }): JSX.Ele
         '--accent': platformConfig.accent,
         '--accent-dim': platformConfig.accentDim,
         '--accent-hover': platformConfig.accentHover
-      }) as React.CSSProperties,
+      }) as CSSVars,
     [platformConfig]
   )
 
@@ -1571,24 +1742,70 @@ function useHistorySidebarMotion(
   return { contentBodyRef, toggleHistorySidebar }
 }
 
+function usePanelResizeHandlers(
+  panelSizes: PlatformPanelSizes,
+  onPanelResize: (key: PanelSizeKey, size: number) => void
+): {
+  startProjectSidebarResize: (event: ReactPointerEvent<HTMLElement>, startSize: number) => void
+  startFilesPanelResize: (event: ReactPointerEvent<HTMLElement>, startSize: number) => void
+  startHistorySidebarResize: (event: ReactPointerEvent<HTMLElement>, startSize: number) => void
+  startWorkspaceDockResize: (event: ReactPointerEvent<HTMLElement>, startSize: number) => void
+} {
+  const startResize = useCallback(
+    (event: ReactPointerEvent<HTMLElement>, key: PanelSizeKey, edge: PanelResizeEdge, startSize: number) => {
+      startPanelResize({
+        event,
+        key,
+        edge,
+        startSize: startSize || panelSizes[key] || PANEL_SIZE_FALLBACKS[key],
+        onResize: (size) => onPanelResize(key, size)
+      })
+    },
+    [onPanelResize, panelSizes]
+  )
+
+  return {
+    startProjectSidebarResize: useCallback(
+      (event, startSize) => startResize(event, 'projectSidebar', 'right', startSize),
+      [startResize]
+    ),
+    startFilesPanelResize: useCallback(
+      (event, startSize) => startResize(event, 'filesPanel', 'right', startSize),
+      [startResize]
+    ),
+    startHistorySidebarResize: useCallback(
+      (event, startSize) => startResize(event, 'historySidebar', 'left', startSize),
+      [startResize]
+    ),
+    startWorkspaceDockResize: useCallback(
+      (event, startSize) => startResize(event, 'workspaceDock', 'top', startSize),
+      [startResize]
+    )
+  }
+}
+
 function ClaudeWorkspace({
   onReady,
   usageState,
   selectedProjectId,
   selectedSessionId,
   sessionDetailOpen,
+  projectSidebarOpen,
   historySidebarOpen,
   workspaceDockOpen,
   filesPanelOpen,
+  panelSizes,
   terminalsDetached,
   followEdits,
   previewSelection,
   onSelectedProjectIdChange,
   onSelectedSessionIdChange,
   onToggleSessionDetail,
+  onToggleProjectSidebar,
   onToggleHistorySidebar,
   onToggleWorkspaceDock,
   onToggleFilesPanel,
+  onPanelResize,
   onPreviewFile,
   onOpenTerminalFile,
   onToggleFollowEdits,
@@ -1601,18 +1818,22 @@ function ClaudeWorkspace({
   selectedProjectId: string | null
   selectedSessionId: string | null
   sessionDetailOpen: boolean
+  projectSidebarOpen: boolean
   historySidebarOpen: boolean
   workspaceDockOpen: boolean
   filesPanelOpen: boolean
+  panelSizes: PlatformPanelSizes
   terminalsDetached: boolean
   followEdits: boolean
   previewSelection: FilePreviewSelection | null
   onSelectedProjectIdChange: (projectId: string | null) => void
   onSelectedSessionIdChange: (sessionId: string | null) => void
   onToggleSessionDetail: () => void
+  onToggleProjectSidebar: () => void
   onToggleHistorySidebar: () => void
   onToggleWorkspaceDock: () => void
   onToggleFilesPanel: () => void
+  onPanelResize: (key: PanelSizeKey, size: number) => void
   onPreviewFile: (selection: FilePreviewSelection) => void
   onOpenTerminalFile: (request: FileRequest, line?: number) => void
   onToggleFollowEdits: () => void
@@ -1658,6 +1879,7 @@ function ClaudeWorkspace({
     historySidebarOpen,
     onToggleHistorySidebar
   )
+  const panelResize = usePanelResizeHandlers(panelSizes, onPanelResize)
   const newSession = isPendingSessionId(selectedSessionId)
   const selectedProject = sessionBrowser.selectedProject
   const watchRoot = useMemo<ProjectFileWatchRequest | null>(
@@ -1723,6 +1945,10 @@ function ClaudeWorkspace({
         emptyLabel="No Claude projects found"
         browser={sessionBrowser}
         pendingSessions={pendingSessions}
+        open={projectSidebarOpen}
+        onToggle={onToggleProjectSidebar}
+        width={panelSizes.projectSidebar}
+        onResizeStart={panelResize.startProjectSidebarResize}
         onStartSession={startSession}
         onAbandonPendingSession={abandonPendingSession}
         onRenamePendingSession={renamePendingSession}
@@ -1746,6 +1972,8 @@ function ClaudeWorkspace({
             projectName={sessionBrowser.selectedProject?.name ?? null}
             open={filesPanelOpen}
             onToggle={onToggleFilesPanel}
+            width={panelSizes.filesPanel}
+            onResizeStart={panelResize.startFilesPanelResize}
             onPreviewFile={terminalsDetached ? handlePreviewFile : undefined}
           />
           <div className="main-stack">
@@ -1791,6 +2019,8 @@ function ClaudeWorkspace({
               projectName={sessionBrowser.selectedProject?.name ?? null}
               open={workspaceDockOpen}
               onToggle={onToggleWorkspaceDock}
+              height={panelSizes.workspaceDock}
+              onResizeStart={panelResize.startWorkspaceDockResize}
             />
           </div>
           <SessionHistorySidebar
@@ -1799,6 +2029,8 @@ function ClaudeWorkspace({
             newSession={newSession}
             open={historySidebarOpen}
             onToggle={toggleHistorySidebar}
+            width={panelSizes.historySidebar}
+            onResizeStart={panelResize.startHistorySidebarResize}
             onShowDetails={onToggleSessionDetail}
             onResume={() => {
               const target = sessionBrowser.selectedSession
@@ -1817,18 +2049,22 @@ function CodexWorkspace({
   selectedProjectId,
   selectedSessionId,
   sessionDetailOpen,
+  projectSidebarOpen,
   historySidebarOpen,
   workspaceDockOpen,
   filesPanelOpen,
+  panelSizes,
   terminalsDetached,
   followEdits,
   previewSelection,
   onSelectedProjectIdChange,
   onSelectedSessionIdChange,
   onToggleSessionDetail,
+  onToggleProjectSidebar,
   onToggleHistorySidebar,
   onToggleWorkspaceDock,
   onToggleFilesPanel,
+  onPanelResize,
   onPreviewFile,
   onOpenTerminalFile,
   onToggleFollowEdits,
@@ -1841,18 +2077,22 @@ function CodexWorkspace({
   selectedProjectId: string | null
   selectedSessionId: string | null
   sessionDetailOpen: boolean
+  projectSidebarOpen: boolean
   historySidebarOpen: boolean
   workspaceDockOpen: boolean
   filesPanelOpen: boolean
+  panelSizes: PlatformPanelSizes
   terminalsDetached: boolean
   followEdits: boolean
   previewSelection: FilePreviewSelection | null
   onSelectedProjectIdChange: (projectId: string | null) => void
   onSelectedSessionIdChange: (sessionId: string | null) => void
   onToggleSessionDetail: () => void
+  onToggleProjectSidebar: () => void
   onToggleHistorySidebar: () => void
   onToggleWorkspaceDock: () => void
   onToggleFilesPanel: () => void
+  onPanelResize: (key: PanelSizeKey, size: number) => void
   onPreviewFile: (selection: FilePreviewSelection) => void
   onOpenTerminalFile: (request: FileRequest, line?: number) => void
   onToggleFollowEdits: () => void
@@ -1898,6 +2138,7 @@ function CodexWorkspace({
     historySidebarOpen,
     onToggleHistorySidebar
   )
+  const panelResize = usePanelResizeHandlers(panelSizes, onPanelResize)
   const newSession = isPendingSessionId(selectedSessionId)
   const selectedProject = sessionBrowser.selectedProject
   const watchRoot = useMemo<ProjectFileWatchRequest | null>(
@@ -1962,6 +2203,10 @@ function CodexWorkspace({
         emptyLabel="No Codex projects found"
         browser={sessionBrowser}
         pendingSessions={pendingSessions}
+        open={projectSidebarOpen}
+        onToggle={onToggleProjectSidebar}
+        width={panelSizes.projectSidebar}
+        onResizeStart={panelResize.startProjectSidebarResize}
         onStartSession={startSession}
         onAbandonPendingSession={abandonPendingSession}
         onRenamePendingSession={renamePendingSession}
@@ -1985,6 +2230,8 @@ function CodexWorkspace({
             projectName={sessionBrowser.selectedProject?.name ?? null}
             open={filesPanelOpen}
             onToggle={onToggleFilesPanel}
+            width={panelSizes.filesPanel}
+            onResizeStart={panelResize.startFilesPanelResize}
             onPreviewFile={terminalsDetached ? handlePreviewFile : undefined}
           />
           <div className="main-stack">
@@ -2030,6 +2277,8 @@ function CodexWorkspace({
               projectName={sessionBrowser.selectedProject?.name ?? null}
               open={workspaceDockOpen}
               onToggle={onToggleWorkspaceDock}
+              height={panelSizes.workspaceDock}
+              onResizeStart={panelResize.startWorkspaceDockResize}
             />
           </div>
           <SessionHistorySidebar
@@ -2038,6 +2287,8 @@ function CodexWorkspace({
             newSession={newSession}
             open={historySidebarOpen}
             onToggle={toggleHistorySidebar}
+            width={panelSizes.historySidebar}
+            onResizeStart={panelResize.startHistorySidebarResize}
             onShowDetails={onToggleSessionDetail}
             onResume={() => {
               const target = sessionBrowser.selectedSession

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import type { JSX } from 'react'
+import type { CSSProperties, JSX, PointerEvent as ReactPointerEvent } from 'react'
 import type { ProjectTask } from '@shared/project-workspace'
 // Lazy-loaded so TipTap/ProseMirror (~900 kB) is only fetched when the user opens
 // the Notes dock, instead of being parsed at every startup. The dock is collapsed
@@ -8,16 +8,28 @@ const NotesEditor = lazy(() => import('./notes-editor').then((module) => ({ defa
 import { useProjectWorkspace, type ProjectWorkspaceState } from './use-project-workspace'
 import './project-workspace-dock.css'
 
+type CSSVars = CSSProperties & Record<`--${string}`, string | number>
+
+function measuredDockBodyHeight(event: ReactPointerEvent<HTMLElement>, fallback: number): number {
+  const dock = event.currentTarget.closest('.workspace-dock')
+  const body = dock?.querySelector<HTMLElement>('.workspace-dock-body')
+  return body?.getBoundingClientRect().height ?? fallback
+}
+
 export function ProjectWorkspaceDock({
   projectId,
   projectName,
   open,
-  onToggle
+  onToggle,
+  height,
+  onResizeStart
 }: {
   projectId: string | null
   projectName: string | null
   open: boolean
   onToggle: () => void
+  height: number | null
+  onResizeStart: (event: ReactPointerEvent<HTMLElement>, startSize: number) => void
 }): JSX.Element {
   const workspace = useProjectWorkspace(projectId)
   const { tasks, notes } = workspace.workspace
@@ -28,7 +40,26 @@ export function ProjectWorkspaceDock({
     : 'Select a project'
 
   return (
-    <section className={`panel workspace-dock ${open ? 'expanded' : 'collapsed'}`} aria-label="Project notes and tasks">
+    <section
+      className={`panel workspace-dock ${open ? 'expanded' : 'collapsed'}`}
+      aria-label="Project notes and tasks"
+      style={
+        height === null
+          ? undefined
+          : ({
+              '--workspace-dock-height': `${height}px`
+            } as CSSVars)
+      }
+    >
+      {open ? (
+        <div
+          className="panel-resize-handle panel-resize-handle-top workspace-dock-resize"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize notes and tasks"
+          onPointerDown={(event) => onResizeStart(event, measuredDockBodyHeight(event, height ?? 280))}
+        />
+      ) : null}
       <button
         type="button"
         className="workspace-dock-header"

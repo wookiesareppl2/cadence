@@ -1,4 +1,5 @@
 .workspace-dock {
+  position: relative;
   min-height: 0;
   transition:
     border-color 160ms var(--ease-out-expo),
@@ -64,7 +65,7 @@
 
 .workspace-dock-body {
   display: flex;
-  height: clamp(190px, 30vh, 360px);
+  height: var(--workspace-dock-height, clamp(190px, 30vh, 360px));
   min-height: 0;
   border-top: 1px solid var(--border);
 }

@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { JSX } from 'react'
+import type { CSSProperties, JSX, PointerEvent as ReactPointerEvent } from 'react'
 import type {
   AssistantSession,
   AssistantSessionHistoryEntry
@@ -16,6 +16,8 @@ import {
   type SessionHistoryState
 } from './use-session-browser'
 import './session-browser.css'
+
+type CSSVars = CSSProperties & Record<`--${string}`, string | number>
 
 // Only tool rows carry detail beyond the rail badge (which tool ran). User,
 // assistant, and context rows are fully identified by the rail, so showing a
@@ -37,12 +39,27 @@ function historyRawCodeLanguage(text: string): string | null {
   return trimmed.startsWith('{') || trimmed.startsWith('[') ? 'json' : null
 }
 
+function measuredPanelSize(
+  event: ReactPointerEvent<HTMLElement>,
+  selector: string,
+  axis: 'width' | 'height',
+  fallback: number
+): number {
+  const element = event.currentTarget.closest(selector)
+  const rect = element?.getBoundingClientRect()
+  return rect ? rect[axis] : fallback
+}
+
 export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
   title,
   ariaLabel,
   emptyLabel,
   browser,
   pendingSessions,
+  open,
+  onToggle,
+  width,
+  onResizeStart,
   onStartSession,
   onAbandonPendingSession,
   onRenamePendingSession
@@ -54,6 +71,10 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
   // Started-but-unsaved sessions, shown as rows immediately so a freshly started
   // session is reselectable before its transcript exists.
   pendingSessions: AssistantSession[]
+  open: boolean
+  onToggle: () => void
+  width: number | null
+  onResizeStart: (event: ReactPointerEvent<HTMLElement>, startSize: number) => void
   onStartSession: (project: ProjectSessionGroup) => void
   onAbandonPendingSession: (id: string) => Promise<{ trashed: number }>
   onRenamePendingSession: (id: string, title: string | null) => Promise<void>
@@ -71,89 +92,137 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
   const sessionRows = [...pendingForProject, ...browser.projectSessions]
   const highlightSessionId =
     browser.selectedSession?.id ?? (isPendingSessionId(browser.selectedSessionId) ? browser.selectedSessionId : null)
+  const sidebarStyle =
+    width === null
+      ? undefined
+      : ({
+          '--project-sidebar-width': `${width}px`
+        } as CSSVars)
 
   return (
     <>
-      <aside className="sidebar project-sidebar" aria-label={ariaLabel}>
-        <div className="sidebar-header">
-          <h2>{title}</h2>
-          <div className="sidebar-actions">
-            <button
-              type="button"
-              className="sidebar-action"
-              onClick={() => browser.attachWorkspace()}
-              title="Attach an existing folder or create a new project workspace"
-            >
-              + New
-            </button>
-            <button
-              type="button"
-              className="sidebar-action"
-              onClick={() => setGithubImportOpen(true)}
-              title="Import from GitHub"
-              aria-haspopup="dialog"
-            >
-              <GitHubImportIcon />
-              GitHub
-            </button>
+      <aside className={`sidebar project-sidebar ${open ? 'open' : 'closed'}`} aria-label={ariaLabel} style={sidebarStyle}>
+        <button
+          type="button"
+          className="project-sidebar-rail"
+          aria-label="Show projects and sessions"
+          aria-expanded={false}
+          onClick={onToggle}
+          tabIndex={open ? -1 : 0}
+          title="Show projects and sessions"
+        >
+          <span className="project-sidebar-rail-icon" aria-hidden="true">
+            ▸
+          </span>
+          <span className="project-sidebar-rail-label">Projects</span>
+        </button>
+        <div className="project-sidebar-content" aria-hidden={!open}>
+          <div className="sidebar-header">
+            <h2>{title}</h2>
+            <div className="sidebar-actions">
+              <button
+                type="button"
+                className="sidebar-action"
+                onClick={() => browser.attachWorkspace()}
+                title="Attach an existing folder or create a new project workspace"
+                tabIndex={open ? 0 : -1}
+              >
+                + New
+              </button>
+              <button
+                type="button"
+                className="sidebar-action"
+                onClick={() => setGithubImportOpen(true)}
+                title="Import from GitHub"
+                aria-haspopup="dialog"
+                tabIndex={open ? 0 : -1}
+              >
+                <GitHubImportIcon />
+                GitHub
+              </button>
+              <button
+                type="button"
+                className="panel-collapse-toggle project-sidebar-collapse"
+                aria-label="Hide projects and sessions"
+                aria-expanded={true}
+                onClick={onToggle}
+                tabIndex={open ? 0 : -1}
+                title="Hide projects and sessions"
+              >
+                ◂
+              </button>
+            </div>
           </div>
-        </div>
-        <input
-          className="sidebar-search"
-          placeholder="Search projects"
-          aria-label={`Search ${ariaLabel}`}
-          value={browser.query}
-          onChange={(event) => browser.setQuery(event.target.value)}
-        />
-        <div className="project-list" aria-label={`${ariaLabel} projects`}>
-          <ProjectList
-            projects={browser.filteredProjects}
-            loading={browser.loading}
-            error={browser.error}
-            emptyLabel={projectEmptyMessage}
-            selectedProjectId={selectedProject?.id ?? null}
-            onSelectProject={browser.selectProject}
-            onRenameProject={browser.renameProject}
-            onDeleteProject={browser.deleteProject}
+          <input
+            className="sidebar-search"
+            placeholder="Search projects"
+            aria-label={`Search ${ariaLabel}`}
+            value={browser.query}
+            onChange={(event) => browser.setQuery(event.target.value)}
+            tabIndex={open ? 0 : -1}
           />
-        </div>
-        <div className="session-stack">
-          <div className="session-stack-header">
-            <span className="session-stack-title">
-              Sessions
-              <TitleGenerationStatus browser={browser} />
-            </span>
-            <button
-              type="button"
-              className="session-start-action"
-              disabled={!canStartSession}
-              title={
-                canStartSession
-                  ? `Start a new terminal session in ${selectedProject?.path}`
-                  : 'Select a project with a folder to start a session'
-              }
-              onClick={() => selectedProject && onStartSession(selectedProject)}
-            >
-              + New Session
-            </button>
-          </div>
-          <div className="session-list compact" aria-label={`${ariaLabel} sessions`}>
-            <SessionList
-              sessions={sessionRows}
+          <div className="project-list" aria-label={`${ariaLabel} projects`}>
+            <ProjectList
+              projects={browser.filteredProjects}
               loading={browser.loading}
               error={browser.error}
-              emptyLabel={selectedProject ? 'No sessions yet — start one' : 'Select a project'}
-              selectedSessionId={highlightSessionId}
-              onSelectSession={browser.selectSession}
-              onRenameSession={(id, titleValue) =>
-                isPendingSessionId(id) ? onRenamePendingSession(id, titleValue) : browser.renameSession(id, titleValue)
-              }
-              onDeleteSession={(id) =>
-                isPendingSessionId(id) ? onAbandonPendingSession(id) : browser.deleteSession(id)
-              }
+              emptyLabel={projectEmptyMessage}
+              selectedProjectId={selectedProject?.id ?? null}
+              onSelectProject={browser.selectProject}
+              onRenameProject={browser.renameProject}
+              onDeleteProject={browser.deleteProject}
             />
           </div>
+          <div className="session-stack">
+            <div className="session-stack-header">
+              <span className="session-stack-title">
+                Sessions
+                <TitleGenerationStatus browser={browser} />
+              </span>
+              <button
+                type="button"
+                className="session-start-action"
+                disabled={!canStartSession}
+                title={
+                  canStartSession
+                    ? `Start a new terminal session in ${selectedProject?.path}`
+                    : 'Select a project with a folder to start a session'
+                }
+                onClick={() => selectedProject && onStartSession(selectedProject)}
+                tabIndex={open ? 0 : -1}
+              >
+                + New Session
+              </button>
+            </div>
+            <div className="session-list compact" aria-label={`${ariaLabel} sessions`}>
+              <SessionList
+                sessions={sessionRows}
+                loading={browser.loading}
+                error={browser.error}
+                emptyLabel={selectedProject ? 'No sessions yet — start one' : 'Select a project'}
+                selectedSessionId={highlightSessionId}
+                onSelectSession={browser.selectSession}
+                onRenameSession={(id, titleValue) =>
+                  isPendingSessionId(id) ? onRenamePendingSession(id, titleValue) : browser.renameSession(id, titleValue)
+                }
+                onDeleteSession={(id) =>
+                  isPendingSessionId(id) ? onAbandonPendingSession(id) : browser.deleteSession(id)
+                }
+              />
+            </div>
+          </div>
         </div>
+        {open ? (
+          <div
+            className="panel-resize-handle panel-resize-handle-right project-sidebar-resize"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize projects and sessions"
+            onPointerDown={(event) =>
+              onResizeStart(event, measuredPanelSize(event, '.project-sidebar', 'width', width ?? 310))
+            }
+          />
+        ) : null}
       </aside>
       {githubImportOpen ? <GitHubImportModal browser={browser} onClose={() => setGithubImportOpen(false)} /> : null}
     </>
@@ -333,6 +402,8 @@ export function SessionHistorySidebar({
   newSession = false,
   open,
   onToggle,
+  width,
+  onResizeStart,
   onShowDetails,
   onResume
 }: {
@@ -341,11 +412,17 @@ export function SessionHistorySidebar({
   newSession?: boolean
   open: boolean
   onToggle: () => void
+  width: number | null
+  onResizeStart: (event: ReactPointerEvent<HTMLElement>, startSize: number) => void
   onShowDetails: () => void
   onResume?: () => void
 }): JSX.Element {
   const { history, loading, error } = historyState
   const entryCount = history?.entries.length ?? 0
+  const entrySummary =
+    loading && !history
+      ? 'Loading entries...'
+      : `${entryCount} ${entryCount === 1 ? 'entry' : 'entries'}`
 
   // In-panel search keeps the whole transcript visible (Ctrl+F style) and highlights
   // the matched word in place, stepping through occurrences with prev/next. Matches
@@ -441,9 +518,15 @@ export function SessionHistorySidebar({
       )
     })
   }, [displayedEntries])
+  const sidebarStyle =
+    width === null
+      ? undefined
+      : ({
+          '--history-sidebar-open-width': `${width}px`
+        } as CSSVars)
 
   return (
-    <aside className={`history-sidebar-shell ${open ? 'open' : 'closed'}`} aria-label="Session history">
+    <aside className={`history-sidebar-shell ${open ? 'open' : 'closed'}`} aria-label="Session history" style={sidebarStyle}>
       <button
         type="button"
         className="history-sidebar-toggle"
@@ -488,9 +571,6 @@ export function SessionHistorySidebar({
           >
             <InfoIcon />
           </button>
-          {session ? (
-            <span className="status-pill">{loading && !history ? 'loading' : `${entryCount} entries`}</span>
-          ) : null}
           <button
             type="button"
             className="panel-collapse-toggle"
@@ -574,7 +654,19 @@ export function SessionHistorySidebar({
           {historyEntries}
         </div>
       )}
+      {session ? <div className="history-entry-summary">{entrySummary}</div> : null}
     </section>
+    {open ? (
+      <div
+        className="panel-resize-handle panel-resize-handle-left history-sidebar-resize"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize history"
+        onPointerDown={(event) =>
+          onResizeStart(event, measuredPanelSize(event, '.history-sidebar-shell', 'width', width ?? 410))
+        }
+      />
+    ) : null}
     </aside>
   )
 }
