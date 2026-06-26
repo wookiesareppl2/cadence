@@ -11,7 +11,13 @@ export type { TerminalTab } from '@shared/terminal'
 
 export type TerminalDeckState = {
   tabs: TerminalTab[]
-  addTerminal: (sessionKey: string, cwd?: string | null, title?: string, wslDistro?: string | null) => void
+  addTerminal: (
+    sessionKey: string,
+    cwd?: string | null,
+    title?: string,
+    wslDistro?: string | null,
+    initialInput?: string | null
+  ) => void
   closeTerminal: (id: string) => void
   // Re-point a started session's terminals from their pending id onto the real
   // session id once the transcript is discovered, so they follow the session.
@@ -27,7 +33,9 @@ function isPendingSessionKey(key: string): boolean {
 const TERMINAL_THEME = {
   background: '#191614',
   foreground: '#e7ded7',
-  cursor: '#e07a5f',
+  // Keep the cursor visible without using the accent block, which flickers as
+  // Codex rewrites animated status lines.
+  cursor: '#cbbdb4',
   // A clearly visible translucent highlight (the old near-black #3b322d was almost
   // invisible against the terminal background, so drag-selection looked broken).
   // Translucent keeps the selected text readable on top.
@@ -49,6 +57,30 @@ const TERMINAL_THEME = {
   red: '#c95f4c',
   white: '#e7ded7',
   yellow: '#d5aa5f'
+}
+
+// Codex on native Windows reads console INPUT_RECORD key events (via crossterm),
+// not raw VT bytes, so neither a raw LF (Ctrl+J) nor CSI-u reaches it as a key
+// event through ConPTY. The protocol ConPTY understands is win32-input-mode:
+// ESC [ Vk ; Sc ; Uc ; Kd ; Cs ; Rc _ . We inject a Shift+Enter key-down then
+// key-up (Vk=13 VK_RETURN, Sc=28, Uc=13, Cs=16 SHIFT_PRESSED), which ConPTY turns
+// into a real Shift+Enter event that Codex maps to insert_newline.
+const CODEX_PROMPT_NEWLINE = '\x1b[13;28;13;1;16_\x1b[13;28;13;0;16_'
+
+// Claude Code (Node/Ink) submits on Enter; it inserts a newline when it receives
+// Meta+Enter as ESC+CR ("\x1b\r") — the same sequence its /terminal-setup writes
+// for Shift+Enter. Unlike Codex it reads a byte stream (via libuv), so a raw escape
+// sequence works where a win32-input key record would be collapsed to a bare CR.
+const CLAUDE_PROMPT_NEWLINE = '\x1b\r'
+
+// The prompt-newline shortcut differs per CLI: Codex uses Shift+Enter, Claude uses
+// Ctrl+Enter. Returns the bytes to inject for a newline, or null if the keydown is
+// not a newline shortcut (so Enter and everything else fall through unchanged).
+function promptNewlineSequence(platform: TerminalPlatform, event: KeyboardEvent): string | null {
+  if (event.key !== 'Enter' || event.altKey || event.metaKey) return null
+  if (platform === 'codex' && event.shiftKey && !event.ctrlKey) return CODEX_PROMPT_NEWLINE
+  if (platform === 'claude' && event.ctrlKey && !event.shiftKey) return CLAUDE_PROMPT_NEWLINE
+  return null
 }
 
 function storageKey(platform: TerminalPlatform): string {
@@ -147,7 +179,13 @@ export function useTerminalDeck(platform: TerminalPlatform): TerminalDeckState {
   }, [platform])
 
   const addTerminal = useCallback(
-    (sessionKey: string, cwd?: string | null, title?: string, wslDistro?: string | null) => {
+    (
+      sessionKey: string,
+      cwd?: string | null,
+      title?: string,
+      wslDistro?: string | null,
+      initialInput?: string | null
+    ) => {
       setTabs((prev) => [
         ...prev,
         {
@@ -155,7 +193,8 @@ export function useTerminalDeck(platform: TerminalPlatform): TerminalDeckState {
           title: title?.trim() || nextDefaultTitle(prev.filter((tab) => tab.sessionKey === sessionKey)),
           cwd: cwd ?? null,
           sessionKey,
-          wslDistro: wslDistro ?? null
+          wslDistro: wslDistro ?? null,
+          initialInput: initialInput ?? null
         }
       ])
     },
@@ -202,6 +241,20 @@ function readLogicalLine(terminal: Terminal, bufferLineNumber: number): LogicalL
     if (!next || !next.isWrapped) break
   }
   return { text, startRow, cols }
+}
+
+function fitAndRestoreViewport(terminal: Terminal, fitAddon: FitAddon): void {
+  const { baseY, viewportY } = terminal.buffer.active
+  const wasAtBottom = viewportY >= baseY
+
+  fitAddon.fit()
+
+  if (wasAtBottom) {
+    terminal.scrollToBottom()
+    return
+  }
+
+  terminal.scrollToLine(Math.min(viewportY, terminal.buffer.active.baseY))
 }
 
 export const TerminalDeck = memo(function TerminalDeck({
@@ -394,6 +447,7 @@ export const TerminalDeck = memo(function TerminalDeck({
               platform={platform}
               cwd={tab.cwd}
               wslDistro={tab.wslDistro ?? null}
+              initialInput={tab.initialInput ?? undefined}
               title={tab.title}
               onClose={() => onClose(tab.id)}
               onOpenFile={onOpenFile}
@@ -451,7 +505,7 @@ export function TerminalPane({
     // A tile that is momentarily zero-sized (e.g. mid-reflow) can't be fitted.
     if (host.clientWidth === 0 || host.clientHeight === 0) return
 
-    fitAddon.fit()
+    fitAndRestoreViewport(terminal, fitAddon)
     window.dashboard.terminal.resize(terminalId, terminal.cols, terminal.rows)
   }, [terminalId])
 
@@ -508,7 +562,10 @@ export function TerminalPane({
     const terminal = new Terminal({
       allowProposedApi: false,
       convertEol: false,
-      cursorBlink: true,
+      cursorBlink: false,
+      cursorInactiveStyle: 'none',
+      cursorStyle: 'bar',
+      cursorWidth: 1,
       fontFamily: '"Cascadia Code", "Cascadia Mono", "JetBrains Mono", Consolas, monospace',
       fontSize: 12.5,
       lineHeight: 1.35,
@@ -524,6 +581,13 @@ export function TerminalPane({
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== 'keydown') return true
 
+      const promptNewline = promptNewlineSequence(platform, event)
+      if (promptNewline !== null) {
+        event.preventDefault()
+        window.dashboard.terminal.input(terminalId, promptNewline)
+        return false
+      }
+
       const key = event.key.toLowerCase()
       const isPasteShortcut =
         ((event.ctrlKey || event.metaKey) && key === 'v') || (event.shiftKey && event.key === 'Insert')
@@ -533,10 +597,10 @@ export function TerminalPane({
         return false
       }
 
-      // Copy the selection on Ctrl+Shift+C / Cmd+C (Ctrl+C alone stays SIGINT).
-      // Only consume the keystroke when there's actually a selection to copy.
+      // Copy on Ctrl+C when a selection exists; otherwise let Ctrl+C reach the
+      // shell as SIGINT. Ctrl+Shift+C / Cmd+C keep working as explicit copy.
       const isCopyShortcut =
-        ((event.ctrlKey && event.shiftKey) || event.metaKey) && key === 'c'
+        (event.metaKey || (event.ctrlKey && (event.shiftKey || terminal.hasSelection()))) && key === 'c'
       if (isCopyShortcut && copySelection()) {
         event.preventDefault()
         return false
@@ -605,13 +669,10 @@ export function TerminalPane({
 
     const observer = new ResizeObserver(scheduleResizeFit)
 
-    // Copy-on-select: once a drag-selection settles, put it on the clipboard so
-    // the user can paste it elsewhere without a separate copy keystroke. A plain
-    // click leaves no selection, so this no-ops then.
-    const handleMouseUp = (): void => {
-      copySelection()
-    }
-    terminal.element?.addEventListener('mouseup', handleMouseUp)
+    // Copying is explicit only (Ctrl+Shift+C, or Ctrl+C with a selection) — there
+    // is deliberately no copy-on-select. Under the CLI fullscreen renderers a
+    // drag-selection is a meaningful in-app gesture (e.g. select-to-delete), so
+    // auto-copying every selection would silently clobber the user's clipboard.
 
     observer.observe(hostRef.current)
     window.requestAnimationFrame(fitTerminal)
@@ -637,7 +698,6 @@ export function TerminalPane({
         window.clearTimeout(resizeFitTimerRef.current)
         resizeFitTimerRef.current = null
       }
-      terminal.element?.removeEventListener('mouseup', handleMouseUp)
       linkProvider.dispose()
       removeDataListener()
       dataDisposable.dispose()

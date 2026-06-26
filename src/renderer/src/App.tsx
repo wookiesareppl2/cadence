@@ -150,6 +150,7 @@ function useSessionScopedTerminals(
   backgroundTerminals: TerminalBackgroundLocation[]
   pendingSessions: AssistantSession[]
   addTerminal: (cwd?: string | null, title?: string, wslDistro?: string | null) => void
+  resumeSession: (session: AssistantSession) => void
   closeTerminal: (id: string) => void
   selectBackgroundTerminal: (terminal: TerminalBackgroundLocation) => void
   startSession: (project: ProjectSessionGroup) => void
@@ -198,12 +199,19 @@ function useSessionScopedTerminals(
     [onSelectedProjectIdChange, onSelectedSessionIdChange]
   )
 
-  // Creating a session only adds the (empty) session and selects it — the user
-  // opens its first terminal explicitly via the deck, same as selecting any other
-  // terminal-less session. No shell is auto-spawned.
-  const startSession = useCallback(
-    (project: ProjectSessionGroup) => {
-      if (!project.path) return
+  // Mint a fresh pending session in a project, select it, and optionally open its
+  // first terminal. The pending id keeps the terminal unattached to any historical
+  // transcript until the adoption pass retags it onto the real session once that
+  // session's first prompt is recorded. Returns the new pending id.
+  const beginSession = useCallback(
+    (
+      project: ProjectSessionGroup,
+      openTerminal: boolean,
+      cwd?: string | null,
+      title?: string,
+      wslDistro?: string | null
+    ): string | null => {
+      if (!project.path) return null
       const pendingId = createPendingSessionId()
       setPending((prev) => [
         ...prev,
@@ -217,10 +225,18 @@ function useSessionScopedTerminals(
           createdAtMs: Date.now()
         }
       ])
+      if (openTerminal) {
+        addTerminal(pendingId, cwd ?? project.path, title, wslDistro ?? project.origin?.distro ?? null)
+      }
       onSelectedSessionIdChange(pendingId)
+      return pendingId
     },
-    [onSelectedSessionIdChange]
+    [addTerminal, onSelectedSessionIdChange]
   )
+
+  // "+ New Session": add the (empty) session and select it — the user opens its
+  // first terminal explicitly via the deck. No shell is auto-spawned.
+  const startSession = useCallback((project: ProjectSessionGroup) => beginSession(project, false), [beginSession])
 
   // Abandon a started-but-unused session: close its terminals (killing their ptys)
   // and drop the slot. Returns a trashed count so the row's delete control reports
@@ -245,15 +261,44 @@ function useSessionScopedTerminals(
 
   const handleAddTerminal = useCallback(
     (cwd?: string | null, title?: string, wslDistro?: string | null) => {
-      // Add to the selected session (real or still-pending); with nothing concrete
-      // selected, fall back to starting a new session so the terminal has an owner.
-      if (selectedSessionId) {
-        addTerminal(selectedSessionId, cwd, title, wslDistro)
-      } else if (selectedProject) {
-        startSession(selectedProject)
+      // Add a side-shell only to a genuinely *active* session: one that is pending
+      // (just started) or already has a live terminal (e.g. a resumed one). Extra
+      // terminals then stay grouped with that session.
+      const sessionIsActive =
+        selectedSessionId != null &&
+        (isPendingSessionId(selectedSessionId) || tabs.some((tab) => tab.sessionKey === selectedSessionId))
+      if (sessionIsActive) {
+        addTerminal(selectedSessionId!, cwd, title, wslDistro)
+        return
       }
+      // Otherwise the selected session is a read-only historical transcript (or only
+      // a project is selected). A terminal opened here is new work — running a CLI
+      // starts a *new* session — so begin one rather than gluing the terminal to a
+      // past transcript (which would file the new conversation under the wrong
+      // session). Resume is the path to continue a historical session.
+      if (selectedProject) beginSession(selectedProject, true, cwd, title, wslDistro)
     },
-    [addTerminal, selectedProject, selectedSessionId, startSession]
+    [addTerminal, beginSession, selectedProject, selectedSessionId, tabs]
+  )
+
+  // Resume a past session: bring it to the front, then run the CLI's resume
+  // command. If the session already has a terminal, send the command into it
+  // (no duplicate tab); otherwise open a new terminal in its project folder/WSL
+  // distro and auto-run it there. Assumes an existing terminal is at a shell
+  // prompt — sending it while a CLI is already running just types into that CLI.
+  const resumeSession = useCallback(
+    (session: AssistantSession) => {
+      if (session.projectId) onSelectedProjectIdChange(session.projectId)
+      onSelectedSessionIdChange(session.id)
+      const command = platform === 'claude' ? `claude --resume ${session.id}` : `codex resume ${session.id}`
+      const existing = tabs.find((tab) => tab.sessionKey === session.id)
+      if (existing) {
+        window.dashboard.terminal.input(existing.id, `${command}\r`)
+        return
+      }
+      addTerminal(session.id, session.projectPath, undefined, session.origin?.distro ?? null, command)
+    },
+    [tabs, addTerminal, onSelectedProjectIdChange, onSelectedSessionIdChange, platform]
   )
 
   // Adopt: when the poll reveals a session whose folder matches a waiting pending
@@ -330,6 +375,7 @@ function useSessionScopedTerminals(
     backgroundTerminals,
     pendingSessions,
     addTerminal: handleAddTerminal,
+    resumeSession,
     closeTerminal,
     selectBackgroundTerminal,
     startSession,
@@ -1595,6 +1641,7 @@ function ClaudeWorkspace({
     backgroundTerminals,
     pendingSessions,
     addTerminal: handleAddTerminal,
+    resumeSession,
     closeTerminal,
     selectBackgroundTerminal,
     startSession,
@@ -1753,6 +1800,10 @@ function ClaudeWorkspace({
             open={historySidebarOpen}
             onToggle={toggleHistorySidebar}
             onShowDetails={onToggleSessionDetail}
+            onResume={() => {
+              const target = sessionBrowser.selectedSession
+              if (target) resumeSession(target)
+            }}
           />
         </div>
       </section>
@@ -1830,6 +1881,7 @@ function CodexWorkspace({
     backgroundTerminals,
     pendingSessions,
     addTerminal: handleAddTerminal,
+    resumeSession,
     closeTerminal,
     selectBackgroundTerminal,
     startSession,
@@ -1987,6 +2039,10 @@ function CodexWorkspace({
             open={historySidebarOpen}
             onToggle={toggleHistorySidebar}
             onShowDetails={onToggleSessionDetail}
+            onResume={() => {
+              const target = sessionBrowser.selectedSession
+              if (target) resumeSession(target)
+            }}
           />
         </div>
       </section>

@@ -8,9 +8,44 @@ function terminalCwd() {
   return process.env.AI_DASHBOARD_TERMINAL_CWD || process.cwd()
 }
 
-function shellCommand() {
+// Each terminal is scoped to one CLI (the tab it lives in). To stop the other CLI
+// from being launched there by mistake, every shell starts with a guard that
+// shadows the foreign command name and refuses to run it.
+const FOREIGN_CLI = { claude: 'codex', codex: 'claude' }
+const CLI_LABEL = { claude: 'Claude', codex: 'Codex' }
+
+function guardTarget(platform) {
+  const blocked = FOREIGN_CLI[platform]
+  if (!blocked) return null
+  return { blocked, blockedLabel: CLI_LABEL[blocked], thisLabel: CLI_LABEL[platform] }
+}
+
+// PowerShell guard: a global function shadowing the foreign CLI (functions take
+// precedence over external commands). Passed as a base64 UTF-16LE -EncodedCommand
+// so no quoting survives node-pty; -NoExit keeps the shell interactive afterwards.
+function powershellGuard(platform) {
+  const target = guardTarget(platform)
+  if (!target) return null
+  const script = `function global:${target.blocked} { Write-Host "Blocked: ${target.blockedLabel} cannot be run in the ${target.thisLabel} tab.\`nSwitch to the ${target.blockedLabel} tab." -ForegroundColor Red }`
+  return Buffer.from(script, 'utf16le').toString('base64')
+}
+
+// Bash guard (WSL): define and export a function shadowing the foreign CLI, then
+// exec an interactive login shell that inherits it. Login (-l) preserves the
+// user's PATH/profile so claude/codex still resolve normally.
+function bashGuard(platform) {
+  const target = guardTarget(platform)
+  if (!target) return null
+  const line1 = `Blocked: ${target.blockedLabel} cannot be run in the ${target.thisLabel} tab.`
+  const line2 = `Switch to the ${target.blockedLabel} tab.`
+  return `${target.blocked}() { printf '%s\\n%s\\n' "${line1}" "${line2}"; return 1; }; export -f ${target.blocked}; exec bash -li`
+}
+
+function shellCommand(platform) {
   if (process.platform === 'win32') {
-    return { file: 'powershell.exe', args: ['-NoLogo'] }
+    const guard = powershellGuard(platform)
+    const args = guard ? ['-NoLogo', '-NoExit', '-EncodedCommand', guard] : ['-NoLogo']
+    return { file: 'powershell.exe', args }
   }
 
   return { file: process.env.SHELL || '/bin/bash', args: [] }
@@ -19,9 +54,12 @@ function shellCommand() {
 // Launch an interactive login shell inside a WSL distro at the project's POSIX
 // path. The pty process itself (wsl.exe) runs from a valid Windows cwd, while
 // `--cd` sets the Linux working directory so `claude`/`codex` start in-project.
-function wslCommand(distro, posixCwd) {
+// The guard runs first, then execs the real interactive shell (see bashGuard).
+function wslCommand(distro, posixCwd, platform) {
   const args = ['-d', distro]
   if (posixCwd) args.push('--cd', posixCwd)
+  const guard = bashGuard(platform)
+  if (guard) args.push('--', 'bash', '-c', guard)
   return { file: 'wsl.exe', args, label: `wsl:${distro}` }
 }
 
@@ -42,7 +80,7 @@ function rememberOutput(session, data) {
 function createSession(terminalId, platform, requestedCwd, wslDistro) {
   // For WSL, wsl.exe runs from a valid Windows cwd and `--cd` handles the Linux
   // dir; otherwise the native shell starts directly in the requested folder.
-  const shell = wslDistro ? wslCommand(wslDistro, requestedCwd) : shellCommand()
+  const shell = wslDistro ? wslCommand(wslDistro, requestedCwd, platform) : shellCommand(platform)
   const spawnCwd = wslDistro ? terminalCwd() : requestedCwd || terminalCwd()
   const terminal = pty.spawn(shell.file, shell.args, {
     name: 'xterm-256color',

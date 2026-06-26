@@ -351,11 +351,11 @@ function codexHistoryEntry(row: any, index: number): HistoryDraft | null {
     })
   }
 
-  if (payload?.type === 'function_call' && typeof payload.name === 'string') {
-    const args = typeof payload.arguments === 'string' ? payload.arguments : ''
-    return historyEntry({ row, index, role: 'tool', label: payload.name, text: args || 'Tool call', commandPrefix: '/' })
-  }
-
+  // Codex emits a `function_call` row for every shell command / tool it runs.
+  // These are intermediate work steps, not conversation — drop them so the History
+  // transcript shows only user prompts and assistant replies, matching Claude
+  // (whose tool rows are likewise dropped). function_call_output and other payload
+  // types fall through to null below for the same reason.
   return null
 }
 

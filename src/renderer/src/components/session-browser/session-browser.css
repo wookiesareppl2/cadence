@@ -739,6 +739,104 @@
   min-height: 46px;
 }
 
+/* In-panel search over the loaded transcript. Sits between the header and the
+   feed, mirroring the cheat-sheet filter input's tokens. */
+.history-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-1);
+}
+
+.history-search-glyph {
+  flex: 0 0 auto;
+  color: var(--text-3);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.history-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-0);
+  color: var(--text-1);
+  font-size: 12px;
+}
+
+.history-search-input::placeholder {
+  color: var(--text-3);
+}
+
+.history-search-input:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.history-search-count {
+  flex: 0 0 auto;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.history-search-nav {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-0);
+  color: var(--text-2);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background-color 160ms var(--ease-out-expo),
+    color 160ms var(--ease-out-expo),
+    border-color 160ms var(--ease-out-expo);
+}
+
+.history-search-nav:hover:not(:disabled) {
+  background: var(--surface-3);
+  border-color: var(--surface-4);
+  color: var(--text-1);
+}
+
+.history-search-nav:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.history-search-nav:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Ctrl+F-style word highlighting via the CSS Custom Highlight API. Every match
+   gets a soft accent wash; the active match (the one navigation scrolls to) is
+   painted solid accent so it stands out among the rest. ::highlight only supports
+   colour/background-color/text-decoration, which is all we need here. */
+::highlight(history-search) {
+  background-color: color-mix(in srgb, var(--accent) 32%, transparent);
+  color: var(--text-1);
+}
+
+::highlight(history-search-active) {
+  background-color: var(--accent);
+  color: var(--surface-0);
+}
+
 .history-heading {
   min-width: 0;
   display: grid;
@@ -968,6 +1066,97 @@
   white-space: pre;
 }
 
+.history-entry pre.md-code {
+  margin: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  background: var(--surface-1);
+  overflow: auto;
+  white-space: pre;
+  word-break: normal;
+}
+
+.history-entry .md-code-block {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: 5px;
+  background: var(--surface-1);
+}
+
+.history-entry .md-code-block pre.md-code {
+  border: 0;
+  border-radius: 0;
+}
+
+.history-entry .md-code-toolbar {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 5px 4px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-2);
+}
+
+.history-entry .md-code-language {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-entry .md-code-copy {
+  min-width: 68px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.history-entry .md-code-copy:hover {
+  border-color: var(--surface-4);
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.history-entry .md-code-copy:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.history-entry .md-code-copy-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.35;
+}
+
+.history-entry[data-role="tool"] .md-code-block pre.md-code,
+.history-entry[data-role="system"] .md-code-block pre.md-code {
+  max-height: 170px;
+  color: var(--text-2);
+}
+
 .history-md pre.md-code code {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -1053,6 +1242,56 @@
 .history-details-button:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* Primary action: resume the selected session in a terminal. Accent-filled to
+   stand out as the main thing to do with a past session (matches the accent
+   "active" pattern used elsewhere). */
+.history-resume-button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--surface-0);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 160ms var(--ease-out-expo),
+    border-color 160ms var(--ease-out-expo),
+    opacity 160ms var(--ease-out-expo);
+}
+
+.history-resume-button:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.history-resume-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.history-resume-button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.history-resume-icon {
+  width: 13px;
+  height: 13px;
+  display: block;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .session-detail-icon {

@@ -8,6 +8,10 @@ export type TerminalTab = {
   cwd: string | null
   sessionKey: string
   wslDistro?: string | null
+  // A command auto-run once when this tab's shell first starts (e.g. a session
+  // resume). In-memory only — intentionally not persisted, so a reload (which
+  // reconnects the live pty via replay) never re-fires it.
+  initialInput?: string | null
 }
 
 export type TerminalStartResult = {

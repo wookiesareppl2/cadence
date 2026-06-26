@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { JSX, ReactNode } from 'react'
 
 // A small, dependency-free Markdown renderer scoped to what Claude/Codex
@@ -11,14 +12,83 @@ const UNORDERED = /^\s*[-*+]\s+(.*)$/
 const ORDERED = /^\s*\d+\.\s+(.*)$/
 const BLOCKQUOTE = /^\s*>\s?(.*)$/
 const HR = /^\s*([-*_])(\s*\1){2,}\s*$/
-const FENCE = /^\s*```/
+const FENCE = /^\s*```([^\s`]*)?/
+const INDENTED_CODE = /^(?: {4}|\t)(.*)$/
+const STANDALONE_INLINE_CODE = /^`([^`]+)`$/
 const TABLE_DIVIDER = /^\s*\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$/
 
-export function HistoryMarkdown({ text }: { text: string }): JSX.Element {
-  return <div className="history-md">{renderBlocks(text.replace(/\r/g, ''))}</div>
+export function HistoryMarkdown({
+  text,
+  copyCodeBlocks = false
+}: {
+  text: string
+  copyCodeBlocks?: boolean
+}): JSX.Element {
+  return <div className="history-md">{renderBlocks(text.replace(/\r/g, ''), { copyCodeBlocks })}</div>
 }
 
-function renderBlocks(text: string): ReactNode[] {
+export function CopyableCodeBlock({
+  code,
+  language = null,
+  className = ''
+}: {
+  code: string
+  language?: string | null
+  className?: string
+}): JSX.Element {
+  const [copied, setCopied] = useState(false)
+  const timerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current)
+    }
+  }, [])
+
+  const copy = useCallback((): void => {
+    try {
+      const clipboard = window.dashboard?.clipboard
+      if (clipboard?.writeText) clipboard.writeText(code)
+      else void navigator.clipboard?.writeText(code).catch(() => undefined)
+    } catch {
+      void navigator.clipboard?.writeText(code).catch(() => undefined)
+    }
+
+    setCopied(true)
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current)
+    timerRef.current = window.setTimeout(() => {
+      setCopied(false)
+      timerRef.current = null
+    }, 1400)
+  }, [code])
+
+  const classes = ['md-code-block', className].filter(Boolean).join(' ')
+
+  return (
+    <div className={classes}>
+      <div className="md-code-toolbar">
+        {language ? (
+          <span className="md-code-language">{language}</span>
+        ) : (
+          <span className="md-code-language" aria-hidden="true" />
+        )}
+        <button type="button" className="md-code-copy" onClick={copy} title="Copy code" aria-label="Copy code block">
+          <CopyIcon />
+          <span>{copied ? 'Copied' : 'Copy'}</span>
+        </button>
+      </div>
+      <pre className="md-code">
+        <code>{code}</code>
+      </pre>
+    </div>
+  )
+}
+
+type RenderOptions = {
+  copyCodeBlocks: boolean
+}
+
+function renderBlocks(text: string, options: RenderOptions): ReactNode[] {
   const lines = text.split('\n')
   const blocks: ReactNode[] = []
   let i = 0
@@ -32,16 +102,35 @@ function renderBlocks(text: string): ReactNode[] {
       continue
     }
 
-    if (FENCE.test(line)) {
+    const fence = line.match(FENCE)
+    if (fence) {
       const code: string[] = []
+      const language = fence[1]?.trim() || null
       i += 1
       while (i < lines.length && !FENCE.test(lines[i])) code.push(lines[i++])
-      i += 1 // closing fence
-      blocks.push(
-        <pre key={key++} className="md-code">
-          <code>{code.join('\n')}</code>
-        </pre>
-      )
+      if (i < lines.length) i += 1 // closing fence
+      blocks.push(renderCodeBlock(code.join('\n'), language, key++, options))
+      continue
+    }
+
+    if (INDENTED_CODE.test(line)) {
+      const code: string[] = []
+      while (i < lines.length) {
+        const current = lines[i]
+        if (!current.trim()) {
+          code.push('')
+          i += 1
+          continue
+        }
+
+        const indented = current.match(INDENTED_CODE)
+        if (!indented) break
+        code.push(indented[1])
+        i += 1
+      }
+
+      while (code.length > 0 && code[code.length - 1] === '') code.pop()
+      blocks.push(renderCodeBlock(code.join('\n'), null, key++, options))
       continue
     }
 
@@ -109,9 +198,16 @@ function renderBlocks(text: string): ReactNode[] {
       paragraph.push(lines[i])
       i += 1
     }
+    const paragraphText = paragraph.join('\n')
+    const standaloneCode = paragraphText.trim().match(STANDALONE_INLINE_CODE)
+    if (standaloneCode) {
+      blocks.push(renderCodeBlock(standaloneCode[1], null, key++, options))
+      continue
+    }
+
     blocks.push(
       <p key={key++} className="md-p">
-        {renderInline(paragraph.join('\n'))}
+        {renderInline(paragraphText)}
       </p>
     )
   }
@@ -119,9 +215,31 @@ function renderBlocks(text: string): ReactNode[] {
   return blocks
 }
 
+function renderCodeBlock(code: string, language: string | null, key: number, options: RenderOptions): ReactNode {
+  if (!options.copyCodeBlocks) {
+    return (
+      <pre key={key} className="md-code">
+        <code>{code}</code>
+      </pre>
+    )
+  }
+
+  return <CopyableCodeBlock key={key} code={code} language={language} />
+}
+
+function CopyIcon(): JSX.Element {
+  return (
+    <svg className="md-code-copy-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <rect x="5" y="4" width="7" height="9" rx="1.2" />
+      <path d="M4 11H3.8A1.8 1.8 0 0 1 2 9.2V3.8A1.8 1.8 0 0 1 3.8 2H9.2A1.8 1.8 0 0 1 11 3.8V4" />
+    </svg>
+  )
+}
+
 function isBlockStart(line: string): boolean {
   return (
     FENCE.test(line) ||
+    INDENTED_CODE.test(line) ||
     HEADING.test(line) ||
     HR.test(line) ||
     UNORDERED.test(line) ||

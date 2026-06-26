@@ -1,5 +1,6 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, screen, session, type Rectangle, type WebContentsConsoleMessageEventParams } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
+import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   closeAllTerminals,
@@ -68,6 +69,23 @@ let restoreBounds: Rectangle | null = null
 const UI_ZOOM_FACTOR = 1.1
 let dashboardWindow: BrowserWindow | null = null
 const detachedTerminalWindows: Partial<Record<PlatformId, BrowserWindow>> = {}
+const PACKAGED_APP_USER_MODEL_ID = 'dev.cadence.app'
+const DEV_APP_USER_MODEL_ID = 'dev.cadence.app.dev'
+
+function configureRuntimeIdentity(): string {
+  if (!is.dev) return PACKAGED_APP_USER_MODEL_ID
+
+  const devDataPath = join(app.getPath('appData'), `${APP_NAME} Dev`)
+  const devSessionDataPath = join(devDataPath, 'session')
+  mkdirSync(devSessionDataPath, { recursive: true })
+
+  app.setName(`${APP_NAME} Dev`)
+  app.setPath('userData', devDataPath)
+  app.setPath('sessionData', devSessionDataPath)
+  return DEV_APP_USER_MODEL_ID
+}
+
+const appUserModelId = configureRuntimeIdentity()
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
 if (process.platform === 'linux') {
@@ -98,7 +116,7 @@ function createMainWindow(): BrowserWindow {
     show: false,
     frame: false,
     backgroundColor: '#1e1b19',
-    title: APP_NAME,
+    title: app.getName(),
     // Packaged builds get the icon from electron-builder (build/icon.ico embedded in
     // the exe). In dev there's no packaged exe, so point the window/taskbar icon at
     // the source icon explicitly; otherwise it shows Electron's default.
@@ -321,10 +339,11 @@ function focusExistingWindow(): BrowserWindow | null {
 if (hasSingleInstanceLock) {
   app.on('second-instance', () => {
     const mainWindow = focusExistingWindow()
+    const appName = app.getName()
     const options = {
       type: 'info' as const,
-      title: `${APP_NAME} is already running`,
-      message: `${APP_NAME} is already running.`,
+      title: `${appName} is already running`,
+      message: `${appName} is already running.`,
       detail: 'Use the existing window instead of launching another instance.',
       buttons: ['OK'],
       defaultId: 0,
@@ -348,7 +367,7 @@ process.on('unhandledRejection', (reason) => {
 })
 
 if (hasSingleInstanceLock) app.whenReady().then(() => {
-  electronApp.setAppUserModelId('dev.cadence.app')
+  electronApp.setAppUserModelId(appUserModelId)
 
   // Deny every renderer permission request (camera, mic, geolocation, notifications,
   // etc.). The UI needs none — native usage alerts use the main-process Notification

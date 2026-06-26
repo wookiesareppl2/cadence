@@ -1,11 +1,11 @@
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { JSX } from 'react'
 import type {
   AssistantSession,
   AssistantSessionHistoryEntry
 } from '@shared/sessions'
-import { HistoryMarkdown } from '../history-markdown'
+import { CopyableCodeBlock, HistoryMarkdown } from '../history-markdown'
 import { GitHubImportModal } from './github-import-modal'
 import { ProjectList, SessionList } from './session-rows'
 import {
@@ -30,6 +30,11 @@ function historyRoleCode(role: AssistantSessionHistoryEntry['role']): string {
   if (role === 'assistant') return 'AGT'
   if (role === 'tool') return 'RUN'
   return 'CTX'
+}
+
+function historyRawCodeLanguage(text: string): string | null {
+  const trimmed = text.trim()
+  return trimmed.startsWith('{') || trimmed.startsWith('[') ? 'json' : null
 }
 
 export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
@@ -204,6 +209,15 @@ function InfoIcon(): JSX.Element {
   )
 }
 
+// Play/resume triangle — same stroked currentColor line-icon recipe.
+function ResumeIcon(): JSX.Element {
+  return (
+    <svg className="history-resume-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M5.5 3.75l6.25 4.25-6.25 4.25z" />
+    </svg>
+  )
+}
+
 // Modal popup with the selected session's facts. Reuses the design-system overlay
 // pattern (fixed backdrop below the titlebar, dialog on --surface-1, close on
 // backdrop click / Escape) and the shared `.session-detail-body`/`.session-facts`
@@ -269,13 +283,58 @@ export function SessionDetailModal({
   )
 }
 
+// CSS Custom Highlight API accessors. Typed locally (these are newer than the TS
+// lib) and feature-detected, though this Electron's Chromium supports them. The
+// API paints ranges over existing text without touching the DOM, so it highlights
+// the searched word inside already-rendered markdown/code without re-parsing it.
+type HighlightLike = { priority: number }
+type HighlightConstructor = new (...ranges: Range[]) => HighlightLike
+const HighlightCtor = (globalThis as unknown as { Highlight?: HighlightConstructor }).Highlight
+const highlightRegistry = (
+  CSS as unknown as { highlights?: { set(name: string, highlight: HighlightLike): void; delete(name: string): void } }
+).highlights
+const HIGHLIGHTS_SUPPORTED = Boolean(HighlightCtor && highlightRegistry)
+const SEARCH_HIGHLIGHT = 'history-search'
+const SEARCH_HIGHLIGHT_ACTIVE = 'history-search-active'
+
+// Collect ranges for every case-insensitive occurrence of `needle` in the rendered
+// transcript text, skipping the role/timestamp meta and code toolbars (so a search
+// for e.g. "copy" doesn't light up every code block's Copy button). Ranges come
+// back in document order, which is the on-screen order (newest entry first).
+function collectSearchRanges(root: HTMLElement, needle: string): Range[] {
+  const ranges: Range[] = []
+  const lower = needle.toLowerCase()
+  if (!lower) return ranges
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT
+      if (node.parentElement?.closest('.history-entry-meta, .md-code-toolbar')) return NodeFilter.FILTER_REJECT
+      return NodeFilter.FILTER_ACCEPT
+    }
+  })
+
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const haystack = (node.nodeValue ?? '').toLowerCase()
+    for (let from = haystack.indexOf(lower); from !== -1; from = haystack.indexOf(lower, from + lower.length)) {
+      const range = document.createRange()
+      range.setStart(node, from)
+      range.setEnd(node, from + lower.length)
+      ranges.push(range)
+    }
+  }
+
+  return ranges
+}
+
 export function SessionHistorySidebar({
   session,
   historyState,
   newSession = false,
   open,
   onToggle,
-  onShowDetails
+  onShowDetails,
+  onResume
 }: {
   session: AssistantSession | null
   historyState: SessionHistoryState
@@ -283,13 +342,79 @@ export function SessionHistorySidebar({
   open: boolean
   onToggle: () => void
   onShowDetails: () => void
+  onResume?: () => void
 }): JSX.Element {
   const { history, loading, error } = historyState
   const entryCount = history?.entries.length ?? 0
-  const historyEntries = useMemo(() => {
-    if (!history || history.entries.length === 0) return null
 
-    return [...history.entries].reverse().map((entry) => {
+  // In-panel search keeps the whole transcript visible (Ctrl+F style) and highlights
+  // the matched word in place, stepping through occurrences with prev/next. Matches
+  // are painted with the CSS Custom Highlight API — it highlights ranges over the
+  // already-rendered markdown/code without mutating the DOM (React is untouched and
+  // the markdown is never re-parsed on a keystroke). Reset on session change.
+  const [query, setQuery] = useState('')
+  const [activeMatch, setActiveMatch] = useState(0)
+  const [matchCount, setMatchCount] = useState(0)
+  const trimmedQuery = query.trim().toLowerCase()
+  const feedRef = useRef<HTMLDivElement>(null)
+  const rangesRef = useRef<Range[]>([])
+
+  useEffect(() => {
+    setQuery('')
+    setActiveMatch(0)
+  }, [session?.id])
+
+  const displayedEntries = useMemo(() => (history ? [...history.entries].reverse() : []), [history])
+
+  // (Re)collect matched ranges whenever the query or transcript changes, and paint
+  // them all with the base highlight. The active occurrence is handled separately.
+  useEffect(() => {
+    const feed = feedRef.current
+    const ranges = feed && trimmedQuery ? collectSearchRanges(feed, trimmedQuery) : []
+    rangesRef.current = ranges
+    if (HIGHLIGHTS_SUPPORTED && ranges.length > 0) {
+      highlightRegistry!.set(SEARCH_HIGHLIGHT, new HighlightCtor!(...ranges))
+    } else {
+      highlightRegistry?.delete(SEARCH_HIGHLIGHT)
+    }
+    setMatchCount(ranges.length)
+    setActiveMatch(0)
+    return () => {
+      highlightRegistry?.delete(SEARCH_HIGHLIGHT)
+      highlightRegistry?.delete(SEARCH_HIGHLIGHT_ACTIVE)
+    }
+  }, [trimmedQuery, displayedEntries])
+
+  // Paint the active match more strongly (higher priority) and scroll it into view.
+  useEffect(() => {
+    const active = rangesRef.current[activeMatch]
+    if (!HIGHLIGHTS_SUPPORTED || !active) {
+      highlightRegistry?.delete(SEARCH_HIGHLIGHT_ACTIVE)
+      return
+    }
+    const highlight = new HighlightCtor!(active)
+    highlight.priority = 1
+    highlightRegistry!.set(SEARCH_HIGHLIGHT_ACTIVE, highlight)
+    const feed = feedRef.current
+    if (feed) {
+      const rect = active.getBoundingClientRect()
+      const feedRect = feed.getBoundingClientRect()
+      if (rect.width || rect.height) {
+        feed.scrollTo({
+          top: feed.scrollTop + (rect.top - feedRect.top) - feedRect.height / 2 + rect.height / 2,
+          behavior: 'smooth'
+        })
+      }
+    }
+  }, [activeMatch, matchCount])
+
+  const stepMatch = (delta: number): void =>
+    setActiveMatch((current) => (matchCount === 0 ? 0 : (current + delta + matchCount) % matchCount))
+
+  const historyEntries = useMemo(() => {
+    if (displayedEntries.length === 0) return null
+
+    return displayedEntries.map((entry) => {
       const speaker = historySpeakerLabel(entry)
 
       return (
@@ -303,15 +428,19 @@ export function SessionHistorySidebar({
               {speaker ? <span className="history-entry-speaker">{speaker}</span> : null}
             </div>
             {entry.role === 'user' || entry.role === 'assistant' ? (
-              <HistoryMarkdown text={entry.text} />
+              <HistoryMarkdown text={entry.text} copyCodeBlocks />
             ) : (
-              <pre>{entry.text}</pre>
+              <CopyableCodeBlock
+                code={entry.text}
+                language={historyRawCodeLanguage(entry.text)}
+                className="history-raw-code"
+              />
             )}
           </div>
         </article>
       )
     })
-  }, [history])
+  }, [displayedEntries])
 
   return (
     <aside className={`history-sidebar-shell ${open ? 'open' : 'closed'}`} aria-label="Session history">
@@ -339,6 +468,17 @@ export function SessionHistorySidebar({
         <div className="history-actions">
           <button
             type="button"
+            className="history-resume-button"
+            onClick={onResume}
+            disabled={!session || newSession || !onResume}
+            aria-label="Resume this session in a terminal"
+            title="Resume this session in a terminal"
+          >
+            <ResumeIcon />
+            <span>Resume</span>
+          </button>
+          <button
+            type="button"
             className="history-details-button"
             onClick={onShowDetails}
             disabled={!session}
@@ -364,6 +504,58 @@ export function SessionHistorySidebar({
           </button>
         </div>
       </div>
+      {session && history && history.entries.length > 0 ? (
+        <div className="history-search-bar">
+          <span className="history-search-glyph" aria-hidden="true">
+            ⌕
+          </span>
+          <input
+            type="search"
+            className="history-search-input"
+            placeholder="Search this session"
+            aria-label="Search this session's history"
+            value={query}
+            spellCheck={false}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                stepMatch(event.shiftKey ? -1 : 1)
+              } else if (event.key === 'Escape') {
+                event.preventDefault()
+                setQuery('')
+              }
+            }}
+          />
+          {trimmedQuery ? (
+            <>
+              <span className="history-search-count">
+                {matchCount > 0 ? `${activeMatch + 1} / ${matchCount}` : 'No matches'}
+              </span>
+              <button
+                type="button"
+                className="history-search-nav"
+                aria-label="Previous match"
+                title="Previous match (Shift+Enter)"
+                disabled={matchCount === 0}
+                onClick={() => stepMatch(-1)}
+              >
+                ▲
+              </button>
+              <button
+                type="button"
+                className="history-search-nav"
+                aria-label="Next match"
+                title="Next match (Enter)"
+                disabled={matchCount === 0}
+                onClick={() => stepMatch(1)}
+              >
+                ▼
+              </button>
+            </>
+          ) : null}
+        </div>
+      ) : null}
       {newSession && !session ? (
         <div className="history-placeholder">
           Fresh session — run your CLI in the terminal to begin. The transcript appears here, and the session joins the
@@ -378,7 +570,9 @@ export function SessionHistorySidebar({
       ) : !history || history.entries.length === 0 ? (
         <div className="history-placeholder">No readable transcript entries found.</div>
       ) : (
-        <div className="history-feed">{historyEntries}</div>
+        <div className="history-feed" ref={feedRef}>
+          {historyEntries}
+        </div>
       )}
     </section>
     </aside>

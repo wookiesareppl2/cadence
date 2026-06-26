@@ -178,6 +178,9 @@ vs. `Select a project to open a terminal` when none is picked.
   concrete colour. Use a **translucent accent** so selected text stays readable:
   `selectionBackground: rgba(224, 122, 95, 0.40)` (active) / `…0.26` (inactive). That
   RGB is `--accent`; keep them in step if the accent changes.
+- **Cursor:** use a static 1px bar cursor in a muted foreground colour, not an
+  accent block cursor. Codex/Claude status lines redraw in place, and a block cursor
+  reads as flickering orange artifacts while those lines animate.
 - **Clickable `file.ts:42` mentions:** real project files the agent prints become
   links (`pointerCursor` + `underline`) that open the File Preview scrolled to the
   line. Only paths that exist under the project root are linked — never style arbitrary
@@ -187,9 +190,58 @@ vs. `Select a project to open a terminal` when none is picked.
   terminal title, project/session, and cwd; selecting a row jumps to that session.
   Keep it dense (`--font-mono` for paths/counts) and clipped with ellipsis, not a
   modal.
-- **Copy:** drag-select copies on mouse-up (copy-on-select) and `Ctrl+Shift+C` /
-  `Cmd+C` copy an existing selection; `Ctrl+C` alone stays SIGINT. A plain click
-  leaves no selection and copies nothing.
+- **Copy:** copying is explicit only — there is deliberately no copy-on-select.
+  `Ctrl+C` copies when text is selected and stays SIGINT when there is no
+  selection; `Ctrl+Shift+C` / `Cmd+C` also copy an existing selection. A
+  drag-selection is left uncopied because under the CLI fullscreen renderers it is
+  a meaningful in-app gesture (e.g. select-to-delete); auto-copying it would
+  silently clobber the user's clipboard.
+- **Prompt newlines:** the embedded terminals intercept a modifier+Enter shortcut
+  and inject bytes straight to the pty (bypassing xterm, which collapses modified
+  Enter keys to a plain carriage return). Plain `Enter` always falls through as
+  submit. The correct injection differs per CLI because they read input differently
+  on native Windows:
+  - **Codex** (`Shift+Enter`) is Rust/crossterm and reads console `INPUT_RECORD`
+    key events through ConPTY, not raw VT bytes — so a raw LF (Ctrl+J), CSI-u
+    (`\x1b[13;2u`), and bracketed paste all fail to register. The working sequence
+    is win32-input-mode (`ESC [ Vk ; Sc ; Uc ; Kd ; Cs ; Rc _`): inject a
+    Shift+Enter key-down then key-up, which ConPTY turns into a real Shift+Enter
+    event that Codex maps to `insert_newline`.
+  - **Claude Code** (`Ctrl+Enter`) is Node/Ink and reads a byte stream (libuv), so
+    a raw escape sequence works where a win32-input key record would be collapsed
+    to a bare CR. Inject `\x1b\r` (Meta+Enter / ESC+CR) — the same sequence Claude's
+    `/terminal-setup` writes for a newline.
+
+  Do not use xterm's `paste('\n')` helper for either (it normalizes LF to CR and
+  submits).
+
+## History Transcript
+
+- **Code blocks:** rendered user/assistant History code fences, indented code, and
+  standalone inline-code commands use the same copyable code block frame. Tool and
+  system payloads also render in that frame. The `Copy` action copies the source
+  text through the app clipboard bridge so multi-line code keeps its authored
+  structure independent of terminal wrapping.
+- **Resume action:** the History panel header carries a primary, accent-filled
+  `Resume` button (`.history-resume-button`, the accent-"active" pattern) — the main
+  thing to do with a past session. It brings the session to the front and, only if
+  the session has no terminal yet, opens one in its project folder / WSL distro and
+  auto-runs the CLI resume command (`claude --resume <id>` / `codex resume <id>`) via
+  the tab's one-shot `initialInput`. If the session already has a terminal, the
+  resume command is sent into that terminal instead (no duplicate tab) — assuming it
+  is at a shell prompt. Disabled for new/pending sessions (nothing to resume).
+- **Search:** a `.history-search-bar` sits between the header and the feed (shown
+  only when the loaded transcript has entries). It is Ctrl+F-style — the whole
+  transcript stays visible and the matched **word** is highlighted in place. Matches
+  are painted with the **CSS Custom Highlight API** (`CSS.highlights` +
+  `::highlight(history-search)` / `::highlight(history-search-active)`), which colours
+  ranges over the already-rendered markdown/code without mutating the DOM — so React
+  is untouched and the markdown is never re-parsed on a keystroke. Every occurrence
+  gets a soft accent wash; the active one is solid accent and scrolled into view.
+  Prev/next (`Enter` / `Shift+Enter`, or the `.history-search-nav` buttons) step
+  through occurrences in document order; the count shows `current / total` (or
+  `No matches`). Range collection skips `.history-entry-meta` and `.md-code-toolbar`
+  (so role tags, timestamps, and Copy buttons don't match). Resets on session change.
 
 ## Default toggle animation
 
