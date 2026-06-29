@@ -2,7 +2,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { canonicalProjectPath, legacyCadenceSiblingPath } from '../src/main/projects/project-identity'
+import {
+  canonicalProjectPath,
+  legacyCadenceSiblingPath,
+  stripAgentMetadataDir
+} from '../src/main/projects/project-identity'
 
 const tempRoots: string[] = []
 
@@ -49,5 +53,36 @@ describe('canonicalProjectPath', () => {
     const legacy = join(root, 'ai-dashboard')
 
     expect(canonicalProjectPath(legacy)).toBe(legacy)
+  })
+})
+
+describe('stripAgentMetadataDir', () => {
+  const project = 'C:\\IDE Platforms\\Visual Studio Code\\Projects\\In Progress\\cadence'
+
+  it('attributes a Windows .claude cwd to the parent project folder', () => {
+    expect(stripAgentMetadataDir(`${project}\\.claude`)).toBe(project)
+  })
+
+  it('strips a deeper path inside .claude back to the project folder', () => {
+    expect(stripAgentMetadataDir(`${project}\\.claude\\skills\\start`)).toBe(project)
+  })
+
+  it('also handles .codex', () => {
+    expect(stripAgentMetadataDir(`${project}\\.codex`)).toBe(project)
+  })
+
+  it('handles POSIX (WSL) paths', () => {
+    expect(stripAgentMetadataDir('/home/user/app/.claude')).toBe('/home/user/app')
+    expect(stripAgentMetadataDir('/home/user/app/.codex/config')).toBe('/home/user/app')
+  })
+
+  it('leaves a normal project cwd untouched', () => {
+    expect(stripAgentMetadataDir(project)).toBe(project)
+    expect(stripAgentMetadataDir('/home/user/app')).toBe('/home/user/app')
+  })
+
+  it('does not strip a folder whose name merely contains "claude"', () => {
+    const p = `${project}\\claude-tools`
+    expect(stripAgentMetadataDir(p)).toBe(p)
   })
 })
