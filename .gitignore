@@ -16,6 +16,9 @@ resources/node/
 .claude/
 .codex/
 .agents/
+.claude-flow/
+.mcp.json
+skills-lock.json
 CLAUDE.md
 AGENTS.md
 # Personal release instructions — local-only, not for the public repo
