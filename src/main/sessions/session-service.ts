@@ -532,11 +532,28 @@ async function readClaudeSession(path: string): Promise<ClaudeSessionDraft | nul
     sources: [{ path, size: stats.size, mtimeMs: stats.mtimeMs }]
   }
 
+  // Claude writes session-state sidecar files into the same projects dir with the
+  // same `<sessionId>.jsonl` name — only `last-prompt`/`ai-title`/`mode`/
+  // `permission-mode` rows, no transcript and no cwd. Treating those as sessions
+  // surfaces a directory-less phantom "project" (the decoded storage-dir name), so
+  // skip any file with no real transcript content (a cwd, a timestamp, a typed
+  // message, or a user/assistant/system row).
+  let hasTranscriptContent = false
   const raw = await readFile(path, 'utf-8')
   for (const line of raw.split(/\r?\n/)) {
     if (!line) continue
     try {
       const row = JSON.parse(line)
+      if (
+        typeof row.cwd === 'string' ||
+        typeof row.timestamp === 'string' ||
+        row.type === 'user' ||
+        row.type === 'assistant' ||
+        row.type === 'system' ||
+        row.message
+      ) {
+        hasTranscriptContent = true
+      }
       const timestampMs = rowTimestampMs(row, draft.updatedAtMs)
       if (typeof row.sessionId === 'string') draft.id = row.sessionId
       if (typeof row.cwd === 'string') draft.cwd = row.cwd
@@ -573,6 +590,7 @@ async function readClaudeSession(path: string): Promise<ClaudeSessionDraft | nul
     }
   }
 
+  if (!hasTranscriptContent) return null
   return draft
 }
 
