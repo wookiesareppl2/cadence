@@ -180,7 +180,7 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
             />
           </div>
           <div
-            className="panel-resize-handle project-session-divider"
+            className="project-session-divider"
             role="separator"
             aria-orientation="horizontal"
             aria-label="Resize projects and sessions"

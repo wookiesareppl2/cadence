@@ -168,17 +168,35 @@
   border-bottom: 1px solid var(--border);
 }
 
-/* Draggable divider between the Projects list and the Sessions stack. Reuses the
-   shared `.panel-resize-handle` wash/opacity model but sits in normal flow as a
-   horizontal strip straddling the border (negative margins keep it from taking
-   layout space). The sidebar is flat, so the wash stays square. The compound
-   selector outranks `.panel-resize-handle` so `position` wins regardless of CSS
-   source order. */
-.panel-resize-handle.project-session-divider {
+/* Draggable divider between the Projects list and the Sessions stack. A generous
+   8px grab zone sits in normal flow, straddling the divider line via negative
+   margins (so it takes no layout space). At rest the Projects list's 1px
+   `border-bottom` is the only visible divider; on hover/drag a crisp 2px accent
+   line sharpens in over it (no thick fill — a clean sash, not a bar). */
+.project-session-divider {
   position: relative;
+  z-index: 8;
   flex: 0 0 8px;
   margin: -4px 0;
   cursor: row-resize;
+  outline: none;
+}
+
+.project-session-divider::before {
+  content: '';
+  position: absolute;
+  inset: 50% 0 auto 0;
+  height: 2px;
+  transform: translateY(-50%);
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.project-session-divider:hover::before,
+.project-session-divider:focus-visible::before,
+.project-session-divider.resizing::before {
+  opacity: 1;
 }
 
 .project-item {
