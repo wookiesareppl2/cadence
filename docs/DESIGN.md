@@ -36,7 +36,7 @@ These MUST look and behave identically regardless of dock edge.
   - *Collapsed bar or rail* → the clickable region gets the **accent border**: `background: var(--surface-2); border-color: var(--accent);`. Use the element's real 1px border or the collapsed parent panel's border, not an inset box-shadow, so rounded corners render cleanly.
   - Differentiate states with the collapsed marker already on the element: `[aria-expanded="false"]` (header buttons) or the `.collapsed` class (accordion sections).
 - **Collapsed sidebars** (Projects & Sessions/Files/History) become a 32px vertical rail: a chevron icon on top + a vertical `writing-mode: vertical-rl` label.
-- **Open panel resize:** Projects & Sessions, Files, and History expose an invisible 8px vertical drag handle on their inner edge; Notes & Tasks exposes the same 8px handle on its top edge. Handles use the shared `.panel-resize-handle` classes, reveal an accent wash on hover/drag, and persist size per active platform without changing the 32px collapsed rail.
+- **Open panel resize:** Projects & Sessions, Files, and History expose an invisible 8px vertical drag handle on their inner edge; Notes & Tasks exposes the same 8px handle on its top edge. Handles use the shared `.panel-resize-handle` classes, reveal an accent wash on hover/drag, and persist size per active platform without changing the 32px collapsed rail. The handle sits flush on the rounded `.panel` edge, so its wash rounds the two corners on that edge to `--radius-panel` (the shared panel corner radius) — never leave the wash square, or it pokes past the panel's rounded corners. The one exception is the Projects & Sessions sidebar, which is a flat `.sidebar` (square, `border-right` only, not a rounded `.panel`): its handle opts back out to a square wash (`border-radius: 0`) so the corners don't curve against a straight edge.
 
 ## Buttons
 
@@ -187,10 +187,12 @@ vs. `Select a project to open a terminal` when none is picked.
   line. Only paths that exist under the project root are linked — never style arbitrary
   path-like text as a link.
 - **Background terminal locator:** when terminals are running in other sessions,
-  the header count is a compact disclosure. It opens a fixed-position menu listing
-  terminal title, project/session, and cwd; selecting a row jumps to that session.
-  Keep it dense (`--font-mono` for paths/counts) and clipped with ellipsis, not a
-  modal.
+  the header count is a compact disclosure. It opens a fixed-position menu with one
+  row **per session** (not per terminal — every terminal in a session jumps to the
+  same place, so rows group by session via `backgroundTerminalSessions` and show a
+  per-session terminal count): session title, `project · N terminals`, and cwd.
+  Selecting a row jumps to that session. Keep it dense (`--font-mono` for
+  paths/counts) and clipped with ellipsis, not a modal.
 - **Copy:** copying is explicit only — there is deliberately no copy-on-select.
   `Ctrl+C` copies when text is selected and stays SIGINT when there is no
   selection; `Ctrl+Shift+C` / `Cmd+C` also copy an existing selection. A

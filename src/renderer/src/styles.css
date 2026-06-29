@@ -16,6 +16,7 @@
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   --motion-panel: 220ms;
   --motion-sidebar: 180ms;
+  --radius-panel: 6px;
   --history-sidebar-closed-width: 32px;
   --history-sidebar-open-width: clamp(390px, 31vw, 420px);
 }
@@ -115,12 +116,17 @@ body[data-panel-resize='y'] * {
   cursor: col-resize;
 }
 
+/* The handle sits flush on a rounded `.panel` edge (its sibling), so the hover
+   wash must round the two corners on that edge to the same `--radius-panel`;
+   otherwise the square fill pokes past the panel's rounded corners. */
 .panel-resize-handle-left {
   left: 0;
+  border-radius: var(--radius-panel) 0 0 var(--radius-panel);
 }
 
 .panel-resize-handle-right {
   right: 0;
+  border-radius: 0 var(--radius-panel) var(--radius-panel) 0;
 }
 
 .panel-resize-handle-top {
@@ -129,6 +135,14 @@ body[data-panel-resize='y'] * {
   left: 0;
   height: 8px;
   cursor: row-resize;
+  border-radius: var(--radius-panel) var(--radius-panel) 0 0;
+}
+
+/* The Projects & Sessions sidebar is a flat `.sidebar` (square, `border-right`
+   only), not a rounded `.panel`, so its handle wash must stay square — rounding
+   it would curve the corners against a straight edge. */
+.project-sidebar-resize {
+  border-radius: 0;
 }
 
 .renderer-failure {
@@ -922,7 +936,7 @@ button {
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-panel);
   background: var(--surface-1);
 }
 
