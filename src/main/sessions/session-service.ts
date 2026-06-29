@@ -11,7 +11,7 @@ import {
   type SessionTranscriptSource
 } from './session-title-generation-service'
 import { getSessionOrigins, toSessionOrigin, type SessionOriginRoot } from './session-origins'
-import { canonicalProjectPath } from '../projects/project-identity'
+import { canonicalProjectPath, stripAgentMetadataDir } from '../projects/project-identity'
 
 type ClaudeSessionDraft = {
   id: string
@@ -113,8 +113,9 @@ function formatTokenLabel(value: number): string | null {
 
 function canonicalSessionCwd(cwd: string | null, origin?: SessionOriginRoot): string | null {
   if (!cwd) return null
-  if (origin && origin.kind !== 'windows') return cwd
-  return canonicalProjectPath(cwd)
+  const root = stripAgentMetadataDir(cwd)
+  if (origin && origin.kind !== 'windows') return root
+  return canonicalProjectPath(root)
 }
 
 function projectLabel(cwd: string | null, sourcePath: string, origin?: SessionOriginRoot): string {

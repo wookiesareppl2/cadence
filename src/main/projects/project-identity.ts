@@ -28,6 +28,17 @@ export function legacyCadenceSiblingPath(path: string): string | null {
   return join(dirname(clean), CADENCE_DIR)
 }
 
+// `.claude` and `.codex` are agent metadata folders that live INSIDE a project,
+// never standalone projects. A session occasionally records a cwd at or under one
+// (e.g. a tool that stepped into `.claude` during a skill run), which would
+// otherwise group the session under a bogus sibling project named `.claude`. A
+// folder has exactly one project, so attribute any such cwd to the parent project
+// folder. Handles both `\` (Windows) and `/` (WSL) paths.
+export function stripAgentMetadataDir(path: string): string {
+  const stripped = path.replace(/[\\/]\.(?:claude|codex)(?:[\\/][^\\/]*)*[\\/]?$/i, '')
+  return stripped || path
+}
+
 export function canonicalProjectPath(path: string): string {
   const candidate = legacyCadenceSiblingPath(path)
   if (!candidate) return path
