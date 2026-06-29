@@ -105,10 +105,15 @@ body[data-panel-resize='y'] * {
   transition: opacity 120ms ease;
 }
 
+/* Soft on hover (incidental mouse passes shouldn't flash a bright line); only
+   brighten while actually dragging. */
 .panel-resize-handle:hover::before,
-.panel-resize-handle:focus-visible::before,
+.panel-resize-handle:focus-visible::before {
+  opacity: 0.4;
+}
+
 .panel-resize-handle.resizing::before {
-  opacity: 1;
+  opacity: 0.85;
 }
 
 .panel-resize-handle:focus-visible {
