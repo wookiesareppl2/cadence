@@ -193,10 +193,14 @@
   transition: opacity 120ms ease;
 }
 
+/* Soft on hover, clearer only while dragging — matches the edge handles. */
 .project-session-divider:hover::before,
-.project-session-divider:focus-visible::before,
+.project-session-divider:focus-visible::before {
+  opacity: 0.4;
+}
+
 .project-session-divider.resizing::before {
-  opacity: 1;
+  opacity: 0.85;
 }
 
 .project-item {
