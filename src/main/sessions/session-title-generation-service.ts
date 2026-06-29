@@ -55,7 +55,11 @@ type ProcessedSource = {
 
 type SessionTitleCacheEntry = {
   promptVersion: number
-  status: 'ready' | 'failed'
+  // 'empty' marks a session that yielded no usable transcript content yet
+  // (new/empty session, or only tool/meta/sidechain rows). It is a benign
+  // "nothing to title yet" state — not a failure — so it never sets the
+  // runtime error or lights the sidebar error dot.
+  status: 'ready' | 'failed' | 'empty'
   provider: 'openai' | 'codex'
   model: string
   title: string | null
@@ -177,7 +181,8 @@ function parseCacheEntry(value: unknown): SessionTitleCacheEntry | null {
   const sourceFingerprint = typeof record.sourceFingerprint === 'string' ? record.sourceFingerprint : null
   const generatedAt = typeof record.generatedAt === 'string' ? record.generatedAt : null
   const attemptedAt = typeof record.attemptedAt === 'string' ? record.attemptedAt : generatedAt
-  const status = record.status === 'ready' || record.status === 'failed' ? record.status : null
+  const status =
+    record.status === 'ready' || record.status === 'failed' || record.status === 'empty' ? record.status : null
   if (!sourceFingerprint || !generatedAt || !attemptedAt || !status) return null
 
   const title = typeof record.title === 'string' ? validateGeneratedSessionTitle(record.title) : null
@@ -350,6 +355,10 @@ function queueTitleGeneration(job: SessionTitleGenerationJob, currentEntry: Sess
   const provider = providerConfig()
   if (!provider) return false
   if (!shouldRetryFailed(currentEntry)) return false
+  // An 'empty' session has nothing to title yet. Don't re-queue it until its
+  // transcript changes (a new fingerprint), so empty/new sessions don't churn
+  // the queue or eat into the per-burst job budget meant for real sessions.
+  if (currentEntry?.status === 'empty' && currentEntry.sourceFingerprint === job.sourceFingerprint) return false
   if (jobsStartedThisRun + queuedJobs.size >= maxJobsPerRun()) return false
   if (!queuedJobs.has(job.sessionKey) && queuedJobs.size >= maxPendingJobs()) return false
 
@@ -435,6 +444,9 @@ async function drainTitleQueue(provider: TitleProvider): Promise<void> {
       try {
         await processTitleGenerationJob(job, provider)
         runtimeStatus.processed += 1
+        // A job completed without error — clear any stale error so the sidebar
+        // error dot reflects the current state, not a past one-off failure.
+        runtimeStatus.lastError = null
       } catch (error) {
         runtimeStatus.failed += 1
         runtimeStatus.lastError = error instanceof Error ? error.message : 'Session title generation failed'
@@ -465,6 +477,16 @@ async function processTitleGenerationJob(job: SessionTitleGenerationJob, provide
     return
   }
 
+  // Already recorded as empty for this exact transcript — nothing changed, so
+  // there's still nothing to title. Skip without re-reading the file.
+  if (
+    previous?.status === 'empty' &&
+    previous.promptVersion === SESSION_TITLE_PROMPT_VERSION &&
+    previous.sourceFingerprint === job.sourceFingerprint
+  ) {
+    return
+  }
+
   const digestForJob = await readDigestForJob(job, previous)
   if (digestForJob.digest.entries.length === 0) {
     if (previous?.status === 'ready' && previous.title) {
@@ -480,7 +502,12 @@ async function processTitleGenerationJob(job: SessionTitleGenerationJob, provide
       await writeCache(nextCache)
       return
     }
-    throw new Error('No readable transcript entries were available for title generation')
+    // No usable transcript content yet — a new/empty session, or one whose only
+    // rows are tool/meta/sidechain entries that we deliberately filter out. This
+    // is "nothing to title yet", not a failure: record a benign 'empty' marker
+    // so we retry once real content arrives, without lighting the error dot.
+    await recordEmptyTranscript(job, provider, digestForJob.processedSources)
+    return
   }
 
   const prompt = buildSessionTitlePrompt({
@@ -529,6 +556,34 @@ async function processTitleGenerationJob(job: SessionTitleGenerationJob, provide
     error: null
   }
   await writeCache(nextCache)
+}
+
+async function recordEmptyTranscript(
+  job: SessionTitleGenerationJob,
+  provider: TitleProvider,
+  processedSources: Record<string, ProcessedSource>
+): Promise<void> {
+  const cache = await readCache()
+  const previous = cache.entries[job.sessionKey]
+  cache.entries[job.sessionKey] = {
+    promptVersion: SESSION_TITLE_PROMPT_VERSION,
+    status: 'empty',
+    provider: provider.kind,
+    model: provider.model,
+    title: previous?.title ?? null,
+    summary: previous?.summary ?? null,
+    reason: previous?.reason ?? null,
+    confidence: previous?.confidence ?? null,
+    sourceFingerprint: job.sourceFingerprint,
+    processedSources,
+    transcriptUpdatedAt: transcriptUpdatedAt(job.transcriptUpdatedAtMs),
+    generatedAt: previous?.generatedAt ?? new Date().toISOString(),
+    attemptedAt: new Date().toISOString(),
+    inputCharCount: previous?.inputCharCount ?? 0,
+    outputCharCount: previous?.outputCharCount ?? 0,
+    error: null
+  }
+  await writeCache(cache)
 }
 
 async function recordGenerationFailure(

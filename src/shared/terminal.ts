@@ -78,3 +78,51 @@ export function backgroundTerminalLocations(
       }
     })
 }
+
+export type TerminalBackgroundSession = {
+  sessionKey: string
+  sessionTitle: string
+  projectId: string | null
+  projectName: string
+  projectPath: string | null
+  // A representative working directory for the row (the session's first
+  // background terminal); terminals in a session usually share the project root.
+  cwd: string | null
+  wslDistro: string | null
+  terminalCount: number
+  // The terminals in this session, in discovery order. Selecting any of them
+  // jumps to the same session, so the menu only needs the first as the target.
+  terminals: TerminalBackgroundLocation[]
+}
+
+// Collapse per-terminal background locations into one entry per session.
+// Multiple terminals in the same session all jump to that session, so listing
+// each terminal separately just clutters the locator — group them and surface a
+// count instead. Order follows first appearance.
+export function backgroundTerminalSessions(
+  locations: TerminalBackgroundLocation[]
+): TerminalBackgroundSession[] {
+  const order: string[] = []
+  const groups = new Map<string, TerminalBackgroundSession>()
+  for (const location of locations) {
+    const existing = groups.get(location.sessionKey)
+    if (existing) {
+      existing.terminalCount += 1
+      existing.terminals.push(location)
+      continue
+    }
+    order.push(location.sessionKey)
+    groups.set(location.sessionKey, {
+      sessionKey: location.sessionKey,
+      sessionTitle: location.sessionTitle,
+      projectId: location.projectId,
+      projectName: location.projectName,
+      projectPath: location.projectPath,
+      cwd: location.cwd,
+      wslDistro: location.wslDistro,
+      terminalCount: 1,
+      terminals: [location]
+    })
+  }
+  return order.map((key) => groups.get(key)!)
+}

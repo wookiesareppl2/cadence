@@ -5,6 +5,7 @@ import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import type { FileRequest } from '@shared/project-files'
 import { findFilePathCandidates, offsetToCell } from '@shared/terminal-links'
+import { backgroundTerminalSessions } from '@shared/terminal'
 import type { TerminalBackgroundLocation, TerminalPlatform, TerminalStartResult, TerminalTab } from '@shared/terminal'
 
 export type { TerminalTab } from '@shared/terminal'
@@ -301,6 +302,12 @@ export const TerminalDeck = memo(function TerminalDeck({
   const backgroundButtonRef = useRef<HTMLButtonElement>(null)
   const noProjectLabel = loading ? 'Loading project…' : 'Select a project to open a terminal'
   const backgroundCount = backgroundTerminals.length || backgroundTabCount
+  // One row per session, not per terminal: every terminal in a session jumps to
+  // the same place, so the locator groups them and shows a per-session count.
+  const backgroundSessions = useMemo(
+    () => backgroundTerminalSessions(backgroundTerminals),
+    [backgroundTerminals]
+  )
   const backgroundNote =
     backgroundCount > 0
       ? `${backgroundCount} ${backgroundCount === 1 ? 'terminal' : 'terminals'} running in ` +
@@ -388,28 +395,29 @@ export const TerminalDeck = memo(function TerminalDeck({
       {backgroundMenuOpen && backgroundNote ? (
         <div className="terminal-bg-menu" style={backgroundMenuStyle} role="menu" aria-label="Background terminals">
           <div className="terminal-bg-menu-head">{backgroundNote}</div>
-          {backgroundTerminals.length > 0 ? (
-            backgroundTerminals.map((terminal) => {
-              const location = terminal.cwd ?? terminal.projectPath ?? 'No working directory'
-              const selectable = Boolean(terminal.projectId)
+          {backgroundSessions.length > 0 ? (
+            backgroundSessions.map((session) => {
+              const location = session.cwd ?? session.projectPath ?? 'No working directory'
+              const selectable = Boolean(session.projectId)
+              const countLabel = `${session.terminalCount} ${session.terminalCount === 1 ? 'terminal' : 'terminals'}`
               return (
                 <button
-                  key={terminal.terminalId}
+                  key={session.sessionKey}
                   type="button"
                   role="menuitem"
                   className="terminal-bg-row"
                   disabled={!selectable}
                   onClick={() => {
                     if (!selectable) return
-                    onSelectBackgroundTerminal?.(terminal)
+                    onSelectBackgroundTerminal?.(session.terminals[0])
                     setBackgroundMenuOpen(false)
                   }}
                   title={location}
                 >
                   <span className="terminal-bg-row-main">
-                    <span className="terminal-bg-row-title">{terminal.title}</span>
+                    <span className="terminal-bg-row-title">{session.sessionTitle}</span>
                     <span className="terminal-bg-row-context">
-                      {terminal.projectName} / {terminal.sessionTitle}
+                      {session.projectName} · {countLabel}
                     </span>
                   </span>
                   <span className="terminal-bg-row-cwd">{location}</span>
