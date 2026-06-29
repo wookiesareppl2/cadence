@@ -53,22 +53,25 @@ const PROJECT_SIDEBAR_DEFAULT_WIDTH = 310
 const FILES_PANEL_DEFAULT_WIDTH = 280
 const HISTORY_SIDEBAR_DEFAULT_WIDTH = 410
 const WORKSPACE_DOCK_DEFAULT_HEIGHT = 280
+const PROJECT_LIST_DEFAULT_HEIGHT = 260
 
 type CSSVars = CSSProperties & Record<`--${string}`, string | number>
-type PanelSizeKey = 'projectSidebar' | 'filesPanel' | 'historySidebar' | 'workspaceDock'
+type PanelSizeKey = 'projectSidebar' | 'projectList' | 'filesPanel' | 'historySidebar' | 'workspaceDock'
 type PlatformPanelSizes = Record<PanelSizeKey, number | null>
 type PanelSizePreferences = Record<PlatformId, PlatformPanelSizes>
-type PanelResizeEdge = 'left' | 'right' | 'top'
+type PanelResizeEdge = 'left' | 'right' | 'top' | 'bottom'
 
 const DEFAULT_PANEL_SIZES: PanelSizePreferences = {
   claude: {
     projectSidebar: null,
+    projectList: null,
     filesPanel: null,
     historySidebar: null,
     workspaceDock: null
   },
   codex: {
     projectSidebar: null,
+    projectList: null,
     filesPanel: null,
     historySidebar: null,
     workspaceDock: null
@@ -77,6 +80,7 @@ const DEFAULT_PANEL_SIZES: PanelSizePreferences = {
 
 const PANEL_SIZE_LIMITS: Record<PanelSizeKey, { min: number; max: number }> = {
   projectSidebar: { min: 240, max: 520 },
+  projectList: { min: 120, max: 620 },
   filesPanel: { min: 220, max: 520 },
   historySidebar: { min: 320, max: 680 },
   workspaceDock: { min: 190, max: 520 }
@@ -84,6 +88,7 @@ const PANEL_SIZE_LIMITS: Record<PanelSizeKey, { min: number; max: number }> = {
 
 const PANEL_SIZE_FALLBACKS: Record<PanelSizeKey, number> = {
   projectSidebar: PROJECT_SIDEBAR_DEFAULT_WIDTH,
+  projectList: PROJECT_LIST_DEFAULT_HEIGHT,
   filesPanel: FILES_PANEL_DEFAULT_WIDTH,
   historySidebar: HISTORY_SIDEBAR_DEFAULT_WIDTH,
   workspaceDock: WORKSPACE_DOCK_DEFAULT_HEIGHT
@@ -102,12 +107,14 @@ function revivePanelSizePreferences(value: PanelSizePreferences): PanelSizePrefe
   return {
     claude: {
       projectSidebar: normalizePanelSize('projectSidebar', value.claude?.projectSidebar),
+      projectList: normalizePanelSize('projectList', value.claude?.projectList),
       filesPanel: normalizePanelSize('filesPanel', value.claude?.filesPanel),
       historySidebar: normalizePanelSize('historySidebar', value.claude?.historySidebar),
       workspaceDock: normalizePanelSize('workspaceDock', value.claude?.workspaceDock)
     },
     codex: {
       projectSidebar: normalizePanelSize('projectSidebar', value.codex?.projectSidebar),
+      projectList: normalizePanelSize('projectList', value.codex?.projectList),
       filesPanel: normalizePanelSize('filesPanel', value.codex?.filesPanel),
       historySidebar: normalizePanelSize('historySidebar', value.codex?.historySidebar),
       workspaceDock: normalizePanelSize('workspaceDock', value.codex?.workspaceDock)
@@ -137,7 +144,7 @@ function startPanelResize({
   const startX = event.clientX
   const startY = event.clientY
   const initialSize = clampPanelSize(key, startSize || PANEL_SIZE_FALLBACKS[key])
-  const axis = edge === 'top' ? 'y' : 'x'
+  const axis = edge === 'top' || edge === 'bottom' ? 'y' : 'x'
 
   handle.classList.add('resizing')
   document.body.dataset.panelResize = axis
@@ -150,7 +157,9 @@ function startPanelResize({
         ? moveEvent.clientX - startX
         : edge === 'left'
           ? startX - moveEvent.clientX
-          : startY - moveEvent.clientY
+          : edge === 'bottom'
+            ? moveEvent.clientY - startY
+            : startY - moveEvent.clientY
     onResize(clampPanelSize(key, initialSize + delta))
   }
 
@@ -1747,6 +1756,7 @@ function usePanelResizeHandlers(
   onPanelResize: (key: PanelSizeKey, size: number) => void
 ): {
   startProjectSidebarResize: (event: ReactPointerEvent<HTMLElement>, startSize: number) => void
+  startProjectListResize: (event: ReactPointerEvent<HTMLElement>, startSize: number) => void
   startFilesPanelResize: (event: ReactPointerEvent<HTMLElement>, startSize: number) => void
   startHistorySidebarResize: (event: ReactPointerEvent<HTMLElement>, startSize: number) => void
   startWorkspaceDockResize: (event: ReactPointerEvent<HTMLElement>, startSize: number) => void
@@ -1767,6 +1777,10 @@ function usePanelResizeHandlers(
   return {
     startProjectSidebarResize: useCallback(
       (event, startSize) => startResize(event, 'projectSidebar', 'right', startSize),
+      [startResize]
+    ),
+    startProjectListResize: useCallback(
+      (event, startSize) => startResize(event, 'projectList', 'bottom', startSize),
       [startResize]
     ),
     startFilesPanelResize: useCallback(
@@ -1949,6 +1963,8 @@ function ClaudeWorkspace({
         onToggle={onToggleProjectSidebar}
         width={panelSizes.projectSidebar}
         onResizeStart={panelResize.startProjectSidebarResize}
+        projectListHeight={panelSizes.projectList}
+        onProjectListResize={panelResize.startProjectListResize}
         onStartSession={startSession}
         onAbandonPendingSession={abandonPendingSession}
         onRenamePendingSession={renamePendingSession}
@@ -2207,6 +2223,8 @@ function CodexWorkspace({
         onToggle={onToggleProjectSidebar}
         width={panelSizes.projectSidebar}
         onResizeStart={panelResize.startProjectSidebarResize}
+        projectListHeight={panelSizes.projectList}
+        onProjectListResize={panelResize.startProjectListResize}
         onStartSession={startSession}
         onAbandonPendingSession={abandonPendingSession}
         onRenamePendingSession={renamePendingSession}

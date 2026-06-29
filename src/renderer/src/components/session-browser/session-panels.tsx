@@ -60,6 +60,8 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
   onToggle,
   width,
   onResizeStart,
+  projectListHeight,
+  onProjectListResize,
   onStartSession,
   onAbandonPendingSession,
   onRenamePendingSession
@@ -75,6 +77,10 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
   onToggle: () => void
   width: number | null
   onResizeStart: (event: ReactPointerEvent<HTMLElement>, startSize: number) => void
+  // Height of the Projects list; the draggable divider between Projects and
+  // Sessions persists this per platform (null = use the CSS default).
+  projectListHeight: number | null
+  onProjectListResize: (event: ReactPointerEvent<HTMLElement>, startSize: number) => void
   onStartSession: (project: ProjectSessionGroup) => void
   onAbandonPendingSession: (id: string) => Promise<{ trashed: number }>
   onRenamePendingSession: (id: string, title: string | null) => Promise<void>
@@ -92,12 +98,12 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
   const sessionRows = [...pendingForProject, ...browser.projectSessions]
   const highlightSessionId =
     browser.selectedSession?.id ?? (isPendingSessionId(browser.selectedSessionId) ? browser.selectedSessionId : null)
-  const sidebarStyle =
-    width === null
-      ? undefined
-      : ({
-          '--project-sidebar-width': `${width}px`
-        } as CSSVars)
+  const sidebarStyle = useMemo<CSSVars | undefined>(() => {
+    const vars: CSSVars = {}
+    if (width !== null) vars['--project-sidebar-width'] = `${width}px`
+    if (projectListHeight !== null) vars['--project-list-height'] = `${projectListHeight}px`
+    return Object.keys(vars).length > 0 ? vars : undefined
+  }, [width, projectListHeight])
 
   return (
     <>
@@ -173,6 +179,18 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
               onDeleteProject={browser.deleteProject}
             />
           </div>
+          <div
+            className="panel-resize-handle project-session-divider"
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize projects and sessions"
+            tabIndex={open ? 0 : -1}
+            onPointerDown={(event) => {
+              const list = event.currentTarget.closest('.project-sidebar-content')?.querySelector('.project-list')
+              const start = list?.getBoundingClientRect().height ?? projectListHeight ?? 0
+              onProjectListResize(event, start)
+            }}
+          />
           <div className="session-stack">
             <div className="session-stack-header">
               <span className="session-stack-title">
