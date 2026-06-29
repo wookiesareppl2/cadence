@@ -18,5 +18,7 @@ resources/node/
 .agents/
 CLAUDE.md
 AGENTS.md
+# Personal release instructions — local-only, not for the public repo
+docs/RELEASING.md
 **/.coverage
 **/coverage-*.json
