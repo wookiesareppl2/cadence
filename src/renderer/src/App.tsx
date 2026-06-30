@@ -245,7 +245,10 @@ function toPendingSession(slot: PendingSessionSlot, platform: PlatformId): Assis
     usageLabel: null,
     status: 'pending',
     age: 'new',
-    updatedAt: new Date(slot.createdAtMs).toISOString()
+    updatedAt: new Date(slot.createdAtMs).toISOString(),
+    model: null,
+    contextTokens: null,
+    contextWindow: null
   }
 }
 

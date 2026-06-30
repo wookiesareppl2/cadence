@@ -41,6 +41,14 @@ export type AssistantSession = {
   status: string
   age: string
   updatedAt: string | null
+  // Context-window occupancy for the session, used by the per-session context
+  // gauge. `contextTokens` is the size of the most recent turn's prompt (≈ how
+  // full the context currently is), `model` is the model that produced it, and
+  // `contextWindow` is that model's window. All null when not derivable from the
+  // transcript (e.g. a Codex session with no token_count rows in the sample).
+  model: string | null
+  contextTokens: number | null
+  contextWindow: number | null
 }
 
 // Pushed from the main process when a background full scan (including slow WSL

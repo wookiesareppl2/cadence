@@ -15,6 +15,12 @@ import {
   type ProjectSessionGroup,
   type SessionHistoryState
 } from './use-session-browser'
+import {
+  CONTEXT_CRITICAL,
+  CONTEXT_WRAP_MAX,
+  CONTEXT_WRAP_MIN,
+  useContextWrapThreshold
+} from './use-context-threshold'
 import './session-browser.css'
 
 type CSSVars = CSSProperties & Record<`--${string}`, string | number>
@@ -305,6 +311,89 @@ function ResumeIcon(): JSX.Element {
   )
 }
 
+function formatContextTokens(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value % 1_000_000 === 0 ? 0 : 1)}M`
+  if (value >= 1_000) return `${Math.round(value / 1_000)}K`
+  return String(value)
+}
+
+type ContextLevel = 'ok' | 'warn' | 'critical'
+
+const CONTEXT_LEVEL_HINT: Record<ContextLevel, string> = {
+  ok: 'Healthy — keep working',
+  warn: 'Wrap up and run /save soon',
+  critical: 'Save now — context nearly full'
+}
+
+function contextLevel(fraction: number, threshold: number): ContextLevel {
+  if (fraction >= CONTEXT_CRITICAL) return 'critical'
+  if (fraction >= threshold) return 'warn'
+  return 'ok'
+}
+
+// Compact context-usage gauge for the selected session: a thin bar plus
+// `<used> / <window> · <pct>%`, coloured by how full the model's context window
+// is. Green while healthy, amber once past the user's wrap-up threshold — the cue
+// to `/save` and start fresh before quality degrades ("context rot"). Renders
+// nothing when the transcript doesn't expose token usage.
+function SessionContextGauge({ session }: { session: AssistantSession }): JSX.Element | null {
+  const [threshold] = useContextWrapThreshold()
+  const { contextTokens, contextWindow } = session
+  if (contextTokens == null || !contextWindow) return null
+
+  const fraction = Math.min(1, contextTokens / contextWindow)
+  const level = contextLevel(fraction, threshold)
+  const pct = Math.round(fraction * 100)
+  const hint = CONTEXT_LEVEL_HINT[level]
+
+  return (
+    <div
+      className={`context-gauge ${level}`}
+      role="meter"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={pct}
+      aria-label={`Context ${pct} percent full. ${hint}.`}
+      title={`${formatContextTokens(contextTokens)} of ${formatContextTokens(contextWindow)} context used (${pct}%). ${hint}.`}
+    >
+      <span className="context-gauge-track">
+        <span className="context-gauge-fill" style={{ width: `${Math.max(2, fraction * 100)}%` }} />
+      </span>
+      <span className="context-gauge-text">
+        {formatContextTokens(contextTokens)} / {formatContextTokens(contextWindow)} · {pct}%
+      </span>
+    </div>
+  )
+}
+
+// Adjuster for the global "wrap up" threshold (the amber line on the gauge). Lives
+// in the session details modal; edits sync to every gauge via the shared hook.
+function ContextThresholdControl(): JSX.Element {
+  const [threshold, setThreshold] = useContextWrapThreshold()
+  return (
+    <div className="context-threshold">
+      <label className="context-threshold-label" htmlFor="context-threshold-range">
+        <span>Wrap-up threshold</span>
+        <span className="context-threshold-value">{Math.round(threshold * 100)}%</span>
+      </label>
+      <input
+        id="context-threshold-range"
+        className="context-threshold-range"
+        type="range"
+        min={Math.round(CONTEXT_WRAP_MIN * 100)}
+        max={Math.round(CONTEXT_WRAP_MAX * 100)}
+        step={5}
+        value={Math.round(threshold * 100)}
+        onChange={(event) => setThreshold(Number(event.target.value) / 100)}
+      />
+      <p className="context-threshold-hint">
+        The gauge turns amber at this share of the model&apos;s context window — your cue to <code>/save</code> and start
+        a fresh session before context rot sets in.
+      </p>
+    </div>
+  )
+}
+
 // Modal popup with the selected session's facts. Reuses the design-system overlay
 // pattern (fixed backdrop below the titlebar, dialog on --surface-1, close on
 // backdrop click / Escape) and the shared `.session-detail-body`/`.session-facts`
@@ -363,6 +452,11 @@ export function SessionDetailModal({
               <Fact label="Source" value={session.rawTitle} />
             ) : null}
           </dl>
+          <div className="session-detail-context">
+            <h4>Context usage</h4>
+            <SessionContextGauge session={session} />
+            <ContextThresholdControl />
+          </div>
         </div>
       </div>
     </div>,
@@ -602,6 +696,7 @@ export function SessionHistorySidebar({
           </button>
         </div>
       </div>
+      {session ? <SessionContextGauge session={session} /> : null}
       {session && history && history.entries.length > 0 ? (
         <div className="history-search-bar">
           <span className="history-search-glyph" aria-hidden="true">
