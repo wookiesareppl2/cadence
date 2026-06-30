@@ -1752,3 +1752,121 @@
     margin-left: auto;
   }
 }
+
+/* ── Context-usage gauge ─────────────────────────────────────────────────── */
+
+/* Slim per-session gauge in the History header: a thin track + compact mono
+   readout. Colour escalates green → amber as the model's context window fills,
+   cueing the user to /save before context rot. */
+.context-gauge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  --context-color: var(--success);
+}
+
+.context-gauge.warn,
+.context-gauge.critical {
+  --context-color: var(--caution);
+}
+
+.context-gauge-track {
+  flex: 1;
+  min-width: 0;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.context-gauge-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--context-color);
+  transition:
+    width 220ms var(--ease-out-expo),
+    background-color 160ms ease;
+}
+
+.context-gauge-text {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.context-gauge.warn .context-gauge-text,
+.context-gauge.critical .context-gauge-text {
+  color: var(--context-color);
+}
+
+.context-gauge.critical .context-gauge-text {
+  font-weight: 650;
+}
+
+/* Context section in the session-details modal: full gauge + the wrap-up slider. */
+.session-detail-context {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.session-detail-context h4 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.session-detail-context .context-gauge {
+  padding: 0;
+  border-bottom: 0;
+}
+
+.context-threshold {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.context-threshold-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.context-threshold-value {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.context-threshold-range {
+  width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.context-threshold-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-3);
+}
+
+.context-threshold-hint code {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-2);
+}

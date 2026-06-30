@@ -219,6 +219,27 @@ vs. `Select a project to open a terminal` when none is picked.
   Do not use xterm's `paste('\n')` helper for either (it normalizes LF to CR and
   submits).
 
+## Context-usage gauge
+
+The selected session shows a **context gauge** (`.context-gauge`) in the History
+panel header and, in fuller form, in the session-details modal: a thin track plus a
+mono `<used> / <window> · <pct>%` readout of how full the session's model context
+window is (`session.contextTokens` / `session.contextWindow`, computed in the main
+scanner from the latest turn's prompt size). It's a "context rot" early-warning — the
+cue to `/save` and start a fresh session before quality degrades.
+
+- **Two colours only (on-token):** green `--success` while healthy, amber `--caution`
+  once past the user's wrap-up threshold (and at the `CONTEXT_CRITICAL` 80% auto-compact
+  ceiling, where the readout also bolds and the label escalates to "Save now"). No new
+  red token — `--caution` is the house warning/destructive colour.
+- **Adjustable threshold:** the amber line is a global preference (default 60%, the
+  Claude Code team's proactive-compaction guidance), stored in `localStorage` via
+  `useContextWrapThreshold` and adjusted with the slider in the session-details modal.
+  Edits sync to every gauge in the window through a manual `storage` event — never
+  prop-drill it.
+- Renders nothing when the transcript exposes no token usage (e.g. some Codex
+  sessions), so it never shows a misleading empty gauge.
+
 ## History Transcript
 
 - **Code blocks:** rendered user/assistant History code fences, indented code, and

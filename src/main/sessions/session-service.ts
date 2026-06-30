@@ -22,6 +22,10 @@ type ClaudeSessionDraft = {
   titleMessages: TitleMessage[]
   updatedAtMs: number
   tokenTotal: number
+  // Most recent turn's prompt size (input + cache reads/writes) ≈ current context
+  // fill, and the model that produced it. Drive the per-session context gauge.
+  contextTokens: number
+  model: string | null
   entrypoint: string | null
   sources: SessionTranscriptSource[]
 }
@@ -35,6 +39,11 @@ type CodexSessionDraft = {
   titleMessages: TitleMessage[]
   updatedAtMs: number
   isSubagent: boolean
+  // Best-effort context occupancy from Codex `token_count` rows (current input
+  // tokens + the model's window when the rollout reports it). Null when absent.
+  contextTokens: number | null
+  contextWindow: number | null
+  model: string | null
   sources: SessionTranscriptSource[]
 }
 
@@ -149,6 +158,23 @@ export function projectId(
   if (projectPath) return `${platform}:${ns}${normalizeCwdForId(projectPath, origin)}`
   if (fallbackPath) return `${platform}:${ns}${normalizeCwdForId(fallbackPath, origin)}`
   return `${platform}:${ns}unindexed`
+}
+
+// Map a model id to its native context window (tokens) so the gauge has a
+// denominator. Values follow the published model windows; an unknown model falls
+// back to 200K, the conservative floor shared by the smaller Claude/Codex tiers.
+const CONTEXT_WINDOW_RULES: { test: RegExp; window: number }[] = [
+  { test: /opus-4|sonnet-4|fable|mythos/i, window: 1_000_000 },
+  { test: /gpt-5|codex/i, window: 272_000 },
+  { test: /haiku|sonnet-3|opus-3|claude-3|gpt-4/i, window: 200_000 }
+]
+
+function contextWindowForModel(model: string | null): number | null {
+  if (!model) return null
+  for (const rule of CONTEXT_WINDOW_RULES) {
+    if (rule.test.test(model)) return rule.window
+  }
+  return 200_000
 }
 
 function claudeFallbackTitle(cwd: string | null): string {
@@ -427,6 +453,9 @@ async function readCodexSession(path: string, fallbackUpdatedAtMs: number): Prom
     titleMessages: [],
     updatedAtMs: fallbackUpdatedAtMs,
     isSubagent: false,
+    contextTokens: null,
+    contextWindow: null,
+    model: null,
     sources: [source]
   }
 
@@ -446,6 +475,19 @@ async function readCodexSession(path: string, fallbackUpdatedAtMs: number): Prom
         if (typeof row.payload?.id === 'string') draft.id = row.payload.id
         if (typeof row.payload?.cwd === 'string') draft.cwd = row.payload.cwd
         if (typeof row.payload?.git?.branch === 'string') draft.branch = row.payload.git.branch
+      }
+
+      if (typeof row.payload?.model === 'string') draft.model = row.payload.model
+
+      // Codex logs a `token_count` event per turn. `last_token_usage.input_tokens`
+      // is the most recent request's full prompt ≈ current context fill, and
+      // `model_context_window` (when present) is the window. Best-effort: if the
+      // shape differs, both stay null and no gauge renders.
+      if (row?.type === 'event_msg' && row.payload?.type === 'token_count') {
+        const info = row.payload.info
+        const usage = info?.last_token_usage ?? info?.total_token_usage
+        if (usage && typeof usage.input_tokens === 'number') draft.contextTokens = usage.input_tokens
+        if (typeof info?.model_context_window === 'number') draft.contextWindow = info.model_context_window
       }
 
       const timestampMs = rowTimestampMs(row, 0)
@@ -509,9 +551,15 @@ function dedupeCodexById(drafts: CodexSessionDraft[]): CodexSessionDraft[] {
       existing.sourcePath = draft.sourcePath
       existing.cwd = draft.cwd ?? existing.cwd
       existing.branch = draft.branch ?? existing.branch
+      existing.contextTokens = draft.contextTokens ?? existing.contextTokens
+      existing.contextWindow = draft.contextWindow ?? existing.contextWindow
+      existing.model = draft.model ?? existing.model
     } else {
       existing.cwd = existing.cwd ?? draft.cwd
       existing.branch = existing.branch ?? draft.branch
+      existing.contextTokens = existing.contextTokens ?? draft.contextTokens
+      existing.contextWindow = existing.contextWindow ?? draft.contextWindow
+      existing.model = existing.model ?? draft.model
     }
   }
 
@@ -529,6 +577,8 @@ async function readClaudeSession(path: string): Promise<ClaudeSessionDraft | nul
     titleMessages: [],
     updatedAtMs: stats.mtimeMs,
     tokenTotal: 0,
+    contextTokens: 0,
+    model: null,
     entrypoint: null,
     sources: [{ path, size: stats.size, mtimeMs: stats.mtimeMs }]
   }
@@ -578,6 +628,7 @@ async function readClaudeSession(path: string): Promise<ClaudeSessionDraft | nul
         draft.updatedAtMs = Math.max(draft.updatedAtMs, timestampMs)
       }
 
+      if (typeof row.message?.model === 'string') draft.model = row.message.model
       const usage = row.message?.usage
       if (usage) {
         draft.tokenTotal +=
@@ -585,6 +636,13 @@ async function readClaudeSession(path: string): Promise<ClaudeSessionDraft | nul
           (usage.output_tokens ?? 0) +
           (usage.cache_creation_input_tokens ?? 0) +
           (usage.cache_read_input_tokens ?? 0)
+        // Current context fill = the latest turn's prompt (everything resent that
+        // turn). Rows are chronological, so the last usage row wins. Excludes
+        // output_tokens — those aren't part of the next turn's input.
+        draft.contextTokens =
+          (usage.input_tokens ?? 0) +
+          (usage.cache_read_input_tokens ?? 0) +
+          (usage.cache_creation_input_tokens ?? 0)
       }
     } catch {
       // Ignore malformed JSONL rows. The usage parser owns detailed diagnostics.
@@ -619,9 +677,13 @@ function dedupeById(drafts: ClaudeSessionDraft[]): ClaudeSessionDraft[] {
       existing.sourcePath = draft.sourcePath
       existing.cwd = draft.cwd ?? existing.cwd
       existing.branch = draft.branch ?? existing.branch
+      // Context fill is point-in-time (not summed): keep the freshest file's value.
+      existing.contextTokens = draft.contextTokens
+      existing.model = draft.model ?? existing.model
     } else {
       existing.cwd = existing.cwd ?? draft.cwd
       existing.branch = existing.branch ?? draft.branch
+      existing.model = existing.model ?? draft.model
     }
   }
 
@@ -715,7 +777,10 @@ async function mapClaudeSession(session: ClaudeSessionDraft, origin: SessionOrig
     usageLabel: formatTokenLabel(session.tokenTotal),
     status: 'local',
     age: relativeAge(session.updatedAtMs),
-    updatedAt: new Date(session.updatedAtMs).toISOString()
+    updatedAt: new Date(session.updatedAtMs).toISOString(),
+    model: session.model,
+    contextTokens: session.contextTokens > 0 ? session.contextTokens : null,
+    contextWindow: contextWindowForModel(session.model)
   }
 }
 
@@ -796,7 +861,10 @@ async function mapCodexSession(
     usageLabel: null,
     status: '',
     age: relativeAge(draft.updatedAtMs),
-    updatedAt: new Date(draft.updatedAtMs).toISOString()
+    updatedAt: new Date(draft.updatedAtMs).toISOString(),
+    model: draft.model,
+    contextTokens: draft.contextTokens && draft.contextTokens > 0 ? draft.contextTokens : null,
+    contextWindow: draft.contextWindow ?? contextWindowForModel(draft.model)
   }
 }
 

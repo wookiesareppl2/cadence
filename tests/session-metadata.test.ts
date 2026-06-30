@@ -28,6 +28,9 @@ function makeSession(overrides: Partial<AssistantSession> = {}): AssistantSessio
     status: 'local',
     age: '1m ago',
     updatedAt: '2026-06-07T00:00:00.000Z',
+    model: null,
+    contextTokens: null,
+    contextWindow: null,
     ...overrides
   }
 }
