@@ -21,15 +21,17 @@ import {
   type GitHubContextBundleFile,
   type GitHubContextRestoreRequest,
   type GitHubContextRestoreSummary,
+  type GitHubContextStatusRequest,
+  type GitHubContextStatusResult,
   type GitHubContextSyncRequest,
   type GitHubContextSyncResult,
   type GitHubImportRequest,
   type GitHubImportResult,
   type GitHubRepositoryIdentity
 } from '@shared/github-import'
-import { gitHubVaultKey } from '@shared/context-vault'
+import { computeVaultStatus, gitHubVaultKey } from '@shared/context-vault'
 import { getGitHubAuthStatus, getGitHubToken, githubApiJson } from './github-auth-service'
-import { resolveProjectVaultId } from '../context-vault/link-store'
+import { fingerprintFiles, getVaultLink, recordVaultSync, resolveProjectVaultId } from '../context-vault/link-store'
 import { getDefaultClaudeProjectsRoot } from '../usage/claude-jsonl'
 import { resolveProjectLocation, type ProjectLocation } from '../projects/project-locator'
 import { getProjectWorkspace, saveProjectWorkspace } from '../projects/project-workspace-service'
@@ -174,6 +176,12 @@ export async function syncProjectContextToVault(
       snapshot = await writeVaultSnapshot(vaultPath, resolved.id, bundle, request.passphrase)
       await commitAndPushVault(vaultPath, resolved.id)
     }
+    // Remember what we just pushed so later status checks can detect divergence.
+    await recordVaultSync(contextVaultLinksPath(), request.projectId, {
+      snapshot,
+      fingerprint: fingerprintFiles(bundle.files),
+      at: bundle.createdAt
+    })
     return {
       ok: true,
       repo: repo ?? undefined,
@@ -183,6 +191,47 @@ export async function syncProjectContextToVault(
     }
   } catch (error) {
     return { ok: false, repo: repo ?? undefined, error: formatGitError(error, 'Could not sync the context vault.') }
+  }
+}
+
+// Report a project's context-vault state for the status indicator and auto-restore.
+// Read-only and side-effect-free: it never mints a vault link or creates the vault
+// repo (a status check must not change anything).
+export async function getProjectVaultStatus(
+  request: GitHubContextStatusRequest,
+  sender: WebContents
+): Promise<GitHubContextStatusResult> {
+  const location = await resolveProjectLocation(request.platform, request.projectId, sender)
+  if (!location) return { ok: false, error: 'Project folder not found.' }
+
+  const repoUrl = request.repositoryUrl?.trim() || (await inferGithubRemote(location))
+  const repo = repoUrl ? parseGitHubRepository(repoUrl) : null
+  const gitHubKey = repo ? gitHubVaultKey(repo.owner, repo.repo) : null
+  const link = await getVaultLink(contextVaultLinksPath(), request.projectId)
+  const vaultKey = gitHubKey ?? link?.vaultId ?? null
+  if (!vaultKey) return { ok: true, state: 'not-connected', vaultKey: null }
+
+  const auth = await getGitHubAuthStatus()
+  if (!auth.authenticated || !auth.login) {
+    return { ok: true, state: 'not-connected', vaultKey, lastSyncedAt: link?.lastSyncedAt ?? null }
+  }
+
+  try {
+    // Read the vault manifest without creating the repo (missing → empty manifest).
+    const vault = { owner: auth.login, repo: GITHUB_CONTEXT_VAULT_REPO_NAME }
+    const manifest = await readVaultManifestViaGitHubApi(vault, vaultKey)
+    const remoteLatest = manifest.latestSnapshot ?? manifest.snapshots[0]?.file ?? null
+
+    const bundle = await buildContextBundle(vaultKey, repo, location, request.projectId)
+    const state = computeVaultStatus({
+      base: link?.baseSnapshot ?? null,
+      baseFingerprint: link?.baseFingerprint ?? null,
+      localFingerprint: fingerprintFiles(bundle.files),
+      remoteLatest
+    })
+    return { ok: true, state, vaultKey, lastSyncedAt: link?.lastSyncedAt ?? null }
+  } catch (error) {
+    return { ok: false, vaultKey, error: error instanceof Error ? error.message : 'Could not read vault status.' }
   }
 }
 
@@ -763,6 +812,13 @@ async function restoreContextBundle({
     }
     workspaceRestored = true
   }
+
+  // A freshly restored project starts in-sync with this snapshot as its base.
+  await recordVaultSync(contextVaultLinksPath(), projectId, {
+    snapshot: snapshotRel,
+    fingerprint: fingerprintFiles(bundle.files),
+    at: new Date().toISOString()
+  })
 
   return { attempted: true, restored: true, snapshot: snapshotRel, filesRestored, workspaceRestored }
 }

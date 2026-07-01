@@ -2,7 +2,14 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { getVaultLink, readLinkStore, resolveProjectVaultId, setVaultLink } from '../src/main/context-vault/link-store'
+import {
+  fingerprintFiles,
+  getVaultLink,
+  readLinkStore,
+  recordVaultSync,
+  resolveProjectVaultId,
+  setVaultLink
+} from '../src/main/context-vault/link-store'
 
 describe('context vault link store', () => {
   let dir: string
@@ -57,5 +64,36 @@ describe('context vault link store', () => {
     const raw = JSON.parse(await readFile(storePath, 'utf-8'))
     expect(raw.version).toBe(1)
     expect(Object.keys(raw.links)).toContain('p1')
+  })
+
+  it('records sync base state onto an existing link (and no-ops when unlinked)', async () => {
+    await resolveProjectVaultId(storePath, { projectId: 'p1', projectName: 'One' })
+    await recordVaultSync(storePath, 'p1', { snapshot: 'snapshots/s1.enc', fingerprint: 'fp1', at: '2026-07-01T00:00:00Z' })
+    const link = await getVaultLink(storePath, 'p1')
+    expect(link).toMatchObject({ baseSnapshot: 'snapshots/s1.enc', baseFingerprint: 'fp1', lastSyncedAt: '2026-07-01T00:00:00Z' })
+
+    // Unlinked project: recording is a no-op, not an error.
+    await recordVaultSync(storePath, 'missing', { snapshot: 's', fingerprint: 'f', at: 'now' })
+    expect(await getVaultLink(storePath, 'missing')).toBeNull()
+  })
+})
+
+describe('fingerprintFiles', () => {
+  it('is order-independent and changes when content changes', () => {
+    const a = fingerprintFiles([
+      { path: 'CLAUDE.md', text: 'hello' },
+      { path: '.claude/x.md', text: 'world' }
+    ])
+    const reordered = fingerprintFiles([
+      { path: '.claude/x.md', text: 'world' },
+      { path: 'CLAUDE.md', text: 'hello' }
+    ])
+    expect(a).toBe(reordered)
+
+    const changed = fingerprintFiles([
+      { path: 'CLAUDE.md', text: 'hello!' },
+      { path: '.claude/x.md', text: 'world' }
+    ])
+    expect(changed).not.toBe(a)
   })
 })

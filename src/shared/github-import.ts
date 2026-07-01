@@ -137,6 +137,30 @@ export type GitHubContextSyncResult = {
   error?: string
 }
 
+export type GitHubContextStatusRequest = {
+  platform: PlatformId
+  projectId: string
+  repositoryUrl?: string | null
+}
+
+// The project's context-vault state for the status indicator. `not-connected` means
+// no vault link / signed out; the rest mirror the drift model in @shared/context-vault.
+export type GitHubContextVaultState =
+  | 'not-connected'
+  | 'uninitialized'
+  | 'in-sync'
+  | 'local-ahead'
+  | 'remote-ahead'
+  | 'conflict'
+
+export type GitHubContextStatusResult = {
+  ok: boolean
+  state?: GitHubContextVaultState
+  vaultKey?: string | null
+  lastSyncedAt?: string | null
+  error?: string
+}
+
 const GITHUB_OWNER_REPO = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/
 
 function cleanRepoName(value: string): string {

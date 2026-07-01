@@ -101,6 +101,35 @@ export function suggestVaultLink(
  */
 export type VaultDivergence = 'uninitialized' | 'in-sync' | 'local-ahead' | 'remote-ahead' | 'conflict'
 
+/**
+ * Has the local context changed since the snapshot this device last synced/restored?
+ * With no recorded base (never synced on this device), any local content counts as an
+ * unsynced change so the user is prompted rather than silently overwritten.
+ */
+export function localContextChanged(baseFingerprint: string | null, localFingerprint: string): boolean {
+  if (baseFingerprint == null) return localFingerprint.length > 0
+  return localFingerprint !== baseFingerprint
+}
+
+/**
+ * The project's sync state, from fingerprints + the vault's latest snapshot id. Thin
+ * wrapper over detectDivergence that derives `localChanged` from content fingerprints
+ * so callers don't reimplement it. `not-connected` (no link / signed out) is a caller
+ * concern layered on top.
+ */
+export function computeVaultStatus(input: {
+  base: string | null
+  baseFingerprint: string | null
+  localFingerprint: string
+  remoteLatest: string | null
+}): VaultDivergence {
+  return detectDivergence({
+    base: input.base,
+    remoteLatest: input.remoteLatest,
+    localChanged: localContextChanged(input.baseFingerprint, input.localFingerprint)
+  })
+}
+
 export function detectDivergence(input: {
   base: string | null
   remoteLatest: string | null

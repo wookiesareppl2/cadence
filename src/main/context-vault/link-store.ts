@@ -5,6 +5,7 @@
 // is what makes the same folder reconcile to the same vault entry on this device over
 // time. Electron-free (node fs/path only) so it is unit-testable with a temp file.
 
+import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { generateVaultProjectId, vaultEntryLabel } from '@shared/context-vault'
@@ -16,6 +17,29 @@ export type VaultLink = {
   label: string
   source: VaultLinkSource
   createdAt: string
+  // Sync state: the snapshot this device last synced/restored from (its "base"),
+  // a content fingerprint at that point (to detect local changes since), and when.
+  baseSnapshot?: string | null
+  baseFingerprint?: string | null
+  lastSyncedAt?: string | null
+}
+
+/**
+ * Deterministic content fingerprint of the bundled context files. Order-independent
+ * (sorted by path) and includes path + byte length + text so any edit changes it.
+ * Used to tell whether local context drifted from the last synced snapshot.
+ */
+export function fingerprintFiles(files: Array<{ path: string; text: string }>): string {
+  const hash = createHash('sha256')
+  for (const file of [...files].sort((a, b) => a.path.localeCompare(b.path))) {
+    hash.update(file.path)
+    hash.update('\0')
+    hash.update(String(Buffer.byteLength(file.text, 'utf-8')))
+    hash.update('\0')
+    hash.update(file.text)
+    hash.update('\0')
+  }
+  return hash.digest('hex')
 }
 
 export type VaultLinkStore = {
@@ -52,6 +76,28 @@ export async function getVaultLink(storePath: string, projectId: string): Promis
 export async function setVaultLink(storePath: string, projectId: string, link: VaultLink): Promise<void> {
   const store = await readLinkStore(storePath)
   store.links[projectId] = link
+  await writeLinkStore(storePath, store)
+}
+
+/**
+ * Record the snapshot this device just synced to / restored from, so later status
+ * checks can tell whether the vault has moved on and whether local context changed.
+ * No-op if the project has no link yet (resolveProjectVaultId creates one first).
+ */
+export async function recordVaultSync(
+  storePath: string,
+  projectId: string,
+  update: { snapshot: string; fingerprint: string; at: string }
+): Promise<void> {
+  const store = await readLinkStore(storePath)
+  const existing = store.links[projectId]
+  if (!existing) return
+  store.links[projectId] = {
+    ...existing,
+    baseSnapshot: update.snapshot,
+    baseFingerprint: update.fingerprint,
+    lastSyncedAt: update.at
+  }
   await writeLinkStore(storePath, store)
 }
 

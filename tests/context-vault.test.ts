@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  computeVaultStatus,
   detectDivergence,
   emptyVaultIndex,
   generateVaultProjectId,
   gitHubVaultKey,
+  localContextChanged,
   resolveVaultProjectId,
   suggestVaultLink,
   upsertVaultIndexEntry,
@@ -92,5 +94,44 @@ describe('detectDivergence (drift safety)', () => {
 
   it('treats an empty remote with a local base as local-ahead', () => {
     expect(D('s1', null, false)).toBe('local-ahead')
+  })
+})
+
+describe('localContextChanged', () => {
+  it('counts any local content as changed when there is no base', () => {
+    expect(localContextChanged(null, '')).toBe(false)
+    expect(localContextChanged(null, 'deadbeef')).toBe(true)
+  })
+  it('compares fingerprints when a base exists', () => {
+    expect(localContextChanged('abc', 'abc')).toBe(false)
+    expect(localContextChanged('abc', 'xyz')).toBe(true)
+  })
+})
+
+describe('computeVaultStatus', () => {
+  it('is uninitialized when nothing exists anywhere', () => {
+    expect(computeVaultStatus({ base: null, baseFingerprint: null, localFingerprint: '', remoteLatest: null })).toBe(
+      'uninitialized'
+    )
+  })
+  it('is in-sync when base matches remote and content is unchanged', () => {
+    expect(computeVaultStatus({ base: 's1', baseFingerprint: 'fp', localFingerprint: 'fp', remoteLatest: 's1' })).toBe(
+      'in-sync'
+    )
+  })
+  it('is local-ahead when only the local content changed', () => {
+    expect(computeVaultStatus({ base: 's1', baseFingerprint: 'fp', localFingerprint: 'fp2', remoteLatest: 's1' })).toBe(
+      'local-ahead'
+    )
+  })
+  it('is remote-ahead when the vault advanced and local is unchanged', () => {
+    expect(computeVaultStatus({ base: 's1', baseFingerprint: 'fp', localFingerprint: 'fp', remoteLatest: 's2' })).toBe(
+      'remote-ahead'
+    )
+  })
+  it('is conflict when both the vault advanced AND local changed', () => {
+    expect(computeVaultStatus({ base: 's1', baseFingerprint: 'fp', localFingerprint: 'fp2', remoteLatest: 's2' })).toBe(
+      'conflict'
+    )
   })
 })
