@@ -729,7 +729,15 @@ export function TerminalPane({
         </div>
       </div>
       {error ? <div className="terminal-error">{error}</div> : null}
-      <div ref={hostRef} className="terminal-surface" aria-label={title} />
+      {/* The padded `.terminal-surface` is the visual inset; xterm mounts into a
+          padding-less `.terminal-host` inside it. FitAddon sizes columns from
+          getComputedStyle(mountParent).width, which under box-sizing:border-box
+          reports the PADDING-inclusive width — so padding on the mount parent makes
+          it lay out too many columns and the right edge gets clipped. A padding-less
+          mount parent measures the true content width. */}
+      <div className="terminal-surface">
+        <div ref={hostRef} className="terminal-host" aria-label={title} />
+      </div>
     </div>
   )
 }
