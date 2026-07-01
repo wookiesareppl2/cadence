@@ -26,6 +26,8 @@ import type { SetupAction, SetupCommand, SetupStatus } from '@shared/setup'
 import type { MemoryFileContent, MemoryWriteResult, ProjectMemory } from '@shared/memory'
 import type {
   GitHubAuthStatus,
+  GitHubContextStatusRequest,
+  GitHubContextStatusResult,
   GitHubContextSyncRequest,
   GitHubContextSyncResult,
   GitHubDeviceFlowPollResult,
@@ -128,7 +130,9 @@ const api = {
     importProject: (request: GitHubImportRequest): Promise<GitHubImportResult> =>
       ipcRenderer.invoke('github:import-project', request),
     syncProjectContext: (request: GitHubContextSyncRequest): Promise<GitHubContextSyncResult> =>
-      ipcRenderer.invoke('github:sync-project-context', request)
+      ipcRenderer.invoke('github:sync-project-context', request),
+    projectContextStatus: (request: GitHubContextStatusRequest): Promise<GitHubContextStatusResult> =>
+      ipcRenderer.invoke('github:project-context-status', request)
   },
   projectWorkspace: {
     get: (projectId: string): Promise<ProjectWorkspace> => ipcRenderer.invoke('project-workspace:get', projectId),
