@@ -2,7 +2,56 @@ const { basename } = require('node:path')
 const pty = require('@homebridge/node-pty-prebuilt-multiarch')
 
 const BUFFER_LIMIT = 160000
+
+// Paced paste settings. Writing a whole paste to the pty at once drops characters
+// (often the leading half) under Windows ConPTY, so any input longer than the
+// threshold is split into small chunks written one per tick with a short gap,
+// letting the CLI capture every piece — including the bracketed-paste start marker.
+// Normal typing / key sequences stay under the threshold and write immediately.
+const INPUT_PACE_THRESHOLD = 256
+const INPUT_CHUNK_SIZE = 256
+const INPUT_CHUNK_DELAY_MS = 6
+const INPUT_MAX_TOTAL = 2000000
+
 const sessions = new Map()
+
+// Inline mirror of chunkTerminalInput() in src/shared/terminal.ts (this worker runs
+// as a plain .cjs child process and cannot import that module). Keep them in sync.
+function chunkInput(data, size) {
+  if (data.length <= size) return [data]
+  const chunks = []
+  let start = 0
+  while (start < data.length) {
+    let end = Math.min(start + size, data.length)
+    if (end < data.length) {
+      const unit = data.charCodeAt(end - 1)
+      if (unit >= 0xd800 && unit <= 0xdbff && end - 1 > start) end -= 1
+    }
+    chunks.push(data.slice(start, end))
+    start = end
+  }
+  return chunks
+}
+
+// Drain one queued input piece per tick so a paced paste stays ordered and never
+// floods ConPTY. Stops if the session was closed while pieces were still pending.
+function pumpWrites(session) {
+  if (session.writeDraining || session.closed) return
+  const piece = session.writeQueue.shift()
+  if (piece === undefined) return
+  session.writeDraining = true
+  try {
+    session.pty.write(piece)
+  } catch {
+    session.writeDraining = false
+    session.writeQueue.length = 0
+    return
+  }
+  setTimeout(() => {
+    session.writeDraining = false
+    pumpWrites(session)
+  }, INPUT_CHUNK_DELAY_MS)
+}
 
 function terminalCwd() {
   return process.env.AI_DASHBOARD_TERMINAL_CWD || process.cwd()
@@ -97,7 +146,12 @@ function createSession(terminalId, platform, requestedCwd, wslDistro) {
     cwd: wslDistro ? requestedCwd || null : spawnCwd,
     wslDistro: wslDistro || null,
     shell: shell.label || basename(shell.file),
-    buffer: []
+    buffer: [],
+    // Paced-write state: pending input pieces, whether a piece is mid-flight, and
+    // a closed flag so a queued drain stops once the pty is gone.
+    writeQueue: [],
+    writeDraining: false,
+    closed: false
   }
 
   terminal.onData((data) => {
@@ -113,6 +167,7 @@ function createSession(terminalId, platform, requestedCwd, wslDistro) {
     const data = `\r\n[terminal exited code=${exitCode}${suffix}]\r\n`
     rememberOutput(session, data)
     send({ type: 'data', terminalId, platform, data })
+    session.closed = true
     sessions.delete(terminalId)
   })
 
@@ -154,6 +209,7 @@ function restart(requestId, terminalId) {
   const cwd = existing ? existing.cwd : undefined
   const wslDistro = existing ? existing.wslDistro : undefined
   if (existing) {
+    existing.closed = true
     existing.pty.kill()
     sessions.delete(terminalId)
   }
@@ -161,8 +217,22 @@ function restart(requestId, terminalId) {
 }
 
 function write(terminalId, data) {
-  if (typeof data !== 'string' || data.length > 20000) return
-  sessions.get(terminalId)?.pty.write(data)
+  if (typeof data !== 'string' || data.length === 0 || data.length > INPUT_MAX_TOTAL) return
+  const session = sessions.get(terminalId)
+  if (!session || session.closed) return
+
+  // Fast path for normal typing: write immediately so input stays responsive. Only
+  // taken when no paced paste is draining, so ordering with an in-flight paste holds.
+  const pacing = session.writeDraining || session.writeQueue.length > 0
+  if (data.length <= INPUT_PACE_THRESHOLD && !pacing) {
+    session.pty.write(data)
+    return
+  }
+
+  // Larger input (a paste) — or any input arriving while one drains — is queued in
+  // small pieces and paced out so ConPTY delivers every character in order.
+  for (const piece of chunkInput(data, INPUT_CHUNK_SIZE)) session.writeQueue.push(piece)
+  pumpWrites(session)
 }
 
 function resize(terminalId, cols, rows) {
@@ -173,12 +243,14 @@ function resize(terminalId, cols, rows) {
 function close(terminalId) {
   const session = sessions.get(terminalId)
   if (!session) return
+  session.closed = true
   sessions.delete(terminalId)
   session.pty.kill()
 }
 
 function closeAll() {
   for (const session of sessions.values()) {
+    session.closed = true
     session.pty.kill()
   }
   sessions.clear()

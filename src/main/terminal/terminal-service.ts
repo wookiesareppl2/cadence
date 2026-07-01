@@ -175,9 +175,14 @@ export async function startTerminal(
   return sendWorkerRequest({ type: 'start', terminalId, platform, cwd: workspaceCwd, wslDistro: distro })
 }
 
+// A generous upper bound that still guards against a pathological multi-megabyte
+// blob crossing IPC. Anything under it is forwarded whole; the worker paces large
+// pastes into small pty writes so nothing is truncated (see terminal-worker write()).
+const INPUT_MAX_TOTAL = 2_000_000
+
 export function writeTerminal(terminalId: string, data: string): void {
   assertTerminalId(terminalId)
-  if (typeof data !== 'string' || data.length > 20_000) return
+  if (typeof data !== 'string' || data.length === 0 || data.length > INPUT_MAX_TOTAL) return
   ensureWorker().send?.({ type: 'input', terminalId, data } satisfies WorkerRequest)
 }
 

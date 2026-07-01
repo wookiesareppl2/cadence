@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   backgroundTerminalLocations,
   backgroundTerminalSessions,
+  chunkTerminalInput,
   restorableTabs,
   type TerminalBackgroundLocation,
   type TerminalTab
@@ -60,6 +61,33 @@ describe('backgroundTerminalLocations', () => {
 
   it('treats a null selected session as no visible session', () => {
     expect(backgroundTerminalLocations(tabs, null, [])).toHaveLength(3)
+  })
+})
+
+describe('chunkTerminalInput', () => {
+  it('returns the input unchanged in one piece when it already fits', () => {
+    expect(chunkTerminalInput('hello', 256)).toEqual(['hello'])
+    expect(chunkTerminalInput('', 256)).toEqual([''])
+  })
+
+  it('splits longer input into pieces of at most the given size', () => {
+    const data = 'a'.repeat(650)
+    const chunks = chunkTerminalInput(data, 256)
+    expect(chunks.map((chunk) => chunk.length)).toEqual([256, 256, 138])
+    expect(chunks.join('')).toBe(data)
+  })
+
+  it('never splits a surrogate pair across chunks', () => {
+    // Each emoji is two UTF-16 code units; a naive slice at an odd boundary would
+    // cut one in half and corrupt it. Build a string whose boundary lands mid-pair.
+    const data = 'x' + '😀'.repeat(10) // 1 + 20 code units
+    const chunks = chunkTerminalInput(data, 4)
+    expect(chunks.join('')).toBe(data)
+    for (const chunk of chunks) {
+      // A well-formed chunk never ends on a lone high surrogate.
+      const last = chunk.charCodeAt(chunk.length - 1)
+      expect(last >= 0xd800 && last <= 0xdbff).toBe(false)
+    }
   })
 })
 
