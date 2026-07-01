@@ -403,28 +403,6 @@ function useSessionScopedTerminals(
     )
   }, [])
 
-  const handleAddTerminal = useCallback(
-    (cwd?: string | null, title?: string, wslDistro?: string | null) => {
-      // Add a side-shell only to a genuinely *active* session: one that is pending
-      // (just started) or already has a live terminal (e.g. a resumed one). Extra
-      // terminals then stay grouped with that session.
-      const sessionIsActive =
-        selectedSessionId != null &&
-        (isPendingSessionId(selectedSessionId) || tabs.some((tab) => tab.sessionKey === selectedSessionId))
-      if (sessionIsActive) {
-        addTerminal(selectedSessionId!, cwd, title, wslDistro)
-        return
-      }
-      // Otherwise the selected session is a read-only historical transcript (or only
-      // a project is selected). A terminal opened here is new work — running a CLI
-      // starts a *new* session — so begin one rather than gluing the terminal to a
-      // past transcript (which would file the new conversation under the wrong
-      // session). Resume is the path to continue a historical session.
-      if (selectedProject) beginSession(selectedProject, true, cwd, title, wslDistro)
-    },
-    [addTerminal, beginSession, selectedProject, selectedSessionId, tabs]
-  )
-
   // Resume a past session: bring it to the front, then run the CLI's resume
   // command. If the session already has a terminal, send the command into it
   // (no duplicate tab); otherwise open a new terminal in its project folder/WSL
@@ -443,6 +421,36 @@ function useSessionScopedTerminals(
       addTerminal(session.id, session.projectPath, undefined, session.origin?.distro ?? null, command)
     },
     [tabs, addTerminal, onSelectedProjectIdChange, onSelectedSessionIdChange, platform]
+  )
+
+  const handleAddTerminal = useCallback(
+    (cwd?: string | null, title?: string, wslDistro?: string | null) => {
+      // Add a side-shell only to a genuinely *active* session: one that is pending
+      // (just started) or already has a live terminal (e.g. a resumed one). Extra
+      // terminals then stay grouped with that session.
+      const sessionIsActive =
+        selectedSessionId != null &&
+        (isPendingSessionId(selectedSessionId) || tabs.some((tab) => tab.sessionKey === selectedSessionId))
+      if (sessionIsActive) {
+        addTerminal(selectedSessionId!, cwd, title, wslDistro)
+        return
+      }
+      // A historical session is selected but has no live terminal (typically after
+      // an app restart closed its shell). "Add terminal" here means "get me back
+      // into this session", so RESUME it — this reuses the real session id via the
+      // CLI's resume command. Never bind a fresh shell to a historical id directly:
+      // that files new work under the wrong session (decision 601 / PIN-023).
+      const historical =
+        selectedSessionId != null ? sessions.find((session) => session.id === selectedSessionId) : undefined
+      if (historical) {
+        resumeSession(historical)
+        return
+      }
+      // Only a project is selected (no session at all): a terminal here is new work,
+      // so begin a fresh session rooted in the project.
+      if (selectedProject) beginSession(selectedProject, true, cwd, title, wslDistro)
+    },
+    [addTerminal, beginSession, resumeSession, sessions, selectedProject, selectedSessionId, tabs]
   )
 
   // Adopt: when the poll reveals a session whose folder matches a waiting pending
