@@ -9,7 +9,7 @@ import {
   timingSafeEqual
 } from 'node:crypto'
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { PlatformId } from '@shared/platform'
 import { centralSlug } from '@shared/memory'
 import { toNativeRoot } from '@shared/project-files'
@@ -27,7 +27,9 @@ import {
   type GitHubImportResult,
   type GitHubRepositoryIdentity
 } from '@shared/github-import'
+import { gitHubVaultKey } from '@shared/context-vault'
 import { getGitHubAuthStatus, getGitHubToken, githubApiJson } from './github-auth-service'
+import { resolveProjectVaultId } from '../context-vault/link-store'
 import { getDefaultClaudeProjectsRoot } from '../usage/claude-jsonl'
 import { resolveProjectLocation, type ProjectLocation } from '../projects/project-locator'
 import { getProjectWorkspace, saveProjectWorkspace } from '../projects/project-workspace-service'
@@ -48,7 +50,7 @@ type EncryptedSnapshot = {
 
 type VaultManifest = {
   version: 1
-  repo: GitHubRepositoryIdentity
+  vaultKey: string
   latestSnapshot: string | null
   snapshots: Array<{
     file: string
@@ -130,6 +132,10 @@ export async function importGithubProject(request: GitHubImportRequest): Promise
   return { ok: true, repo, workspace, projectId, projectPath: workspace.path, context }
 }
 
+function contextVaultLinksPath(): string {
+  return join(app.getPath('userData'), 'context-vault-links.json')
+}
+
 export async function syncProjectContextToVault(
   request: GitHubContextSyncRequest,
   sender: WebContents
@@ -139,37 +145,44 @@ export async function syncProjectContextToVault(
   const location = await resolveProjectLocation(request.platform, request.projectId, sender)
   if (!location) return { ok: false, error: 'Project folder not found.' }
 
+  // A GitHub remote gives a device-independent key automatically; projects without one
+  // fall back to a locally-persisted `local__<uuid>` so any project can sync.
   const repoUrl = request.repositoryUrl?.trim() || (await inferGithubRemote(location))
   const repo = repoUrl ? parseGitHubRepository(repoUrl) : null
-  if (!repo) return { ok: false, error: 'Could not identify a GitHub repository for this project.' }
+  const resolved = await resolveProjectVaultId(contextVaultLinksPath(), {
+    projectId: request.projectId,
+    projectName: basename(location.path),
+    gitHubKey: repo ? gitHubVaultKey(repo.owner, repo.repo) : null
+  })
 
   let bundle: GitHubContextBundle
   try {
-    bundle = await buildContextBundle(repo, location, request.projectId)
+    bundle = await buildContextBundle(resolved.id, repo, location, request.projectId)
   } catch (error) {
-    return { ok: false, repo, error: error instanceof Error ? error.message : 'Could not collect context files.' }
+    return { ok: false, repo: repo ?? undefined, error: error instanceof Error ? error.message : 'Could not collect context files.' }
   }
 
   try {
     const mode = request.mode ?? (request.vaultRepositoryUrl?.trim() ? 'git' : 'oauth')
     let snapshot: string
     if (mode === 'oauth') {
-      snapshot = await writeVaultSnapshotViaGitHubApi(repo, bundle, request.passphrase)
+      snapshot = await writeVaultSnapshotViaGitHubApi(resolved.id, bundle, request.passphrase, repo)
     } else {
-      if (!request.vaultRepositoryUrl?.trim()) return { ok: false, repo, error: 'Enter a context vault repository URL.' }
+      if (!request.vaultRepositoryUrl?.trim())
+        return { ok: false, repo: repo ?? undefined, error: 'Enter a context vault repository URL.' }
       const vaultPath = await ensureVaultRepository(request.vaultRepositoryUrl)
-      snapshot = await writeVaultSnapshot(vaultPath, repo, bundle, request.passphrase)
-      await commitAndPushVault(vaultPath, repo)
+      snapshot = await writeVaultSnapshot(vaultPath, resolved.id, bundle, request.passphrase)
+      await commitAndPushVault(vaultPath, resolved.id)
     }
     return {
       ok: true,
-      repo,
+      repo: repo ?? undefined,
       snapshot,
       filesSynced: bundle.files.length,
       workspaceSynced: bundle.projectWorkspace != null
     }
   } catch (error) {
-    return { ok: false, repo, error: formatGitError(error, 'Could not sync the context vault.') }
+    return { ok: false, repo: repo ?? undefined, error: formatGitError(error, 'Could not sync the context vault.') }
   }
 }
 
@@ -273,7 +286,8 @@ async function inferGithubRemote(location: ProjectLocation): Promise<string | nu
 }
 
 async function buildContextBundle(
-  repo: GitHubRepositoryIdentity,
+  vaultKey: string,
+  repo: GitHubRepositoryIdentity | null,
   location: ProjectLocation,
   projectId: string
 ): Promise<GitHubContextBundle> {
@@ -320,6 +334,7 @@ async function buildContextBundle(
     version: 1,
     createdAt: new Date().toISOString(),
     sourcePath: location.path,
+    vaultKey,
     repo,
     files,
     projectWorkspace: await getProjectWorkspace(projectId)
@@ -394,11 +409,11 @@ async function ensureVaultRepository(vaultRepositoryUrl: string): Promise<string
 
 async function writeVaultSnapshot(
   vaultPath: string,
-  repo: GitHubRepositoryIdentity,
+  vaultKey: string,
   bundle: GitHubContextBundle,
   passphrase: string
 ): Promise<string> {
-  const projectDir = join(vaultPath, 'projects', repo.key)
+  const projectDir = join(vaultPath, 'projects', vaultKey)
   const snapshotsDir = join(projectDir, 'snapshots')
   await mkdir(snapshotsDir, { recursive: true })
 
@@ -407,7 +422,7 @@ async function writeVaultSnapshot(
   const snapshotPath = join(projectDir, snapshotRel)
   await writeFile(snapshotPath, JSON.stringify(encryptBundle(bundle, passphrase), null, 2), 'utf-8')
 
-  const manifest = await readVaultManifest(projectDir, repo)
+  const manifest = await readVaultManifest(projectDir, vaultKey)
   manifest.latestSnapshot = snapshotRel
   manifest.snapshots = [
     { file: snapshotRel, createdAt: bundle.createdAt, files: bundle.files.length, workspace: bundle.projectWorkspace != null },
@@ -417,13 +432,13 @@ async function writeVaultSnapshot(
   return snapshotRel
 }
 
-async function readVaultManifest(projectDir: string, repo: GitHubRepositoryIdentity): Promise<VaultManifest> {
+async function readVaultManifest(projectDir: string, vaultKey: string): Promise<VaultManifest> {
   try {
     const parsed = JSON.parse(await readFile(join(projectDir, 'manifest.json'), 'utf-8')) as Partial<VaultManifest>
     if (parsed.version === 1 && Array.isArray(parsed.snapshots)) {
       return {
         version: 1,
-        repo,
+        vaultKey,
         latestSnapshot: typeof parsed.latestSnapshot === 'string' ? parsed.latestSnapshot : null,
         snapshots: parsed.snapshots.filter((entry) => entry && typeof entry.file === 'string')
       }
@@ -431,7 +446,7 @@ async function readVaultManifest(projectDir: string, repo: GitHubRepositoryIdent
   } catch {
     // Fall through to a fresh manifest.
   }
-  return { version: 1, repo, latestSnapshot: null, snapshots: [] }
+  return { version: 1, vaultKey, latestSnapshot: null, snapshots: [] }
 }
 
 async function ensureApiVaultRepository(): Promise<{ owner: string; repo: string }> {
@@ -463,24 +478,26 @@ async function ensureApiVaultRepository(): Promise<{ owner: string; repo: string
 }
 
 async function writeVaultSnapshotViaGitHubApi(
-  repo: GitHubRepositoryIdentity,
+  vaultKey: string,
   bundle: GitHubContextBundle,
-  passphrase: string
+  passphrase: string,
+  repo: GitHubRepositoryIdentity | null
 ): Promise<string> {
   const vault = await ensureApiVaultRepository()
-  const projectRoot = `projects/${repo.key}`
+  const projectRoot = `projects/${vaultKey}`
   const timestamp = bundle.createdAt.replace(/[:.]/g, '-')
   const snapshotRel = `snapshots/${timestamp}.context.enc`
   const snapshotPath = `${projectRoot}/${snapshotRel}`
+  const label = repo ? `${repo.owner}/${repo.repo}` : vaultKey
 
   await putGitHubFile(
     vault,
     snapshotPath,
     JSON.stringify(encryptBundle(bundle, passphrase), null, 2),
-    `Sync encrypted context snapshot for ${repo.owner}/${repo.repo}`
+    `Sync encrypted context snapshot for ${label}`
   )
 
-  const manifest = await readVaultManifestViaGitHubApi(vault, repo)
+  const manifest = await readVaultManifestViaGitHubApi(vault, vaultKey)
   manifest.latestSnapshot = snapshotRel
   manifest.snapshots = [
     { file: snapshotRel, createdAt: bundle.createdAt, files: bundle.files.length, workspace: bundle.projectWorkspace != null },
@@ -491,7 +508,7 @@ async function writeVaultSnapshotViaGitHubApi(
     vault,
     `${projectRoot}/manifest.json`,
     JSON.stringify(manifest, null, 2),
-    `Update context manifest for ${repo.owner}/${repo.repo}`
+    `Update context manifest for ${label}`
   )
 
   return snapshotRel
@@ -499,24 +516,24 @@ async function writeVaultSnapshotViaGitHubApi(
 
 async function readVaultManifestViaGitHubApi(
   vault: { owner: string; repo: string },
-  repo: GitHubRepositoryIdentity
+  vaultKey: string
 ): Promise<VaultManifest> {
-  const text = await getGitHubFileText(vault, `projects/${repo.key}/manifest.json`)
-  if (!text) return { version: 1, repo, latestSnapshot: null, snapshots: [] }
+  const text = await getGitHubFileText(vault, `projects/${vaultKey}/manifest.json`)
+  if (!text) return { version: 1, vaultKey, latestSnapshot: null, snapshots: [] }
   try {
     const parsed = JSON.parse(text) as Partial<VaultManifest>
     if (parsed.version === 1 && Array.isArray(parsed.snapshots)) {
       return {
         version: 1,
-        repo,
+        vaultKey,
         latestSnapshot: typeof parsed.latestSnapshot === 'string' ? parsed.latestSnapshot : null,
         snapshots: parsed.snapshots.filter((entry) => entry && typeof entry.file === 'string')
       }
     }
   } catch {
-    // Invalid manifest means this repo has no usable snapshot metadata.
+    // Invalid manifest means this project has no usable snapshot metadata.
   }
-  return { version: 1, repo, latestSnapshot: null, snapshots: [] }
+  return { version: 1, vaultKey, latestSnapshot: null, snapshots: [] }
 }
 
 async function getGitHubFile(
@@ -609,10 +626,10 @@ function decryptBundle(snapshot: EncryptedSnapshot, passphrase: string): GitHubC
   return JSON.parse(plaintext) as GitHubContextBundle
 }
 
-async function commitAndPushVault(vaultPath: string, repo: GitHubRepositoryIdentity): Promise<void> {
-  await runGit(['-C', vaultPath, 'add', '--', `projects/${repo.key}`])
+async function commitAndPushVault(vaultPath: string, vaultKey: string): Promise<void> {
+  await runGit(['-C', vaultPath, 'add', '--', `projects/${vaultKey}`])
   try {
-    await runGit(['-C', vaultPath, 'commit', '-m', `Sync context for ${repo.owner}/${repo.repo}`])
+    await runGit(['-C', vaultPath, 'commit', '-m', `Sync context for ${vaultKey}`])
   } catch (error) {
     const message = formatGitError(error, '')
     if (!message.includes('nothing to commit') && !message.includes('no changes added')) throw error
@@ -649,16 +666,18 @@ async function restoreProjectContext({
       }
     }
 
+    // Import always has a GitHub repo, whose device-independent key is the vault key.
+    const vaultKey = gitHubVaultKey(repo.owner, repo.repo)
     const mode = restore.mode ?? (restore.vaultRepositoryUrl?.trim() ? 'git' : 'oauth')
     const { bundle, snapshotRel } =
       mode === 'oauth'
-        ? await readVaultSnapshotViaGitHubApi(repo, restore.passphrase)
-        : await readVaultSnapshotFromGitVault(repo, restore)
+        ? await readVaultSnapshotViaGitHubApi(vaultKey, restore.passphrase)
+        : await readVaultSnapshotFromGitVault(vaultKey, restore)
 
     return restoreContextBundle({
       bundle,
       snapshotRel,
-      repo,
+      vaultKey,
       projectPath,
       platform,
       projectId
@@ -676,30 +695,30 @@ async function restoreProjectContext({
 }
 
 async function readVaultSnapshotViaGitHubApi(
-  repo: GitHubRepositoryIdentity,
+  vaultKey: string,
   passphrase: string
 ): Promise<{ bundle: GitHubContextBundle; snapshotRel: string }> {
   const vault = await ensureApiVaultRepository()
-  const manifest = await readVaultManifestViaGitHubApi(vault, repo)
+  const manifest = await readVaultManifestViaGitHubApi(vault, vaultKey)
   const snapshotRel = manifest.latestSnapshot ?? manifest.snapshots[0]?.file ?? null
-  if (!snapshotRel) throw new Error('No context snapshot found for this repository.')
+  if (!snapshotRel) throw new Error('No context snapshot found for this project.')
 
-  const snapshotText = await getGitHubFileText(vault, `projects/${repo.key}/${snapshotRel}`)
+  const snapshotText = await getGitHubFileText(vault, `projects/${vaultKey}/${snapshotRel}`)
   if (!snapshotText) throw new Error('Could not read context snapshot.')
   const bundle = decryptBundle(JSON.parse(snapshotText) as EncryptedSnapshot, passphrase)
   return { bundle, snapshotRel }
 }
 
 async function readVaultSnapshotFromGitVault(
-  repo: GitHubRepositoryIdentity,
+  vaultKey: string,
   restore: GitHubContextRestoreRequest
 ): Promise<{ bundle: GitHubContextBundle; snapshotRel: string }> {
   if (!restore.vaultRepositoryUrl?.trim()) throw new Error('Vault URL is required.')
   const vaultPath = await ensureVaultRepository(restore.vaultRepositoryUrl)
-  const projectDir = join(vaultPath, 'projects', repo.key)
-  const manifest = await readVaultManifest(projectDir, repo)
+  const projectDir = join(vaultPath, 'projects', vaultKey)
+  const manifest = await readVaultManifest(projectDir, vaultKey)
   const snapshotRel = manifest.latestSnapshot ?? manifest.snapshots[0]?.file ?? null
-  if (!snapshotRel) throw new Error('No context snapshot found for this repository.')
+  if (!snapshotRel) throw new Error('No context snapshot found for this project.')
 
   const snapshotPath = safeJoin(projectDir, snapshotRel)
   if (!snapshotPath) throw new Error('Invalid context snapshot path.')
@@ -710,19 +729,19 @@ async function readVaultSnapshotFromGitVault(
 async function restoreContextBundle({
   bundle,
   snapshotRel,
-  repo,
+  vaultKey,
   projectPath,
   platform,
   projectId
 }: {
   bundle: GitHubContextBundle
   snapshotRel: string
-  repo: GitHubRepositoryIdentity
+  vaultKey: string
   projectPath: string
   platform: PlatformId
   projectId: string
 }): Promise<GitHubContextRestoreSummary> {
-  if (!sameRepo(repo, bundle.repo)) throw new Error('Snapshot belongs to a different repository.')
+  if (!matchesVault(bundle, vaultKey)) throw new Error('Snapshot belongs to a different project.')
 
   const projectRoot = toNativeRoot(projectPath, null)
   const centralMemory = join(getDefaultClaudeProjectsRoot(), centralSlug(projectPath), 'memory')
@@ -748,8 +767,13 @@ async function restoreContextBundle({
   return { attempted: true, restored: true, snapshot: snapshotRel, filesRestored, workspaceRestored }
 }
 
-function sameRepo(a: GitHubRepositoryIdentity, b: GitHubRepositoryIdentity): boolean {
-  const left = Buffer.from(a.key)
-  const right = Buffer.from(b.key)
+// A restored snapshot must belong to the project we're restoring into. Match on the
+// device-independent vault key; fall back to the snapshot's repo key for older
+// snapshots written before `vaultKey` existed (for GitHub projects the two are equal).
+function matchesVault(bundle: GitHubContextBundle, vaultKey: string): boolean {
+  const bundleKey = bundle.vaultKey ?? bundle.repo?.key ?? ''
+  if (!bundleKey || !vaultKey) return false
+  const left = Buffer.from(bundleKey)
+  const right = Buffer.from(vaultKey)
   return left.length === right.length && timingSafeEqual(left, right)
 }

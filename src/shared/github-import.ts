@@ -100,7 +100,11 @@ export type GitHubContextBundle = {
   version: 1
   createdAt: string
   sourcePath: string
-  repo: GitHubRepositoryIdentity
+  // Device-independent vault key: the GitHub repo key for GitHub-backed projects,
+  // else a `local__<uuid>`. This is what snapshots are keyed and matched by so that
+  // non-GitHub projects can sync too. `repo` is retained for display/provenance only.
+  vaultKey: string
+  repo: GitHubRepositoryIdentity | null
   files: GitHubContextBundleFile[]
   projectWorkspace: unknown
 }
