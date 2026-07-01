@@ -1,6 +1,6 @@
 {
   "name": "cadence",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "description": "Desktop control room for AI coding assistants",
   "private": true,
   "license": "MIT",
