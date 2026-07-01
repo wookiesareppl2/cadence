@@ -14,6 +14,41 @@ export type TerminalTab = {
   initialInput?: string | null
 }
 
+// Pending-session keys tag terminals whose session has no transcript on disk yet;
+// this mirrors the renderer's pending-session id scheme (`__new__…`). Kept here so
+// tab restoration — which drops or keeps pending tabs depending on context — can be
+// unit-tested without the renderer.
+export function isPendingSessionKey(key: string): boolean {
+  return key.startsWith('__new__')
+}
+
+// Rebuild the persisted terminal tabs that should be restored. A tab needs both a
+// cwd and the sessionKey that scopes it; legacy tabs predating session scoping are
+// dropped. Pending-keyed tabs (a session not yet adopted) are dropped on a fresh
+// app launch — by then anything real was retagged and an unadopted pending session
+// is transient — but kept when `keepPending` is set, which the deck does for a
+// within-run remount (e.g. a platform switch unmounts the inactive workspace) so a
+// brand-new session's live terminal survives the switch and can still be adopted.
+export function restorableTabs(tabs: TerminalTab[], options?: { keepPending?: boolean }): TerminalTab[] {
+  const keepPending = options?.keepPending ?? false
+  return tabs
+    .filter(
+      (tab): tab is TerminalTab =>
+        typeof tab.cwd === 'string' &&
+        tab.cwd.length > 0 &&
+        typeof tab.sessionKey === 'string' &&
+        tab.sessionKey.length > 0 &&
+        (keepPending || !isPendingSessionKey(tab.sessionKey))
+    )
+    .map((tab) => ({
+      id: tab.id,
+      title: tab.title,
+      cwd: tab.cwd,
+      sessionKey: tab.sessionKey,
+      wslDistro: tab.wslDistro ?? null
+    }))
+}
+
 export type TerminalStartResult = {
   terminalId: string
   platform: TerminalPlatform

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   backgroundTerminalLocations,
   backgroundTerminalSessions,
+  restorableTabs,
   type TerminalBackgroundLocation,
   type TerminalTab
 } from '../src/shared/terminal'
@@ -59,6 +60,34 @@ describe('backgroundTerminalLocations', () => {
 
   it('treats a null selected session as no visible session', () => {
     expect(backgroundTerminalLocations(tabs, null, [])).toHaveLength(3)
+  })
+})
+
+describe('restorableTabs', () => {
+  const persisted: TerminalTab[] = [
+    { id: 't1', title: 'Terminal 1', cwd: 'C:\\Projects\\cadence', sessionKey: 's1', wslDistro: null },
+    { id: 't2', title: 'Terminal 1', cwd: 'C:\\Projects\\cadence', sessionKey: '__new__abc', wslDistro: null }
+  ]
+
+  it('drops pending-keyed tabs on a fresh launch (keepPending defaults to false)', () => {
+    const restored = restorableTabs(persisted)
+    expect(restored.map((tab) => tab.id)).toEqual(['t1'])
+  })
+
+  it('keeps pending-keyed tabs across a within-run remount', () => {
+    const restored = restorableTabs(persisted, { keepPending: true })
+    expect(restored.map((tab) => tab.id)).toEqual(['t1', 't2'])
+  })
+
+  it('drops legacy tabs missing a cwd or sessionKey and normalises wslDistro', () => {
+    const restored = restorableTabs([
+      { id: 'ok', title: 'ok', cwd: '/home/app', sessionKey: 's9' } as TerminalTab,
+      { id: 'no-cwd', title: 'no-cwd', cwd: null, sessionKey: 's9' },
+      { id: 'no-session', title: 'no-session', cwd: '/home/app', sessionKey: '' }
+    ])
+    expect(restored).toEqual([
+      { id: 'ok', title: 'ok', cwd: '/home/app', sessionKey: 's9', wslDistro: null }
+    ])
   })
 })
 
