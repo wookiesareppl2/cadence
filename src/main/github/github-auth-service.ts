@@ -66,11 +66,17 @@ function authStorePath(): string {
   return join(app.getPath('userData'), 'github-auth.json')
 }
 
+// GitHub OAuth App client ID for Cadence's device-flow sign-in. A device-flow client
+// ID is NOT a secret (GitHub sends it to the user and it carries no client secret), so
+// it is safe to ship as the built-in default. An explicit value or env var still wins,
+// which is how a public distribution would point at its own dedicated OAuth App.
+const DEFAULT_GITHUB_CLIENT_ID = 'Ov23lizsJnPBqiHSQUIS'
+
 function configuredClientId(input?: string | null): string | null {
   const explicit = input?.trim()
   if (explicit) return explicit
   const env = process.env.CADENCE_GITHUB_CLIENT_ID?.trim() || process.env.GITHUB_CLIENT_ID?.trim()
-  return env || null
+  return env || DEFAULT_GITHUB_CLIENT_ID
 }
 
 function encryptionAvailable(): boolean {
