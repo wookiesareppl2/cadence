@@ -566,7 +566,7 @@ function dedupeCodexById(drafts: CodexSessionDraft[]): CodexSessionDraft[] {
   return [...byId.values()]
 }
 
-async function readClaudeSession(path: string): Promise<ClaudeSessionDraft | null> {
+export async function readClaudeSession(path: string): Promise<ClaudeSessionDraft | null> {
   const stats = await stat(path)
   const draft: ClaudeSessionDraft = {
     id: basename(path, '.jsonl'),
@@ -607,7 +607,13 @@ async function readClaudeSession(path: string): Promise<ClaudeSessionDraft | nul
       }
       const timestampMs = rowTimestampMs(row, draft.updatedAtMs)
       if (typeof row.sessionId === 'string') draft.id = row.sessionId
-      if (typeof row.cwd === 'string') draft.cwd = row.cwd
+      // A session belongs to the directory it was LAUNCHED in. Claude records `cwd`
+      // on every row, and the shell can `cd` mid-session (a skill, a subshell, or
+      // the user), so the LAST cwd is unreliable: following it makes the session
+      // hop projects — e.g. a `cd` into `~/.claude/...` strips to the home folder
+      // (PAT-124) and reattributes the whole session to a bogus "home" project.
+      // The FIRST cwd is the launch dir and the stable project anchor, so pin to it.
+      if (draft.cwd === null && typeof row.cwd === 'string') draft.cwd = row.cwd
       if (typeof row.gitBranch === 'string') draft.branch = row.gitBranch
       if (!draft.entrypoint && typeof row.entrypoint === 'string') draft.entrypoint = row.entrypoint
       if (row.type === 'user' && !isSyntheticUserRow(row)) {
