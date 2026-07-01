@@ -262,6 +262,16 @@ function samePath(a: string | null | undefined, b: string | null | undefined): b
   return Boolean(a) && Boolean(b) && a!.toLowerCase() === b!.toLowerCase()
 }
 
+// Pending slots and the set of session ids already seen for adoption live in module
+// scope, not only component state, so they survive a platform-switch remount (which
+// unmounts the whole workspace). Without this, a session started just before
+// switching platforms would lose its pending slot — and with it the ability to
+// adopt its terminal — on the way back. They reset when the renderer reloads (a real
+// restart), matching the transient-pending-state contract. Keyed per platform, and
+// per renderer window, so the main and detached windows never cross-contaminate.
+const pendingSessionsByPlatform = new Map<PlatformId, PendingSessionSlot[]>()
+const knownSessionIdsByPlatform = new Map<PlatformId, Set<string>>()
+
 // Session-scoped terminal deck: terminals belong to a session, not just a project.
 // Starting a session mints a pending slot + first terminal; once the session's
 // transcript is discovered it is adopted (terminals + selection retagged onto the
@@ -287,7 +297,12 @@ function useSessionScopedTerminals(
   renamePendingSession: (id: string, title: string | null) => Promise<void>
 } {
   const { tabs, addTerminal, closeTerminal, retagSession } = useTerminalDeck(platform)
-  const [pending, setPending] = useState<PendingSessionSlot[]>([])
+  // Seeded from the module store so a platform-switch remount restores any pending
+  // slots (and their adoption ability); mirrored back to the store on every change.
+  const [pending, setPending] = useState<PendingSessionSlot[]>(() => pendingSessionsByPlatform.get(platform) ?? [])
+  useEffect(() => {
+    pendingSessionsByPlatform.set(platform, pending)
+  }, [platform, pending])
   const { sessions, selectedProject, refreshSessions } = browser
 
   const { visibleTabs, backgroundTabCount, backgroundSessionCount } = useMemo(
@@ -433,7 +448,10 @@ function useSessionScopedTerminals(
   // Adopt: when the poll reveals a session whose folder matches a waiting pending
   // slot, retag its terminals (and the selection) onto the real id. Oldest slot
   // claims first; each transcript is claimed at most once.
-  const knownSessionIdsRef = useRef<Set<string>>(new Set())
+  // Seeded from the module store so a remount resumes "sessions seen since last
+  // poll" where it left off, rather than treating every existing session as newly
+  // added — which could otherwise adopt a stale prior session in the same folder.
+  const knownSessionIdsRef = useRef<Set<string>>(new Set(knownSessionIdsByPlatform.get(platform) ?? []))
   useEffect(() => {
     if (pending.length > 0) {
       const known = knownSessionIdsRef.current
@@ -464,7 +482,8 @@ function useSessionScopedTerminals(
       }
     }
     knownSessionIdsRef.current = new Set(sessions.map((session) => session.id))
-  }, [sessions, pending, retagSession, selectedSessionId, onSelectedSessionIdChange])
+    knownSessionIdsByPlatform.set(platform, knownSessionIdsRef.current)
+  }, [platform, sessions, pending, retagSession, selectedSessionId, onSelectedSessionIdChange])
 
   // Drop pending slots once nothing references them (terminals all closed and not
   // selected), so a never-used "Start session" stops the fast adoption poll.

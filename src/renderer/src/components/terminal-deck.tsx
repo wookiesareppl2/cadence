@@ -5,7 +5,7 @@ import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import type { FileRequest } from '@shared/project-files'
 import { findFilePathCandidates, offsetToCell } from '@shared/terminal-links'
-import { backgroundTerminalSessions } from '@shared/terminal'
+import { backgroundTerminalSessions, restorableTabs } from '@shared/terminal'
 import type { TerminalBackgroundLocation, TerminalPlatform, TerminalStartResult, TerminalTab } from '@shared/terminal'
 
 export type { TerminalTab } from '@shared/terminal'
@@ -23,12 +23,6 @@ export type TerminalDeckState = {
   // Re-point a started session's terminals from their pending id onto the real
   // session id once the transcript is discovered, so they follow the session.
   retagSession: (fromSessionKey: string, toSessionKey: string) => void
-}
-
-// Mirror of session-browser's pending-session test, kept local to avoid a render
-// import cycle. Pending-keyed terminals are never persisted across restarts.
-function isPendingSessionKey(key: string): boolean {
-  return key.startsWith('__new__')
 }
 
 const TERMINAL_THEME = {
@@ -101,32 +95,15 @@ function isTerminalTab(value: unknown): value is TerminalTab {
   )
 }
 
-function parseStoredTabs(raw: string | null): TerminalTab[] {
+// keepPending distinguishes a fresh app launch (drop unadopted pending tabs, which
+// are transient) from a within-run remount such as a platform switch (keep them, so
+// a brand-new session's live terminal isn't discarded before it can be adopted).
+function parseStoredTabs(raw: string | null, keepPending: boolean): TerminalTab[] {
   try {
     if (raw) {
       const parsed: unknown = JSON.parse(raw)
       if (Array.isArray(parsed) && parsed.every(isTerminalTab)) {
-        // Restore only the session-scoped tabs: a tab needs both a cwd and the
-        // sessionKey that scopes it. Tabs still keyed to a pending session are
-        // dropped — by next launch anything real was retagged onto its session id,
-        // and an unadopted pending session is transient working state. Legacy tabs
-        // predating session scoping (no sessionKey) are likewise dropped.
-        return parsed
-          .filter(
-            (tab): tab is TerminalTab =>
-              typeof tab.cwd === 'string' &&
-              tab.cwd.length > 0 &&
-              typeof tab.sessionKey === 'string' &&
-              tab.sessionKey.length > 0 &&
-              !isPendingSessionKey(tab.sessionKey)
-          )
-          .map((tab) => ({
-            id: tab.id,
-            title: tab.title,
-            cwd: tab.cwd,
-            sessionKey: tab.sessionKey,
-            wslDistro: tab.wslDistro ?? null
-          }))
+        return restorableTabs(parsed, { keepPending })
       }
     }
   } catch {
@@ -135,8 +112,8 @@ function parseStoredTabs(raw: string | null): TerminalTab[] {
   return []
 }
 
-function loadTabs(platform: TerminalPlatform): TerminalTab[] {
-  return parseStoredTabs(window.localStorage.getItem(storageKey(platform)))
+function loadTabs(platform: TerminalPlatform, keepPending: boolean): TerminalTab[] {
+  return parseStoredTabs(window.localStorage.getItem(storageKey(platform)), keepPending)
 }
 
 function sameTabs(a: TerminalTab[], b: TerminalTab[]): boolean {
@@ -153,11 +130,25 @@ function nextDefaultTitle(tabs: TerminalTab[]): string {
   return `Terminal ${max + 1}`
 }
 
+// Tracks which platform decks have already mounted in this app run. The first mount
+// of a run drops pending-keyed tabs (an unadopted pending session is transient and
+// is not re-adopted after a restart); a later remount within the same run — e.g. a
+// platform switch, which unmounts the inactive workspace — keeps them so a brand-new
+// session's live terminal survives the switch and can still be adopted. A renderer
+// reload starts a fresh run and clears this, restoring restart semantics.
+const deckMountedPlatforms = new Set<TerminalPlatform>()
+
 // Terminal tabs are persisted so a renderer reload restores the same ids — the
 // worker keeps each pty alive across reloads, so restoring the id reconnects to
 // the live shell (with its scrollback) instead of orphaning it.
 export function useTerminalDeck(platform: TerminalPlatform): TerminalDeckState {
-  const [tabs, setTabs] = useState<TerminalTab[]>(() => loadTabs(platform))
+  const [tabs, setTabs] = useState<TerminalTab[]>(() => loadTabs(platform, deckMountedPlatforms.has(platform)))
+
+  // Recorded after commit (never during render) so it is robust to double-invoked
+  // initializers; left set on unmount so the next remount is treated as a remount.
+  useEffect(() => {
+    deckMountedPlatforms.add(platform)
+  }, [platform])
 
   useEffect(() => {
     try {
@@ -171,7 +162,9 @@ export function useTerminalDeck(platform: TerminalPlatform): TerminalDeckState {
     const key = storageKey(platform)
     const handleStorage = (event: StorageEvent): void => {
       if (event.storageArea !== window.localStorage || event.key !== key) return
-      const next = parseStoredTabs(event.newValue)
+      // A storage event only fires from another live window in the same run, so keep
+      // pending tabs to stay in sync with that window rather than dropping them.
+      const next = parseStoredTabs(event.newValue, true)
       setTabs((current) => (sameTabs(current, next) ? current : next))
     }
 
