@@ -49,6 +49,32 @@ export function restorableTabs(tabs: TerminalTab[], options?: { keepPending?: bo
     }))
 }
 
+// Split terminal input into pieces of at most `size` UTF-16 code units without
+// ever splitting a surrogate pair (which would corrupt a character when each piece
+// is encoded separately to the pty). Large pastes are written to the pty in paced
+// pieces because writing a big block at once drops characters — often the leading
+// half — under Windows ConPTY; chunking keeps each write small while preserving the
+// exact byte stream. Returns the input in a single-element array when it already
+// fits. The worker keeps an inline mirror of this (it runs as a plain .cjs child
+// process and cannot import this module), so keep the two in sync.
+export function chunkTerminalInput(data: string, size: number): string[] {
+  if (size < 1 || data.length <= size) return [data]
+  const chunks: string[] = []
+  let start = 0
+  while (start < data.length) {
+    let end = Math.min(start + size, data.length)
+    // A high surrogate at the boundary pairs with the next code unit; keep them
+    // together by ending one unit earlier (skipped if that would empty the chunk).
+    if (end < data.length) {
+      const unit = data.charCodeAt(end - 1)
+      if (unit >= 0xd800 && unit <= 0xdbff && end - 1 > start) end -= 1
+    }
+    chunks.push(data.slice(start, end))
+    start = end
+  }
+  return chunks
+}
+
 export type TerminalStartResult = {
   terminalId: string
   platform: TerminalPlatform
