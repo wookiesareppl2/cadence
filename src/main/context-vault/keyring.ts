@@ -26,9 +26,12 @@ export type VaultKeyring = {
   // Lets a device confirm a DEK it unlocked/recovered is the right one before trusting
   // it to decrypt snapshots.
   dekCheck: DekCheck
-  // The GitHub-account recovery wrap is intentionally absent here: its storage policy
-  // is the one decision deferred to the Phase 4e security review. `parseKeyring`
-  // tolerates unknown extra fields so adding it later needs no format bump.
+  // Forward-compatibility: a newer client may add more wraps (e.g. the deferred
+  // GitHub-account recovery wrap, decided in Phase 4e). Unknown fields are carried
+  // through parse → rotate → serialize verbatim so an older client can never clobber a
+  // newer client's recovery path when it rewrites the keyring. The index signature
+  // makes that contract explicit rather than relying on runtime spread alone.
+  [extraWrap: string]: unknown
 }
 
 export type NewVaultKeyMaterial = {
@@ -99,7 +102,9 @@ export function parseKeyring(raw: unknown): VaultKeyring | null {
   if (record.version !== 1) return null
   const recovery = record.recovery
   if (!isRecoveryWrap(recovery) || !isGcm(record.dekCheck)) return null
-  return { version: 1, recovery, dekCheck: record.dekCheck }
+  // Spread `record` first so any unknown wraps a newer client wrote are preserved; the
+  // validated known fields then override to their narrowed types.
+  return { ...record, version: 1, recovery, dekCheck: record.dekCheck }
 }
 
 function isGcm(value: unknown): value is GcmCiphertext {

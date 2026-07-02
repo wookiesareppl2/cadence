@@ -32,9 +32,19 @@ function deviceKeyPath(): string {
   return join(app.getPath('userData'), 'context-vault-device.json')
 }
 
+// True only when the OS can genuinely encrypt secrets at rest. On Linux, safeStorage
+// falls back to a `basic_text` backend (plaintext, no keyring) yet still reports
+// isEncryptionAvailable() === true; treating that as "encrypted" would write the DEK to
+// disk effectively in the clear, breaking the DNO-011 guarantee. So on Linux we also
+// require a real backend and fall back to the memory-only session cache otherwise.
 function encryptionAvailable(): boolean {
   try {
-    return safeStorage.isEncryptionAvailable()
+    if (!safeStorage.isEncryptionAvailable()) return false
+    if (process.platform === 'linux') {
+      const backend = safeStorage.getSelectedStorageBackend()
+      if (backend === 'basic_text' || backend === 'unknown') return false
+    }
+    return true
   } catch {
     return false
   }

@@ -68,11 +68,20 @@ describe('parseKeyring', () => {
     expect(parsed).toEqual(keyring)
   })
 
-  it('tolerates unknown extra fields (forward-compat for the github wrap)', () => {
-    const { keyring } = createVaultKeyMaterial()
-    const withExtra = { ...JSON.parse(serializeKeyring(keyring)), github: { some: 'future-wrap' } }
+  it('preserves unknown extra fields so a newer github wrap is never clobbered', () => {
+    const { dek, keyring } = createVaultKeyMaterial()
+    const githubWrap = { some: 'future-wrap' }
+    const withExtra = { ...JSON.parse(serializeKeyring(keyring)), github: githubWrap }
+
     const parsed = parseKeyring(withExtra)
-    expect(parsed).toEqual(keyring)
+    expect(parsed).not.toBeNull()
+    expect(parsed?.github).toEqual(githubWrap)
+    // Survives a serialize round-trip...
+    expect(JSON.parse(serializeKeyring(parsed!)).github).toEqual(githubWrap)
+    // ...and, critically, survives a recovery-key rotation done by this (older) client.
+    const { keyring: rotated } = rotateRecoveryKey(parsed!, dek)
+    expect(rotated.github).toEqual(githubWrap)
+    expect(JSON.parse(serializeKeyring(rotated)).github).toEqual(githubWrap)
   })
 
   it('rejects malformed or wrong-version records', () => {
