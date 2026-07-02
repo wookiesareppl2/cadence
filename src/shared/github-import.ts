@@ -65,7 +65,10 @@ export type GitHubRepositoryIdentity = {
 export type GitHubContextRestoreRequest = {
   mode?: 'oauth' | 'git'
   vaultRepositoryUrl?: string | null
-  passphrase: string
+  // Supplied only to unlock a vault this device can't open automatically (a new device,
+  // or after the OS key store was reset). Day-to-day the DEK auto-unlocks and this is
+  // omitted. Never a passphrase the user must remember.
+  recoveryKey?: string | null
 }
 
 export type GitHubImportRequest = {
@@ -83,7 +86,12 @@ export type GitHubContextSyncRequest = {
   repositoryUrl?: string | null
   mode?: 'oauth' | 'git'
   vaultRepositoryUrl?: string | null
-  passphrase: string
+  // Unlocks a vault this device can't open automatically (see restore request).
+  recoveryKey?: string | null
+  // Opt-in to first-time vault setup: mint the DEK + first Recovery Key and publish the
+  // keyring. Only a caller ready to SHOW the returned recovery key sets this, so a vault
+  // is never created with a recovery key the user never sees (Phase 4d owns that UI).
+  createIfMissing?: boolean
 }
 
 type GitHubContextFileTarget = 'project' | 'central-memory'
@@ -115,6 +123,10 @@ export type GitHubContextRestoreSummary = {
   snapshot: string | null
   filesRestored: number
   workspaceRestored: boolean
+  // The vault exists but this device can't unlock it and no (valid) recovery key was
+  // given — the caller should offer the recovery-key path rather than treat it as a
+  // hard failure.
+  locked?: boolean
   error?: string
 }
 
@@ -134,6 +146,12 @@ export type GitHubContextSyncResult = {
   snapshot?: string
   filesSynced?: number
   workspaceSynced?: boolean
+  // Set once, on the sync that first created the vault (createIfMissing): the plaintext
+  // Recovery Key to show the user exactly once. Never persisted or returned again.
+  recoveryKey?: string
+  // The vault is locked on this device (see restore summary). The caller can retry with
+  // a recoveryKey, or run first-time setup with createIfMissing.
+  locked?: boolean
   error?: string
 }
 

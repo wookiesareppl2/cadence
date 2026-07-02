@@ -1,13 +1,6 @@
 import { app, dialog, type BrowserWindow, type WebContents } from 'electron'
 import { execFile } from 'node:child_process'
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  randomBytes,
-  scryptSync,
-  timingSafeEqual
-} from 'node:crypto'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import type { PlatformId } from '@shared/platform'
@@ -32,6 +25,19 @@ import {
 import { computeVaultStatus, gitHubVaultKey } from '@shared/context-vault'
 import { getGitHubAuthStatus, getGitHubToken, githubApiJson } from './github-auth-service'
 import { fingerprintFiles, getVaultLink, recordVaultSync, resolveProjectVaultId } from '../context-vault/link-store'
+import {
+  decryptBundleWithDek,
+  encryptBundleWithDek,
+  type EncryptedSnapshotV2
+} from '../context-vault/vault-crypto'
+import {
+  createVaultKeyMaterial,
+  parseKeyring,
+  serializeKeyring,
+  unlockKeyringWithRecoveryKey,
+  type VaultKeyring
+} from '../context-vault/keyring'
+import { adoptRecoveredDek, storeDeviceDek, unlockVaultDek } from '../context-vault/key-manager'
 import { getDefaultClaudeProjectsRoot } from '../usage/claude-jsonl'
 import { resolveProjectLocation, type ProjectLocation } from '../projects/project-locator'
 import { getProjectWorkspace, saveProjectWorkspace } from '../projects/project-workspace-service'
@@ -40,14 +46,88 @@ import { workspaceProjectId } from '../workspaces/workspace-utils'
 
 type GitResult = { stdout: string; stderr: string }
 
-type EncryptedSnapshot = {
-  version: 1
-  algorithm: 'aes-256-gcm'
-  kdf: 'scrypt'
-  salt: string
-  iv: string
-  tag: string
-  ciphertext: string
+// The single keyring file at the vault repo root: one DEK for the whole vault, recovered
+// via Recovery Key (and, later, GitHub account). Read/write is mode-specific (GitHub API
+// vs a local git clone), so callers hand the DEK resolver one of these IO adapters.
+const VAULT_KEYRING_FILE = 'keyring.json'
+
+type VaultKeyringIO = {
+  read: () => Promise<VaultKeyring | null>
+  write: (keyring: VaultKeyring) => Promise<void>
+}
+
+// A vault whose keyring exists but which this device cannot open (no stored DEK and no
+// valid recovery key). Thrown so read paths can be mapped to a `locked` result rather
+// than a generic failure.
+class VaultLockedError extends Error {}
+
+type VaultDekResolution =
+  | { ok: true; dek: Buffer; newRecoveryKey?: string }
+  | { ok: false; error: string }
+
+/**
+ * Obtain the vault's DEK for a sync/restore. Prefers this device's auto-unlock; falls
+ * back to a supplied recovery key (adopting the DEK for future automatic unlock). With
+ * no keyring yet, only mints one when the caller explicitly opts in via `createIfMissing`
+ * — so a vault is never created with a Recovery Key the user is never shown.
+ */
+async function resolveVaultDek(
+  io: VaultKeyringIO,
+  opts: { recoveryKey?: string | null; createIfMissing?: boolean }
+): Promise<VaultDekResolution> {
+  const keyring = await io.read()
+  if (keyring) {
+    const deviceDek = await unlockVaultDek(keyring)
+    if (deviceDek) return { ok: true, dek: deviceDek }
+
+    const recoveryKey = opts.recoveryKey?.trim()
+    if (recoveryKey) {
+      try {
+        const dek = unlockKeyringWithRecoveryKey(keyring, recoveryKey)
+        await adoptRecoveredDek(keyring, dek)
+        return { ok: true, dek }
+      } catch {
+        return { ok: false, error: 'That recovery key does not match this vault.' }
+      }
+    }
+    return { ok: false, error: 'This vault is locked on this device. Enter your recovery key to unlock it.' }
+  }
+
+  if (opts.createIfMissing) {
+    const material = createVaultKeyMaterial()
+    await storeDeviceDek(material.dek)
+    await io.write(material.keyring)
+    return { ok: true, dek: material.dek, newRecoveryKey: material.recoveryKey }
+  }
+  return { ok: false, error: 'This project’s context vault has not been set up yet.' }
+}
+
+function apiVaultKeyringIO(vault: { owner: string; repo: string }): VaultKeyringIO {
+  return {
+    read: async () => {
+      const text = await getGitHubFileText(vault, VAULT_KEYRING_FILE)
+      return text ? parseKeyring(JSON.parse(text)) : null
+    },
+    write: async (keyring) => {
+      await putGitHubFile(vault, VAULT_KEYRING_FILE, serializeKeyring(keyring), 'Update context vault keyring')
+    }
+  }
+}
+
+function gitVaultKeyringIO(vaultPath: string): VaultKeyringIO {
+  const keyringPath = join(vaultPath, VAULT_KEYRING_FILE)
+  return {
+    read: async () => {
+      try {
+        return parseKeyring(JSON.parse(await readFile(keyringPath, 'utf-8')))
+      } catch {
+        return null
+      }
+    },
+    write: async (keyring) => {
+      await writeFile(keyringPath, serializeKeyring(keyring), 'utf-8')
+    }
+  }
 }
 
 type VaultManifest = {
@@ -142,8 +222,6 @@ export async function syncProjectContextToVault(
   request: GitHubContextSyncRequest,
   sender: WebContents
 ): Promise<GitHubContextSyncResult> {
-  if (!request.passphrase) return { ok: false, error: 'Enter the context vault passphrase.' }
-
   const location = await resolveProjectLocation(request.platform, request.projectId, sender)
   if (!location) return { ok: false, error: 'Project folder not found.' }
 
@@ -166,15 +244,24 @@ export async function syncProjectContextToVault(
 
   try {
     const mode = request.mode ?? (request.vaultRepositoryUrl?.trim() ? 'git' : 'oauth')
+    const dekOpts = { recoveryKey: request.recoveryKey, createIfMissing: request.createIfMissing }
     let snapshot: string
+    let newRecoveryKey: string | undefined
     if (mode === 'oauth') {
-      snapshot = await writeVaultSnapshotViaGitHubApi(resolved.id, bundle, request.passphrase, repo)
+      const vault = await ensureApiVaultRepository()
+      const dek = await resolveVaultDek(apiVaultKeyringIO(vault), dekOpts)
+      if (!dek.ok) return { ok: false, repo: repo ?? undefined, locked: true, error: dek.error }
+      snapshot = await writeVaultSnapshotViaGitHubApi(vault, resolved.id, bundle, dek.dek, repo)
+      newRecoveryKey = dek.newRecoveryKey
     } else {
       if (!request.vaultRepositoryUrl?.trim())
         return { ok: false, repo: repo ?? undefined, error: 'Enter a context vault repository URL.' }
       const vaultPath = await ensureVaultRepository(request.vaultRepositoryUrl)
-      snapshot = await writeVaultSnapshot(vaultPath, resolved.id, bundle, request.passphrase)
+      const dek = await resolveVaultDek(gitVaultKeyringIO(vaultPath), dekOpts)
+      if (!dek.ok) return { ok: false, repo: repo ?? undefined, locked: true, error: dek.error }
+      snapshot = await writeVaultSnapshot(vaultPath, resolved.id, bundle, dek.dek)
       await commitAndPushVault(vaultPath, resolved.id)
+      newRecoveryKey = dek.newRecoveryKey
     }
     // Remember what we just pushed so later status checks can detect divergence.
     await recordVaultSync(contextVaultLinksPath(), request.projectId, {
@@ -187,7 +274,8 @@ export async function syncProjectContextToVault(
       repo: repo ?? undefined,
       snapshot,
       filesSynced: bundle.files.length,
-      workspaceSynced: bundle.projectWorkspace != null
+      workspaceSynced: bundle.projectWorkspace != null,
+      recoveryKey: newRecoveryKey
     }
   } catch (error) {
     return { ok: false, repo: repo ?? undefined, error: formatGitError(error, 'Could not sync the context vault.') }
@@ -460,7 +548,7 @@ async function writeVaultSnapshot(
   vaultPath: string,
   vaultKey: string,
   bundle: GitHubContextBundle,
-  passphrase: string
+  dek: Buffer
 ): Promise<string> {
   const projectDir = join(vaultPath, 'projects', vaultKey)
   const snapshotsDir = join(projectDir, 'snapshots')
@@ -469,7 +557,7 @@ async function writeVaultSnapshot(
   const timestamp = bundle.createdAt.replace(/[:.]/g, '-')
   const snapshotRel = `snapshots/${timestamp}.context.enc`
   const snapshotPath = join(projectDir, snapshotRel)
-  await writeFile(snapshotPath, JSON.stringify(encryptBundle(bundle, passphrase), null, 2), 'utf-8')
+  await writeFile(snapshotPath, JSON.stringify(encryptBundleWithDek(JSON.stringify(bundle), dek), null, 2), 'utf-8')
 
   const manifest = await readVaultManifest(projectDir, vaultKey)
   manifest.latestSnapshot = snapshotRel
@@ -527,12 +615,12 @@ async function ensureApiVaultRepository(): Promise<{ owner: string; repo: string
 }
 
 async function writeVaultSnapshotViaGitHubApi(
+  vault: { owner: string; repo: string },
   vaultKey: string,
   bundle: GitHubContextBundle,
-  passphrase: string,
+  dek: Buffer,
   repo: GitHubRepositoryIdentity | null
 ): Promise<string> {
-  const vault = await ensureApiVaultRepository()
   const projectRoot = `projects/${vaultKey}`
   const timestamp = bundle.createdAt.replace(/[:.]/g, '-')
   const snapshotRel = `snapshots/${timestamp}.context.enc`
@@ -542,7 +630,7 @@ async function writeVaultSnapshotViaGitHubApi(
   await putGitHubFile(
     vault,
     snapshotPath,
-    JSON.stringify(encryptBundle(bundle, passphrase), null, 2),
+    JSON.stringify(encryptBundleWithDek(JSON.stringify(bundle), dek), null, 2),
     `Sync encrypted context snapshot for ${label}`
   )
 
@@ -639,44 +727,9 @@ function encodeGitHubContentPath(path: string): string {
     .join('/')
 }
 
-function encryptBundle(bundle: GitHubContextBundle, passphrase: string): EncryptedSnapshot {
-  const salt = randomBytes(16)
-  const iv = randomBytes(12)
-  const key = scryptSync(passphrase, salt, 32)
-  const cipher = createCipheriv('aes-256-gcm', key, iv)
-  const plaintext = Buffer.from(JSON.stringify(bundle), 'utf-8')
-  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()])
-  const tag = cipher.getAuthTag()
-  return {
-    version: 1,
-    algorithm: 'aes-256-gcm',
-    kdf: 'scrypt',
-    salt: salt.toString('base64'),
-    iv: iv.toString('base64'),
-    tag: tag.toString('base64'),
-    ciphertext: ciphertext.toString('base64')
-  }
-}
-
-function decryptBundle(snapshot: EncryptedSnapshot, passphrase: string): GitHubContextBundle {
-  if (snapshot.version !== 1 || snapshot.algorithm !== 'aes-256-gcm' || snapshot.kdf !== 'scrypt') {
-    throw new Error('Unsupported context snapshot format.')
-  }
-  const salt = Buffer.from(snapshot.salt, 'base64')
-  const iv = Buffer.from(snapshot.iv, 'base64')
-  const tag = Buffer.from(snapshot.tag, 'base64')
-  const key = scryptSync(passphrase, salt, 32)
-  const decipher = createDecipheriv('aes-256-gcm', key, iv)
-  decipher.setAuthTag(tag)
-  const plaintext = Buffer.concat([
-    decipher.update(Buffer.from(snapshot.ciphertext, 'base64')),
-    decipher.final()
-  ]).toString('utf-8')
-  return JSON.parse(plaintext) as GitHubContextBundle
-}
-
 async function commitAndPushVault(vaultPath: string, vaultKey: string): Promise<void> {
-  await runGit(['-C', vaultPath, 'add', '--', `projects/${vaultKey}`])
+  // Stage this project's snapshots plus the root keyring (created on the first sync).
+  await runGit(['-C', vaultPath, 'add', '--', `projects/${vaultKey}`, VAULT_KEYRING_FILE])
   try {
     await runGit(['-C', vaultPath, 'commit', '-m', `Sync context for ${vaultKey}`])
   } catch (error) {
@@ -704,23 +757,12 @@ async function restoreProjectContext({
   projectId: string
 }): Promise<GitHubContextRestoreSummary> {
   try {
-    if (!restore.passphrase) {
-      return {
-        attempted: true,
-        restored: false,
-        snapshot: null,
-        filesRestored: 0,
-        workspaceRestored: false,
-        error: 'Context vault passphrase is required.'
-      }
-    }
-
     // Import always has a GitHub repo, whose device-independent key is the vault key.
     const vaultKey = gitHubVaultKey(repo.owner, repo.repo)
     const mode = restore.mode ?? (restore.vaultRepositoryUrl?.trim() ? 'git' : 'oauth')
     const { bundle, snapshotRel } =
       mode === 'oauth'
-        ? await readVaultSnapshotViaGitHubApi(vaultKey, restore.passphrase)
+        ? await readVaultSnapshotViaGitHubApi(vaultKey, restore)
         : await readVaultSnapshotFromGitVault(vaultKey, restore)
 
     return restoreContextBundle({
@@ -738,6 +780,7 @@ async function restoreProjectContext({
       snapshot: null,
       filesRestored: 0,
       workspaceRestored: false,
+      locked: error instanceof VaultLockedError,
       error: error instanceof Error ? error.message : 'Could not restore context.'
     }
   }
@@ -745,16 +788,21 @@ async function restoreProjectContext({
 
 async function readVaultSnapshotViaGitHubApi(
   vaultKey: string,
-  passphrase: string
+  restore: GitHubContextRestoreRequest
 ): Promise<{ bundle: GitHubContextBundle; snapshotRel: string }> {
   const vault = await ensureApiVaultRepository()
+  const dek = await resolveVaultDek(apiVaultKeyringIO(vault), { recoveryKey: restore.recoveryKey })
+  if (!dek.ok) throw new VaultLockedError(dek.error)
+
   const manifest = await readVaultManifestViaGitHubApi(vault, vaultKey)
   const snapshotRel = manifest.latestSnapshot ?? manifest.snapshots[0]?.file ?? null
   if (!snapshotRel) throw new Error('No context snapshot found for this project.')
 
   const snapshotText = await getGitHubFileText(vault, `projects/${vaultKey}/${snapshotRel}`)
   if (!snapshotText) throw new Error('Could not read context snapshot.')
-  const bundle = decryptBundle(JSON.parse(snapshotText) as EncryptedSnapshot, passphrase)
+  const bundle = JSON.parse(
+    decryptBundleWithDek(JSON.parse(snapshotText) as EncryptedSnapshotV2, dek.dek)
+  ) as GitHubContextBundle
   return { bundle, snapshotRel }
 }
 
@@ -764,6 +812,9 @@ async function readVaultSnapshotFromGitVault(
 ): Promise<{ bundle: GitHubContextBundle; snapshotRel: string }> {
   if (!restore.vaultRepositoryUrl?.trim()) throw new Error('Vault URL is required.')
   const vaultPath = await ensureVaultRepository(restore.vaultRepositoryUrl)
+  const dek = await resolveVaultDek(gitVaultKeyringIO(vaultPath), { recoveryKey: restore.recoveryKey })
+  if (!dek.ok) throw new VaultLockedError(dek.error)
+
   const projectDir = join(vaultPath, 'projects', vaultKey)
   const manifest = await readVaultManifest(projectDir, vaultKey)
   const snapshotRel = manifest.latestSnapshot ?? manifest.snapshots[0]?.file ?? null
@@ -771,8 +822,8 @@ async function readVaultSnapshotFromGitVault(
 
   const snapshotPath = safeJoin(projectDir, snapshotRel)
   if (!snapshotPath) throw new Error('Invalid context snapshot path.')
-  const encrypted = JSON.parse(await readFile(snapshotPath, 'utf-8')) as EncryptedSnapshot
-  return { bundle: decryptBundle(encrypted, restore.passphrase), snapshotRel }
+  const encrypted = JSON.parse(await readFile(snapshotPath, 'utf-8')) as EncryptedSnapshotV2
+  return { bundle: JSON.parse(decryptBundleWithDek(encrypted, dek.dek)) as GitHubContextBundle, snapshotRel }
 }
 
 async function restoreContextBundle({

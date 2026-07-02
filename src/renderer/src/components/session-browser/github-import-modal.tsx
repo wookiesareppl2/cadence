@@ -36,7 +36,6 @@ export function GitHubImportModal({
   const [targetDirectoryName, setTargetDirectoryName] = useState('')
   const [restoreContext, setRestoreContext] = useState(true)
   const [vaultRepositoryUrl, setVaultRepositoryUrl] = useState(() => localStorage.getItem(VAULT_URL_KEY) ?? '')
-  const [passphrase, setPassphrase] = useState('')
   const [busy, setBusy] = useState<BusyAction>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -172,10 +171,6 @@ export function GitHubImportModal({
       setError('Choose a destination folder.')
       return false
     }
-    if (restoreContext && !passphrase) {
-      setError('Enter the context vault passphrase, or turn off restore.')
-      return false
-    }
     if (mode === 'manual' && restoreContext && !vaultRepositoryUrl.trim()) {
       setError('Enter the vault repository URL, or turn off restore.')
       return false
@@ -198,8 +193,7 @@ export function GitHubImportModal({
       restoreContext: restoreContext
         ? {
             mode: mode === 'oauth' ? 'oauth' : 'git',
-            vaultRepositoryUrl: mode === 'manual' ? vaultRepositoryUrl.trim() : null,
-            passphrase
+            vaultRepositoryUrl: mode === 'manual' ? vaultRepositoryUrl.trim() : null
           }
         : null
     })
@@ -235,10 +229,6 @@ export function GitHubImportModal({
       setError('Sign in to GitHub first.')
       return
     }
-    if (!passphrase) {
-      setError('Enter the context vault passphrase.')
-      return
-    }
     if (mode === 'manual' && !vaultRepositoryUrl.trim()) {
       setError('Enter the vault repository URL.')
       return
@@ -250,12 +240,13 @@ export function GitHubImportModal({
       projectId: browser.selectedProject.id,
       repositoryUrl: (mode === 'oauth' ? selectedRepo?.fullName : repositoryUrl.trim()) || null,
       mode: mode === 'oauth' ? 'oauth' : 'git',
-      vaultRepositoryUrl: mode === 'manual' ? vaultRepositoryUrl.trim() : null,
-      passphrase
+      vaultRepositoryUrl: mode === 'manual' ? vaultRepositoryUrl.trim() : null
     })
     setBusy(null)
 
     if (!result.ok) {
+      // A locked vault isn't a hard error — it needs first-time setup or a recovery key,
+      // which the dedicated vault UI (Phase 4d) will drive. Surface the reason for now.
       setError(result.error ?? 'Context sync failed.')
       return
     }
@@ -440,15 +431,6 @@ export function GitHubImportModal({
               onChange={(event) => setRestoreContext(event.target.checked)}
             />
             <span>Restore private context</span>
-          </label>
-
-          <label className="github-import-field">
-            <span>Vault passphrase</span>
-            <input
-              type="password"
-              value={passphrase}
-              onChange={(event) => setPassphrase(event.target.value)}
-            />
           </label>
 
           {mode === 'oauth' ? (
