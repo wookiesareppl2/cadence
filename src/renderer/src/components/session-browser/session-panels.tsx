@@ -9,6 +9,7 @@ import { CopyableCodeBlock, HistoryMarkdown } from '../history-markdown'
 import { GitHubImportModal } from './github-import-modal'
 import { ProjectList, SessionList } from './session-rows'
 import { VaultStatusIndicator } from './vault-status-indicator'
+import { VaultManagerModal } from './vault-manager-modal'
 import {
   isPendingSessionId,
   projectLabel,
@@ -93,6 +94,7 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
   onRenamePendingSession: (id: string, title: string | null) => Promise<void>
 }): JSX.Element {
   const [githubImportOpen, setGithubImportOpen] = useState(false)
+  const [vaultManagerOpen, setVaultManagerOpen] = useState(false)
   const projectEmptyMessage =
     browser.projects.length > 0 && browser.filteredProjects.length === 0 ? 'No matching projects' : emptyLabel
   const selectedProject = browser.selectedProject
@@ -203,7 +205,11 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
               <span className="session-stack-title">
                 Sessions
                 <TitleGenerationStatus browser={browser} />
-                <VaultStatusIndicator platform={browser.platform} projectId={selectedProject?.id ?? null} />
+                <VaultStatusIndicator
+                  platform={browser.platform}
+                  projectId={selectedProject?.id ?? null}
+                  onOpen={() => setVaultManagerOpen(true)}
+                />
               </span>
               <button
                 type="button"
@@ -251,6 +257,13 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
         ) : null}
       </aside>
       {githubImportOpen ? <GitHubImportModal browser={browser} onClose={() => setGithubImportOpen(false)} /> : null}
+      {vaultManagerOpen ? (
+        <VaultManagerModal
+          browser={browser}
+          projectId={selectedProject?.id ?? null}
+          onClose={() => setVaultManagerOpen(false)}
+        />
+      ) : null}
     </>
   )
 })

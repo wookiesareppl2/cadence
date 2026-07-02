@@ -716,6 +716,102 @@
   border-color: color-mix(in srgb, var(--caution) 45%, var(--border));
 }
 
+/* Clickable variant of the vault readout pill: opens the vault manager. Adds a hover
+   affordance over the quiet readout, and a muted "set up" state when not connected. */
+.vault-status-trigger {
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: border-color 160ms var(--ease-out-expo), color 160ms var(--ease-out-expo);
+}
+
+.vault-status-trigger:hover {
+  border-color: var(--accent);
+  color: var(--text-1);
+}
+
+.vault-status-trigger:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.vault-status.is-setup {
+  color: var(--text-3);
+  font-weight: 500;
+}
+
+.vault-status.is-setup .vault-status-dot {
+  background: var(--text-3);
+}
+
+/* ── Context vault manager modal ─────────────────────────────────────────────
+   Reuses the .github-import-modal* shell; only the recovery-key reveal and a few
+   layout helpers are vault-specific. */
+.vault-modal {
+  width: min(520px, 92vw);
+}
+
+.vault-modal-intro,
+.vault-modal-hint {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.vault-modal-hint {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.vault-manage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* The one-time Recovery Key reveal — deliberately prominent (a caution-toned callout)
+   so it can't be dismissed without noticing. */
+.vault-key-reveal {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--caution) 48%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--caution) 9%, var(--surface-0));
+}
+
+.vault-key-warning {
+  margin: 0;
+  color: var(--text-1);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.vault-key-warning strong {
+  color: var(--caution);
+  font-weight: 700;
+}
+
+.vault-key-code {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-0);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  line-height: 1.5;
+  text-align: center;
+  word-break: break-all;
+  user-select: all;
+}
+
+.vault-key-confirm {
+  font-size: 12px;
+}
+
 .title-generation-dot {
   flex: none;
   width: 9px;
