@@ -684,7 +684,11 @@ function DashboardApp(): JSX.Element {
   const [selectedSessionIds, setSelectedSessionIds] = usePersistentState<Record<PlatformId, string | null>>(
     'selection:sessions:v1',
     { claude: null, codex: null },
-    // Don't restore a transient pending-session selection — start clean instead.
+    undefined,
+    // Don't restore a transient pending-session selection from a previous run —
+    // start clean. Passed as the load-only transform so a live pending selection
+    // still syncs across windows (starting a session while terminals are detached
+    // must not scrub itself as the selection round-trips main ↔ detached window).
     (value) => ({
       claude: isPendingSessionId(value.claude) ? null : value.claude,
       codex: isPendingSessionId(value.codex) ? null : value.codex
@@ -1122,6 +1126,9 @@ function DetachedTerminalWindow({ platform }: { platform: PlatformId }): JSX.Ele
   const [selectedSessionIds, setSelectedSessionIds] = usePersistentState<Record<PlatformId, string | null>>(
     'selection:sessions:v1',
     { claude: null, codex: null },
+    undefined,
+    // Load-only (see the main window's copy): strip a stale pending selection on
+    // first mount, but let a live pending selection sync in from the main window.
     (value) => ({
       claude: isPendingSessionId(value.claude) ? null : value.claude,
       codex: isPendingSessionId(value.codex) ? null : value.codex
@@ -1499,14 +1506,23 @@ function SplashScreen({ active }: { active: boolean }): JSX.Element | null {
 function usePersistentState<T extends object>(
   key: string,
   fallback: T,
-  revive?: (value: T) => T
+  revive?: (value: T) => T,
+  // Applied ONLY to the value restored from storage on first mount — never to live
+  // cross-window updates. Use this to discard transient state left over from a
+  // previous run (e.g. a pending "new session" selection) while still letting an
+  // identical selection made in another live window (the detached terminal window
+  // shares these keys) sync across intact. Applying it to live updates would scrub
+  // a freshly started session as its selection round-trips between windows.
+  reviveOnLoad?: (value: T) => T
 ): [T, Dispatch<SetStateAction<T>>] {
   const [value, setValue] = useState<T>(() => {
     try {
       const raw = window.localStorage.getItem(key)
       if (raw) {
-        const merged = { ...fallback, ...(JSON.parse(raw) as Partial<T>) } as T
-        return revive ? revive(merged) : merged
+        let merged = { ...fallback, ...(JSON.parse(raw) as Partial<T>) } as T
+        if (revive) merged = revive(merged)
+        if (reviveOnLoad) merged = reviveOnLoad(merged)
+        return merged
       }
     } catch {
       // Corrupt/unavailable storage falls back to defaults.
