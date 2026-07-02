@@ -8,6 +8,7 @@ import type {
 import { CopyableCodeBlock, HistoryMarkdown } from '../history-markdown'
 import { GitHubImportModal } from './github-import-modal'
 import { ProjectList, SessionList } from './session-rows'
+import { VaultStatusIndicator } from './vault-status-indicator'
 import {
   isPendingSessionId,
   projectLabel,
@@ -202,6 +203,7 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
               <span className="session-stack-title">
                 Sessions
                 <TitleGenerationStatus browser={browser} />
+                <VaultStatusIndicator platform={browser.platform} projectId={selectedProject?.id ?? null} />
               </span>
               <button
                 type="button"

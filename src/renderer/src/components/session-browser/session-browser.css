@@ -681,6 +681,41 @@
   min-width: 0;
 }
 
+/* Context-vault state readout (quiet mono pill next to "Sessions"). */
+.vault-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-transform: none;
+  font-weight: 500;
+}
+
+.vault-status-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--text-3);
+}
+
+.vault-status.is-insync .vault-status-dot {
+  background: var(--success);
+}
+
+.vault-status.is-local .vault-status-dot,
+.vault-status.is-conflict .vault-status-dot {
+  background: var(--caution);
+}
+
+.vault-status.is-remote .vault-status-dot {
+  background: var(--accent);
+}
+
+.vault-status.is-conflict {
+  color: var(--caution);
+  border-color: color-mix(in srgb, var(--caution) 45%, var(--border));
+}
+
 .title-generation-dot {
   flex: none;
   width: 9px;
