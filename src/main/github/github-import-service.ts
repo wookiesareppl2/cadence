@@ -886,7 +886,13 @@ async function readVaultSnapshotViaGitHubApi(
   const snapshotRel = manifest.latestSnapshot ?? manifest.snapshots[0]?.file ?? null
   if (!snapshotRel) throw new Error('No context snapshot found for this project.')
 
-  const snapshotText = await getGitHubFileText(vault, `projects/${vaultKey}/${snapshotRel}`)
+  // Defence-in-depth (LOW-2): the manifest is server-supplied, so normalise the path it
+  // names the same way the git-vault path does before fetching, so a tampered manifest
+  // can't point the fetch at a `../`-escaped or absolute path. Mirrors safeJoin's guard.
+  const safeRel = normalizeBundlePath(snapshotRel)
+  if (!safeRel) throw new Error('Invalid context snapshot path.')
+
+  const snapshotText = await getGitHubFileText(vault, `projects/${vaultKey}/${safeRel}`)
   if (!snapshotText) throw new Error('Could not read context snapshot.')
   const bundle = JSON.parse(
     decryptBundleWithDek(JSON.parse(snapshotText) as EncryptedSnapshotV2, dek.dek)
