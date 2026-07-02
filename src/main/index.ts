@@ -39,8 +39,12 @@ import { attachWorkspace, listWorkspaces } from './workspaces/workspace-service'
 import {
   chooseGithubImportDirectory,
   getProjectVaultStatus,
+  getVaultKeyStatus,
   importGithubProject,
-  syncProjectContextToVault
+  rotateProjectVaultRecoveryKey,
+  setupProjectVault,
+  syncProjectContextToVault,
+  unlockProjectVault
 } from './github/github-import-service'
 import {
   getGitHubAuthStatus,
@@ -55,7 +59,12 @@ import type { SearchQuery } from '@shared/search'
 import { getProjectMemory, readMemoryFile, writeMemoryFile } from './memory/memory-service'
 import { disconnectPlatform, getSetupCommand, getSetupStatus } from './setup/setup-service'
 import type { SetupAction } from '@shared/setup'
-import type { GitHubContextStatusRequest, GitHubContextSyncRequest, GitHubImportRequest } from '@shared/github-import'
+import type {
+  GitHubContextStatusRequest,
+  GitHubContextSyncRequest,
+  GitHubContextVaultUnlockRequest,
+  GitHubImportRequest
+} from '@shared/github-import'
 import { initAutoUpdates } from './updater'
 import { DEFAULT_WINDOW_BOUNDS } from './window-state-utils'
 import { readWindowState, registerWindowStatePersistence } from './window-state'
@@ -498,6 +507,12 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   ipcMain.handle('github:project-context-status', (event, request: GitHubContextStatusRequest) =>
     getProjectVaultStatus(request, event.sender)
   )
+  ipcMain.handle('github:vault-key-status', () => getVaultKeyStatus())
+  ipcMain.handle('github:vault-setup', () => setupProjectVault())
+  ipcMain.handle('github:vault-unlock', (_event, request: GitHubContextVaultUnlockRequest) =>
+    unlockProjectVault(request)
+  )
+  ipcMain.handle('github:vault-rotate-recovery-key', () => rotateProjectVaultRecoveryKey())
   ipcMain.handle('project-workspace:get', (_event, projectId: string) => getProjectWorkspace(projectId))
   ipcMain.handle('project-workspace:save', (_event, projectId: string, data: unknown) =>
     saveProjectWorkspace(projectId, data)

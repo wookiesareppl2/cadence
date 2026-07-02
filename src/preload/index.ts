@@ -30,6 +30,10 @@ import type {
   GitHubContextStatusResult,
   GitHubContextSyncRequest,
   GitHubContextSyncResult,
+  GitHubContextVaultActionResult,
+  GitHubContextVaultKeyStatus,
+  GitHubContextVaultSetupResult,
+  GitHubContextVaultUnlockRequest,
   GitHubDeviceFlowPollResult,
   GitHubDeviceFlowStartResult,
   GitHubImportRequest,
@@ -132,7 +136,13 @@ const api = {
     syncProjectContext: (request: GitHubContextSyncRequest): Promise<GitHubContextSyncResult> =>
       ipcRenderer.invoke('github:sync-project-context', request),
     projectContextStatus: (request: GitHubContextStatusRequest): Promise<GitHubContextStatusResult> =>
-      ipcRenderer.invoke('github:project-context-status', request)
+      ipcRenderer.invoke('github:project-context-status', request),
+    vaultKeyStatus: (): Promise<GitHubContextVaultKeyStatus> => ipcRenderer.invoke('github:vault-key-status'),
+    setupVault: (): Promise<GitHubContextVaultSetupResult> => ipcRenderer.invoke('github:vault-setup'),
+    unlockVault: (request: GitHubContextVaultUnlockRequest): Promise<GitHubContextVaultActionResult> =>
+      ipcRenderer.invoke('github:vault-unlock', request),
+    rotateVaultRecoveryKey: (): Promise<GitHubContextVaultSetupResult> =>
+      ipcRenderer.invoke('github:vault-rotate-recovery-key')
   },
   projectWorkspace: {
     get: (projectId: string): Promise<ProjectWorkspace> => ipcRenderer.invoke('project-workspace:get', projectId),

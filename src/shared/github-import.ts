@@ -179,6 +179,39 @@ export type GitHubContextStatusResult = {
   error?: string
 }
 
+// Vault key-management ops (Phase 4d). These act on the single account-wide keyring in
+// the built-in OAuth vault (cadence-context-vault), not a per-project snapshot, so they
+// take no project. Setup and rotate return a plaintext Recovery Key to show exactly once.
+
+export type GitHubContextVaultSetupResult = {
+  ok: boolean
+  // The Recovery Key to show the user once (present only when a NEW keyring was minted).
+  recoveryKey?: string
+  // The vault keyring already existed; no new key was created.
+  alreadySetUp?: boolean
+  // Whether this device can currently unlock the vault automatically.
+  unlocked?: boolean
+  error?: string
+}
+
+export type GitHubContextVaultUnlockRequest = {
+  recoveryKey: string
+}
+
+export type GitHubContextVaultActionResult = {
+  ok: boolean
+  error?: string
+}
+
+// Whether the account-wide vault keyring exists and whether THIS device can open it —
+// drives which action the vault UI offers (set up / unlock / manage).
+export type GitHubContextVaultKeyStatus = {
+  ok: boolean
+  exists: boolean
+  unlocked: boolean
+  error?: string
+}
+
 const GITHUB_OWNER_REPO = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/
 
 function cleanRepoName(value: string): string {

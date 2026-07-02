@@ -18,6 +18,10 @@ import {
   type GitHubContextStatusResult,
   type GitHubContextSyncRequest,
   type GitHubContextSyncResult,
+  type GitHubContextVaultActionResult,
+  type GitHubContextVaultKeyStatus,
+  type GitHubContextVaultSetupResult,
+  type GitHubContextVaultUnlockRequest,
   type GitHubImportRequest,
   type GitHubImportResult,
   type GitHubRepositoryIdentity
@@ -33,6 +37,7 @@ import {
 import {
   createVaultKeyMaterial,
   parseKeyring,
+  rotateRecoveryKey,
   serializeKeyring,
   unlockKeyringWithRecoveryKey,
   type VaultKeyring
@@ -320,6 +325,89 @@ export async function getProjectVaultStatus(
     return { ok: true, state, vaultKey, lastSyncedAt: link?.lastSyncedAt ?? null }
   } catch (error) {
     return { ok: false, vaultKey, error: error instanceof Error ? error.message : 'Could not read vault status.' }
+  }
+}
+
+// ── Vault key management (Phase 4d) ──────────────────────────────────────────
+// These act on the account-wide keyring in the built-in OAuth vault. Read-only status
+// never creates the repo; setup does (that's the point). The git/manual vault stays
+// managed through the sync flow, so these target the automatic OAuth vault only.
+
+async function apiVaultHandleForRead(): Promise<{ owner: string; repo: string } | null> {
+  const auth = await getGitHubAuthStatus()
+  if (!auth.authenticated || !auth.login) return null
+  return { owner: auth.login, repo: GITHUB_CONTEXT_VAULT_REPO_NAME }
+}
+
+/** Does the account-wide vault keyring exist, and can this device open it? Side-effect-free. */
+export async function getVaultKeyStatus(): Promise<GitHubContextVaultKeyStatus> {
+  const vault = await apiVaultHandleForRead()
+  if (!vault) return { ok: true, exists: false, unlocked: false }
+  try {
+    const keyring = await apiVaultKeyringIO(vault).read()
+    if (!keyring) return { ok: true, exists: false, unlocked: false }
+    const dek = await unlockVaultDek(keyring)
+    return { ok: true, exists: true, unlocked: Boolean(dek) }
+  } catch (error) {
+    return { ok: false, exists: false, unlocked: false, error: error instanceof Error ? error.message : 'Could not read vault keys.' }
+  }
+}
+
+/**
+ * First-time vault setup: mint the DEK + first Recovery Key and publish the keyring,
+ * storing the DEK on this device. A standalone, reliable step (no snapshot required) so
+ * the returned Recovery Key is always shown before anything can fail. If the keyring
+ * already exists it is never clobbered.
+ */
+export async function setupProjectVault(): Promise<GitHubContextVaultSetupResult> {
+  try {
+    const vault = await ensureApiVaultRepository()
+    const io = apiVaultKeyringIO(vault)
+    const existing = await io.read()
+    if (existing) {
+      const dek = await unlockVaultDek(existing)
+      return { ok: true, alreadySetUp: true, unlocked: Boolean(dek) }
+    }
+    const material = createVaultKeyMaterial()
+    await storeDeviceDek(material.dek)
+    await io.write(material.keyring)
+    return { ok: true, alreadySetUp: false, unlocked: true, recoveryKey: material.recoveryKey }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Could not set up the context vault.' }
+  }
+}
+
+/** Unlock the vault on this device with a Recovery Key, adopting the DEK for auto-unlock. */
+export async function unlockProjectVault(
+  request: GitHubContextVaultUnlockRequest
+): Promise<GitHubContextVaultActionResult> {
+  if (!request.recoveryKey?.trim()) return { ok: false, error: 'Enter your recovery key.' }
+  try {
+    const vault = await ensureApiVaultRepository()
+    const dek = await resolveVaultDek(apiVaultKeyringIO(vault), { recoveryKey: request.recoveryKey })
+    return dek.ok ? { ok: true } : { ok: false, error: dek.error }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Could not unlock the context vault.' }
+  }
+}
+
+/**
+ * Issue a fresh Recovery Key (invalidating the old one) from a device that can already
+ * unlock the vault. Returns the new key to show once.
+ */
+export async function rotateProjectVaultRecoveryKey(): Promise<GitHubContextVaultSetupResult> {
+  try {
+    const vault = await ensureApiVaultRepository()
+    const io = apiVaultKeyringIO(vault)
+    const keyring = await io.read()
+    if (!keyring) return { ok: false, error: 'This vault has not been set up yet.' }
+    const dek = await unlockVaultDek(keyring)
+    if (!dek) return { ok: false, error: 'Unlock this device with your recovery key before rotating it.' }
+    const rotated = rotateRecoveryKey(keyring, dek)
+    await io.write(rotated.keyring)
+    return { ok: true, alreadySetUp: true, unlocked: true, recoveryKey: rotated.recoveryKey }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Could not rotate the recovery key.' }
   }
 }
 
