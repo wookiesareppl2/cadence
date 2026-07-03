@@ -11,11 +11,14 @@ import {
   generateDek,
   generateRecoveryKey,
   makeDekCheck,
+  unwrapDekForGithubAccount,
   unwrapDekWithRecoveryKey,
   verifyDekCheck,
+  wrapDekForGithubAccount,
   wrapDekWithRecoveryKey,
   type DekCheck,
   type GcmCiphertext,
+  type GithubWrappedDek,
   type RecoveryWrappedDek
 } from './vault-crypto'
 
@@ -26,8 +29,11 @@ export type VaultKeyring = {
   // Lets a device confirm a DEK it unlocked/recovered is the right one before trusting
   // it to decrypt snapshots.
   dekCheck: DekCheck
-  // Forward-compatibility: a newer client may add more wraps (e.g. the deferred
-  // GitHub-account recovery wrap, decided in Phase 4e). Unknown fields are carried
+  // Optional GitHub-account recovery: a DEK copy recoverable by signing into GitHub, so
+  // losing every device AND the Recovery Key is not a permanent lockout. Owner-approved
+  // trade-off (repo access ⟹ context access); see docs/CONTEXT_VAULT.md.
+  github?: GithubWrappedDek
+  // Forward-compatibility: a newer client may add more wraps. Unknown fields are carried
   // through parse → rotate → serialize verbatim so an older client can never clobber a
   // newer client's recovery path when it rewrites the keyring. The index signature
   // makes that contract explicit rather than relying on runtime spread alone.
@@ -90,6 +96,43 @@ export function rotateRecoveryKey(keyring: VaultKeyring, dek: Buffer): { recover
   return { recoveryKey, keyring: { ...keyring, recovery: wrapDekWithRecoveryKey(dek, recoveryKey) } }
 }
 
+/** True when this keyring carries a GitHub-account recovery wrap. */
+export function hasGithubRecovery(keyring: VaultKeyring): boolean {
+  return isGithubWrap(keyring.github)
+}
+
+/**
+ * Add (or replace) the GitHub-account recovery wrap. Requires the live DEK, so only a
+ * device that can already unlock the vault may enable it. `accountId` is the account's
+ * immutable numeric id.
+ */
+export function addGithubRecovery(keyring: VaultKeyring, dek: Buffer, accountId: string): VaultKeyring {
+  if (!dekMatchesKeyring(keyring, dek)) {
+    throw new Error('Cannot enable GitHub recovery without the vault key.')
+  }
+  return { ...keyring, github: wrapDekForGithubAccount(dek, accountId) }
+}
+
+/** Remove the GitHub-account recovery wrap (return to Recovery-Key-only). */
+export function removeGithubRecovery(keyring: VaultKeyring): VaultKeyring {
+  const next: VaultKeyring = { ...keyring }
+  delete next.github
+  return next
+}
+
+/**
+ * Recover the DEK by GitHub account. Throws if this vault has no GitHub recovery, or the
+ * account id / wrap doesn't yield the vault's DEK (verified against the check value).
+ */
+export function unlockKeyringWithGithubAccount(keyring: VaultKeyring, accountId: string): Buffer {
+  if (!isGithubWrap(keyring.github)) throw new Error('This vault has no GitHub-account recovery.')
+  const dek = unwrapDekForGithubAccount(keyring.github, accountId)
+  if (!verifyDekCheck(keyring.dekCheck, dek)) {
+    throw new Error('GitHub-account recovery did not match this vault.')
+  }
+  return dek
+}
+
 /** Serialise a keyring for storage in the vault repo. */
 export function serializeKeyring(keyring: VaultKeyring): string {
   return JSON.stringify(keyring, null, 2)
@@ -102,9 +145,11 @@ export function parseKeyring(raw: unknown): VaultKeyring | null {
   if (record.version !== 1) return null
   const recovery = record.recovery
   if (!isRecoveryWrap(recovery) || !isGcm(record.dekCheck)) return null
-  // Spread `record` first so any unknown wraps a newer client wrote are preserved; the
-  // validated known fields then override to their narrowed types.
-  return { ...record, version: 1, recovery, dekCheck: record.dekCheck }
+  // A `github` wrap, if present, must be well-formed; a malformed one is dropped rather
+  // than kept as a broken recovery path. Spread `record` first so any *other* unknown
+  // wraps a newer client wrote are preserved; validated known fields then override.
+  const github = isGithubWrap(record.github) ? record.github : undefined
+  return { ...record, version: 1, recovery, dekCheck: record.dekCheck, github }
 }
 
 function isGcm(value: unknown): value is GcmCiphertext {
@@ -119,4 +164,10 @@ function isRecoveryWrap(value: unknown): value is RecoveryWrappedDek {
   if (!isGcm(value)) return false
   const record = value as unknown as Record<string, unknown>
   return record.kdf === 'scrypt' && typeof record.salt === 'string'
+}
+
+function isGithubWrap(value: unknown): value is GithubWrappedDek {
+  if (!isGcm(value)) return false
+  const record = value as unknown as Record<string, unknown>
+  return record.kdf === 'hkdf-sha256' && typeof record.salt === 'string'
 }

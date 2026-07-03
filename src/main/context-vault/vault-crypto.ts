@@ -14,7 +14,15 @@
 // makes no decision about where wrapped keys are stored. That keeps the crypto neutral
 // on the one storage-policy decision deferred to the Phase 4e security review.
 
-import { createCipheriv, createDecipheriv, randomBytes, randomInt, scryptSync, timingSafeEqual } from 'node:crypto'
+import {
+  createCipheriv,
+  createDecipheriv,
+  hkdfSync,
+  randomBytes,
+  randomInt,
+  scryptSync,
+  timingSafeEqual
+} from 'node:crypto'
 
 const DEK_BYTES = 32 // AES-256 key size
 const KEK_BYTES = 32
@@ -37,6 +45,9 @@ const RECOVERY_GROUP_LEN = 4 // 8 × 4 = 32 symbols × 5 bits = 160 bits of entr
 // DEK is the right one before any snapshot is trusted/restored.
 const DEK_CHECK_MARKER = 'cadence-context-vault/dek-check/v1'
 
+// HKDF context string for the GitHub-account recovery wrap (see wrapDekForGithubAccount).
+const GITHUB_KEK_INFO = Buffer.from('cadence-context-vault/github-recovery/v1', 'utf-8')
+
 /** AES-256-GCM ciphertext with its nonce and auth tag, all base64. */
 export type GcmCiphertext = {
   iv: string
@@ -53,6 +64,12 @@ export type EncryptedSnapshotV2 = {
 /** The DEK wrapped by a Recovery-Key-derived KEK, carrying the scrypt salt to redo it. */
 export type RecoveryWrappedDek = {
   kdf: 'scrypt'
+  salt: string
+} & GcmCiphertext
+
+/** The DEK wrapped for GitHub-account recovery (KEK derived from the account id). */
+export type GithubWrappedDek = {
+  kdf: 'hkdf-sha256'
   salt: string
 } & GcmCiphertext
 
@@ -158,6 +175,39 @@ export function unwrapDekWithRecoveryKey(wrapped: RecoveryWrappedDek, recoveryKe
   const dek = decryptGcm(wrapped, kek)
   assertKeyLength(dek, DEK_BYTES, 'unwrapped DEK')
   return dek
+}
+
+/**
+ * Wrap the DEK for GitHub-account recovery. The KEK is derived (HKDF-SHA256) from the
+ * account's immutable numeric id.
+ *
+ * SECURITY NOTE: the account id is NOT a secret — it is public. This wrap therefore does
+ * NOT make the DEK confidential against an adversary who holds BOTH this keyring and the
+ * account id. Its real purpose is (a) to avoid the literal DEK bytes sitting at rest
+ * (including in the local git-mode clone of the vault) and (b) to bind the recovery copy
+ * to one account. The actual security boundary for GitHub-account recovery is that this
+ * file lives in a PRIVATE repo only the account owner can read — the owner-approved
+ * trade-off documented in docs/CONTEXT_VAULT.md (repo access ⟹ context access).
+ */
+export function wrapDekForGithubAccount(dek: Buffer, accountId: string): GithubWrappedDek {
+  assertKeyLength(dek, DEK_BYTES, 'DEK')
+  if (!accountId.trim()) throw new Error('A GitHub account id is required.')
+  const salt = randomBytes(RECOVERY_SALT_BYTES)
+  const kek = deriveGithubKek(accountId, salt)
+  return { kdf: 'hkdf-sha256', salt: salt.toString('base64'), ...encryptGcm(dek, kek) }
+}
+
+/** Recover the DEK from a GitHub-account wrap. Throws on a wrong account id or tampering. */
+export function unwrapDekForGithubAccount(wrapped: GithubWrappedDek, accountId: string): Buffer {
+  if (wrapped.kdf !== 'hkdf-sha256') throw new Error('Unsupported GitHub recovery wrap format.')
+  const kek = deriveGithubKek(accountId, Buffer.from(wrapped.salt, 'base64'))
+  const dek = decryptGcm(wrapped, kek)
+  assertKeyLength(dek, DEK_BYTES, 'unwrapped DEK')
+  return dek
+}
+
+function deriveGithubKek(accountId: string, salt: Buffer): Buffer {
+  return Buffer.from(hkdfSync('sha256', Buffer.from(accountId, 'utf-8'), salt, GITHUB_KEK_INFO, KEK_BYTES))
 }
 
 /** An integrity check value bound to this DEK. */

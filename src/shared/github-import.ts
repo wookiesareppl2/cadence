@@ -209,7 +209,14 @@ export type GitHubContextVaultKeyStatus = {
   ok: boolean
   exists: boolean
   unlocked: boolean
+  // Whether the vault carries a GitHub-account recovery wrap — i.e. a locked device can
+  // recover by signing into GitHub without the Recovery Key.
+  githubRecovery: boolean
   error?: string
+}
+
+export type GitHubContextVaultGithubRecoveryRequest = {
+  enabled: boolean
 }
 
 const GITHUB_OWNER_REPO = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/

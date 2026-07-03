@@ -19,6 +19,7 @@ import {
   type GitHubContextSyncRequest,
   type GitHubContextSyncResult,
   type GitHubContextVaultActionResult,
+  type GitHubContextVaultGithubRecoveryRequest,
   type GitHubContextVaultKeyStatus,
   type GitHubContextVaultSetupResult,
   type GitHubContextVaultUnlockRequest,
@@ -35,10 +36,14 @@ import {
   type EncryptedSnapshotV2
 } from '../context-vault/vault-crypto'
 import {
+  addGithubRecovery,
   createVaultKeyMaterial,
+  hasGithubRecovery,
   parseKeyring,
+  removeGithubRecovery,
   rotateRecoveryKey,
   serializeKeyring,
+  unlockKeyringWithGithubAccount,
   unlockKeyringWithRecoveryKey,
   type VaultKeyring
 } from '../context-vault/keyring'
@@ -339,17 +344,31 @@ async function apiVaultHandleForRead(): Promise<{ owner: string; repo: string } 
   return { owner: auth.login, repo: GITHUB_CONTEXT_VAULT_REPO_NAME }
 }
 
+// The account's immutable numeric id — the binding value for the GitHub-account recovery
+// wrap. Uses the id (not the login) so a username change never breaks recovery.
+async function getGitHubAccountId(): Promise<string> {
+  const user = await githubApiJson<{ id?: unknown }>('/user')
+  if (typeof user.id !== 'number') throw new Error('Could not read your GitHub account id.')
+  return String(user.id)
+}
+
 /** Does the account-wide vault keyring exist, and can this device open it? Side-effect-free. */
 export async function getVaultKeyStatus(): Promise<GitHubContextVaultKeyStatus> {
   const vault = await apiVaultHandleForRead()
-  if (!vault) return { ok: true, exists: false, unlocked: false }
+  if (!vault) return { ok: true, exists: false, unlocked: false, githubRecovery: false }
   try {
     const keyring = await apiVaultKeyringIO(vault).read()
-    if (!keyring) return { ok: true, exists: false, unlocked: false }
+    if (!keyring) return { ok: true, exists: false, unlocked: false, githubRecovery: false }
     const dek = await unlockVaultDek(keyring)
-    return { ok: true, exists: true, unlocked: Boolean(dek) }
+    return { ok: true, exists: true, unlocked: Boolean(dek), githubRecovery: hasGithubRecovery(keyring) }
   } catch (error) {
-    return { ok: false, exists: false, unlocked: false, error: error instanceof Error ? error.message : 'Could not read vault keys.' }
+    return {
+      ok: false,
+      exists: false,
+      unlocked: false,
+      githubRecovery: false,
+      error: error instanceof Error ? error.message : 'Could not read vault keys.'
+    }
   }
 }
 
@@ -370,7 +389,17 @@ export async function setupProjectVault(): Promise<GitHubContextVaultSetupResult
     }
     const material = createVaultKeyMaterial()
     await storeDeviceDek(material.dek)
-    await io.write(material.keyring)
+    // Default-on GitHub-account recovery so losing the Recovery Key isn't a lockout.
+    // Best-effort: if the account id can't be fetched, publish Recovery-Key-only rather
+    // than fail setup (the Recovery Key is always shown regardless, and the user can
+    // enable GitHub recovery later from the manage view).
+    let keyring = material.keyring
+    try {
+      keyring = addGithubRecovery(keyring, material.dek, await getGitHubAccountId())
+    } catch {
+      // Fall back to Recovery-Key-only.
+    }
+    await io.write(keyring)
     return { ok: true, alreadySetUp: false, unlocked: true, recoveryKey: material.recoveryKey }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'Could not set up the context vault.' }
@@ -408,6 +437,52 @@ export async function rotateProjectVaultRecoveryKey(): Promise<GitHubContextVaul
     return { ok: true, alreadySetUp: true, unlocked: true, recoveryKey: rotated.recoveryKey }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'Could not rotate the recovery key.' }
+  }
+}
+
+/**
+ * Recover the vault on this device using GitHub-account access — no Recovery Key needed.
+ * Available only when the vault carries a GitHub-account recovery wrap. Adopts the DEK for
+ * automatic unlock afterwards.
+ */
+export async function recoverProjectVaultViaGitHub(): Promise<GitHubContextVaultActionResult> {
+  try {
+    const vault = await ensureApiVaultRepository()
+    const keyring = await apiVaultKeyringIO(vault).read()
+    if (!keyring) return { ok: false, error: 'This vault has not been set up yet.' }
+    if (!hasGithubRecovery(keyring)) {
+      return { ok: false, error: 'GitHub-account recovery is not enabled for this vault. Use your recovery key.' }
+    }
+    const dek = unlockKeyringWithGithubAccount(keyring, await getGitHubAccountId())
+    await adoptRecoveredDek(keyring, dek)
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Could not recover via GitHub.' }
+  }
+}
+
+/**
+ * Turn GitHub-account recovery on or off. Enabling adds a DEK copy recoverable by account
+ * access (requires this device to be unlocked); disabling returns to Recovery-Key-only.
+ */
+export async function setVaultGithubRecovery(
+  request: GitHubContextVaultGithubRecoveryRequest
+): Promise<GitHubContextVaultActionResult> {
+  try {
+    const vault = await ensureApiVaultRepository()
+    const io = apiVaultKeyringIO(vault)
+    const keyring = await io.read()
+    if (!keyring) return { ok: false, error: 'This vault has not been set up yet.' }
+    if (request.enabled) {
+      const dek = await unlockVaultDek(keyring)
+      if (!dek) return { ok: false, error: 'Unlock this device before changing recovery options.' }
+      await io.write(addGithubRecovery(keyring, dek, await getGitHubAccountId()))
+    } else {
+      await io.write(removeGithubRecovery(keyring))
+    }
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'Could not update GitHub recovery.' }
   }
 }
 

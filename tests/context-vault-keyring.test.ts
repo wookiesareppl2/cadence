@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
+  addGithubRecovery,
   createVaultKeyMaterial,
   dekMatchesKeyring,
+  hasGithubRecovery,
   parseKeyring,
+  removeGithubRecovery,
   rotateRecoveryKey,
   serializeKeyring,
+  unlockKeyringWithGithubAccount,
   unlockKeyringWithRecoveryKey,
   type VaultKeyring
 } from '../src/main/context-vault/keyring'
@@ -61,6 +65,60 @@ describe('rotateRecoveryKey', () => {
   })
 })
 
+describe('GitHub-account recovery', () => {
+  const accountId = '42424242'
+
+  it('adds a recovery wrap the account can later unlock', () => {
+    const { dek, keyring } = createVaultKeyMaterial()
+    expect(hasGithubRecovery(keyring)).toBe(false)
+    const withGithub = addGithubRecovery(keyring, dek, accountId)
+    expect(hasGithubRecovery(withGithub)).toBe(true)
+    expect(unlockKeyringWithGithubAccount(withGithub, accountId).equals(dek)).toBe(true)
+  })
+
+  it('refuses to add without the correct DEK', () => {
+    const { keyring } = createVaultKeyMaterial()
+    expect(() => addGithubRecovery(keyring, generateDek(), accountId)).toThrow()
+  })
+
+  it('fails to recover with the wrong account id', () => {
+    const { dek, keyring } = createVaultKeyMaterial()
+    const withGithub = addGithubRecovery(keyring, dek, accountId)
+    expect(() => unlockKeyringWithGithubAccount(withGithub, '99999999')).toThrow()
+  })
+
+  it('throws when the vault has no GitHub recovery', () => {
+    const { keyring } = createVaultKeyMaterial()
+    expect(() => unlockKeyringWithGithubAccount(keyring, accountId)).toThrow(/no GitHub-account recovery/)
+  })
+
+  it('can be removed, returning to recovery-key-only', () => {
+    const { dek, keyring } = createVaultKeyMaterial()
+    const withGithub = addGithubRecovery(keyring, dek, accountId)
+    const without = removeGithubRecovery(withGithub)
+    expect(hasGithubRecovery(without)).toBe(false)
+    expect(JSON.parse(serializeKeyring(without)).github).toBeUndefined()
+  })
+
+  it('survives serialize round-trip and a recovery-key rotation', () => {
+    const { dek, keyring } = createVaultKeyMaterial()
+    const withGithub = addGithubRecovery(keyring, dek, accountId)
+    const reparsed = parseKeyring(JSON.parse(serializeKeyring(withGithub)))
+    expect(hasGithubRecovery(reparsed!)).toBe(true)
+    const { keyring: rotated } = rotateRecoveryKey(reparsed!, dek)
+    expect(unlockKeyringWithGithubAccount(rotated, accountId).equals(dek)).toBe(true)
+  })
+
+  it('drops a malformed github wrap on parse', () => {
+    const { dek, keyring } = createVaultKeyMaterial()
+    const withGithub = addGithubRecovery(keyring, dek, accountId)
+    const broken = { ...JSON.parse(serializeKeyring(withGithub)), github: { kdf: 'hkdf-sha256', salt: 5 } }
+    const parsed = parseKeyring(broken)
+    expect(parsed).not.toBeNull()
+    expect(hasGithubRecovery(parsed!)).toBe(false)
+  })
+})
+
 describe('parseKeyring', () => {
   it('round-trips a serialised keyring', () => {
     const { keyring } = createVaultKeyMaterial()
@@ -68,20 +126,20 @@ describe('parseKeyring', () => {
     expect(parsed).toEqual(keyring)
   })
 
-  it('preserves unknown extra fields so a newer github wrap is never clobbered', () => {
+  it('preserves unknown extra wraps so a newer client is never clobbered', () => {
+    // A hypothetical future recovery wrap this client doesn't know about.
     const { dek, keyring } = createVaultKeyMaterial()
-    const githubWrap = { some: 'future-wrap' }
-    const withExtra = { ...JSON.parse(serializeKeyring(keyring)), github: githubWrap }
+    const futureWrap = { kind: 'future-recovery', blob: 'abc' }
+    const withExtra = { ...JSON.parse(serializeKeyring(keyring)), futureRecovery: futureWrap }
 
-    const parsed = parseKeyring(withExtra)
+    const parsed = parseKeyring(withExtra) as (VaultKeyring & { futureRecovery?: unknown }) | null
     expect(parsed).not.toBeNull()
-    expect(parsed?.github).toEqual(githubWrap)
+    expect(parsed?.futureRecovery).toEqual(futureWrap)
     // Survives a serialize round-trip...
-    expect(JSON.parse(serializeKeyring(parsed!)).github).toEqual(githubWrap)
+    expect(JSON.parse(serializeKeyring(parsed!)).futureRecovery).toEqual(futureWrap)
     // ...and, critically, survives a recovery-key rotation done by this (older) client.
     const { keyring: rotated } = rotateRecoveryKey(parsed!, dek)
-    expect(rotated.github).toEqual(githubWrap)
-    expect(JSON.parse(serializeKeyring(rotated)).github).toEqual(githubWrap)
+    expect(JSON.parse(serializeKeyring(rotated)).futureRecovery).toEqual(futureWrap)
   })
 
   it('rejects malformed or wrong-version records', () => {

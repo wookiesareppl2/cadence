@@ -41,8 +41,10 @@ import {
   getProjectVaultStatus,
   getVaultKeyStatus,
   importGithubProject,
+  recoverProjectVaultViaGitHub,
   rotateProjectVaultRecoveryKey,
   setupProjectVault,
+  setVaultGithubRecovery,
   syncProjectContextToVault,
   unlockProjectVault
 } from './github/github-import-service'
@@ -62,6 +64,7 @@ import type { SetupAction } from '@shared/setup'
 import type {
   GitHubContextStatusRequest,
   GitHubContextSyncRequest,
+  GitHubContextVaultGithubRecoveryRequest,
   GitHubContextVaultUnlockRequest,
   GitHubImportRequest
 } from '@shared/github-import'
@@ -513,6 +516,10 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     unlockProjectVault(request)
   )
   ipcMain.handle('github:vault-rotate-recovery-key', () => rotateProjectVaultRecoveryKey())
+  ipcMain.handle('github:vault-recover-via-github', () => recoverProjectVaultViaGitHub())
+  ipcMain.handle('github:vault-set-github-recovery', (_event, request: GitHubContextVaultGithubRecoveryRequest) =>
+    setVaultGithubRecovery(request)
+  )
   ipcMain.handle('project-workspace:get', (_event, projectId: string) => getProjectWorkspace(projectId))
   ipcMain.handle('project-workspace:save', (_event, projectId: string, data: unknown) =>
     saveProjectWorkspace(projectId, data)

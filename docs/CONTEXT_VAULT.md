@@ -53,6 +53,35 @@ store. (This is what `buildContextBundle` already collects.)
   (the ciphertext already lives in that account; GitHub 2FA covers this). Replaces the
   current single-passphrase (scrypt→aes-256-gcm, no recovery) scheme.
 
+## Security-review decisions (2026-07-03, ship gate)
+
+Independent `/security-review` of the Phase 4 crypto found **no HIGH/MEDIUM exploitable
+defects**; verdict PASS. The three deferred design questions were settled by the owner:
+
+1. **GitHub-account recovery — BUILD IT (was deferred).** Recovery-Key-only was judged too
+   fragile: losing the one key = permanent lockout. So the originally-designed second path
+   is implemented: a copy of the DEK lives in the private vault (`keyring.github`), so a
+   user who has lost every enrolled device **and** the Recovery Key can still recover by
+   signing into GitHub. **This is a conscious, owner-approved override of the "GitHub only
+   ever stores ciphertext" guardrail for the recovery copy only** — repo read-access now
+   implies context access. Justified because the ciphertext already lives in that account,
+   GitHub has mature account recovery (email/2FA backup codes), and the whole identity model
+   is GitHub. The Recovery Key remains the zero-trust, fully-offline path for anyone who
+   wants it; GitHub recovery is the safety net. Snapshots themselves stay DEK-encrypted (no
+   change to at-rest confidentiality of the actual context on GitHub).
+2. **scrypt cost (N=32768, r=8, p=1) — KEEP.** Security rests on the Recovery Key's 160-bit
+   CSPRNG entropy, not the KDF; brute-force is infeasible at any cost, so the params are
+   already conservative. No change.
+3. **Snapshot/keyring integrity — GCM + DEK-check is sufficient; anti-rollback deferred.**
+   Per-snapshot confidentiality+integrity is solid (AES-256-GCM under the DEK). There is no
+   freshness/anti-rollback binding, so an entity with repo **write** (i.e. account
+   compromise — already conceded game-over) could downgrade or lock out; this is bounded by
+   the local drift model surfacing it as `remote-ahead`/`conflict`. Signed, monotonically
+   versioned manifests are a future hardening, not a launch blocker.
+
+Also fixed from the review: **LOW-2** — the API restore path now runs the manifest-supplied
+snapshot path through `normalizeBundlePath` (matching the git path's `safeJoin` guard).
+
 ## Device-independent project identity (Phase 1)
 
 The same logical project lives at different local paths on different devices, so the
@@ -101,11 +130,17 @@ connected**, plus last-synced time. Styled to match the existing GitHub import m
   `detectDivergence` gating; conflict UI.
 - **Phase 4 — Recovery-key model + hardening.** DEK + multi-wrap keyring, Recovery Key
   UI with an unmissable "save this" prompt, integrity checks, tests, and a
-  security-review pass on the crypto before ship.
+  security-review pass on the crypto before ship. *(4a–4d shipped the Recovery-Key path;
+  4e adds GitHub-account recovery per the decision above, then this phase is done.)*
 
 ## Guardrails
 
 - Nothing pushes to GitHub until built, tested, and the user turns it on.
-- Never log/persist the DEK, Recovery Key, or tokens to renderer state or disk in
-  plaintext. safeStorage for at-rest device secrets; E2E so GitHub stores ciphertext.
-- Get the Phase 4 crypto reviewed (security-review) before shipping.
+- Never log the DEK, Recovery Key, or tokens; never persist them to renderer state or to
+  local disk in plaintext. safeStorage for at-rest device secrets. Snapshots on GitHub are
+  always DEK-encrypted (ciphertext). **Exception (owner-approved, see Security-review
+  decisions):** a DEK copy is stored in the private vault to enable GitHub-account
+  recovery — the one place the DEK is intentionally retrievable via account access.
+- Get the Phase 4 crypto reviewed (security-review) before shipping. *(Done 2026-07-03,
+  PASS; GitHub-account recovery is a well-understood addition of the already-analysed
+  decision-1 trade-off, not new crypto.)*

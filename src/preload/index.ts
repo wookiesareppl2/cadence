@@ -31,6 +31,7 @@ import type {
   GitHubContextSyncRequest,
   GitHubContextSyncResult,
   GitHubContextVaultActionResult,
+  GitHubContextVaultGithubRecoveryRequest,
   GitHubContextVaultKeyStatus,
   GitHubContextVaultSetupResult,
   GitHubContextVaultUnlockRequest,
@@ -142,7 +143,12 @@ const api = {
     unlockVault: (request: GitHubContextVaultUnlockRequest): Promise<GitHubContextVaultActionResult> =>
       ipcRenderer.invoke('github:vault-unlock', request),
     rotateVaultRecoveryKey: (): Promise<GitHubContextVaultSetupResult> =>
-      ipcRenderer.invoke('github:vault-rotate-recovery-key')
+      ipcRenderer.invoke('github:vault-rotate-recovery-key'),
+    recoverVaultViaGitHub: (): Promise<GitHubContextVaultActionResult> =>
+      ipcRenderer.invoke('github:vault-recover-via-github'),
+    setVaultGithubRecovery: (
+      request: GitHubContextVaultGithubRecoveryRequest
+    ): Promise<GitHubContextVaultActionResult> => ipcRenderer.invoke('github:vault-set-github-recovery', request)
   },
   projectWorkspace: {
     get: (projectId: string): Promise<ProjectWorkspace> => ipcRenderer.invoke('project-workspace:get', projectId),

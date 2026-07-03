@@ -7,10 +7,13 @@ import {
   generateRecoveryKey,
   makeDekCheck,
   normalizeRecoveryKey,
+  unwrapDekForGithubAccount,
   unwrapDekWithRecoveryKey,
   verifyDekCheck,
+  wrapDekForGithubAccount,
   wrapDekWithRecoveryKey,
-  type EncryptedSnapshotV2
+  type EncryptedSnapshotV2,
+  type GithubWrappedDek
 } from '../src/main/context-vault/vault-crypto'
 
 describe('generateDek', () => {
@@ -127,6 +130,39 @@ describe('DEK wrapping with a recovery key', () => {
     const otherSalt = Buffer.alloc(16, 9)
     expect(deriveKekFromRecoveryKey(key, salt).equals(deriveKekFromRecoveryKey(key, salt))).toBe(true)
     expect(deriveKekFromRecoveryKey(key, salt).equals(deriveKekFromRecoveryKey(key, otherSalt))).toBe(false)
+  })
+})
+
+describe('DEK wrapping for GitHub-account recovery', () => {
+  const accountId = '1234567'
+
+  it('round-trips the DEK through wrap/unwrap for the same account', () => {
+    const dek = generateDek()
+    const wrapped = wrapDekForGithubAccount(dek, accountId)
+    expect(wrapped.kdf).toBe('hkdf-sha256')
+    expect(unwrapDekForGithubAccount(wrapped, accountId).equals(dek)).toBe(true)
+  })
+
+  it('fails to unwrap with a different account id', () => {
+    const wrapped = wrapDekForGithubAccount(generateDek(), accountId)
+    expect(() => unwrapDekForGithubAccount(wrapped, '7654321')).toThrow()
+  })
+
+  it('uses a fresh salt so two wraps of the same DEK differ', () => {
+    const dek = generateDek()
+    const a = wrapDekForGithubAccount(dek, accountId)
+    const b = wrapDekForGithubAccount(dek, accountId)
+    expect(a.salt).not.toBe(b.salt)
+    expect(a.ciphertext).not.toBe(b.ciphertext)
+  })
+
+  it('rejects an unsupported wrap format', () => {
+    const wrapped = { ...wrapDekForGithubAccount(generateDek(), accountId), kdf: 'scrypt' } as unknown as GithubWrappedDek
+    expect(() => unwrapDekForGithubAccount(wrapped, accountId)).toThrow()
+  })
+
+  it('requires a non-empty account id to wrap', () => {
+    expect(() => wrapDekForGithubAccount(generateDek(), '  ')).toThrow()
   })
 })
 
