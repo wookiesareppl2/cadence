@@ -10,7 +10,7 @@ import { useVaultStatus } from './use-vault-status'
 // plus the unmissable one-time Recovery Key reveal. Styled with the shared GitHub-import
 // modal tokens (per DESIGN.md / PAT-112); only the key-reveal block adds its own classes.
 
-type RevealState = { key: string; rotated: boolean }
+type RevealState = { key: string; rotated: boolean; githubRecovery: boolean }
 
 function formatSyncedAt(value: string | null): string {
   if (!value) return 'never'
@@ -74,7 +74,7 @@ export function VaultManagerModal({
       return
     }
     if (result.recoveryKey) {
-      setReveal({ key: result.recoveryKey, rotated: false })
+      setReveal({ key: result.recoveryKey, rotated: false, githubRecovery: Boolean(result.githubRecovery) })
       return
     }
     // Already set up on the account; just refresh to reflect lock state.
@@ -107,7 +107,35 @@ export function VaultManagerModal({
       setError(result.error ?? 'Could not create a new recovery key.')
       return
     }
-    setReveal({ key: result.recoveryKey, rotated: true })
+    setReveal({ key: result.recoveryKey, rotated: true, githubRecovery: false })
+  }
+
+  const runRecoverViaGithub = async (): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    setStatus(null)
+    const result = await window.dashboard.github.recoverVaultViaGitHub()
+    setBusy(false)
+    if (!result.ok) {
+      setError(result.error ?? 'Could not recover via GitHub.')
+      return
+    }
+    setStatus('Recovered and unlocked on this device via your GitHub account.')
+    await refresh()
+  }
+
+  const toggleGithubRecovery = async (enabled: boolean): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    setStatus(null)
+    const result = await window.dashboard.github.setVaultGithubRecovery({ enabled })
+    setBusy(false)
+    if (!result.ok) {
+      setError(result.error ?? 'Could not update GitHub recovery.')
+      return
+    }
+    setStatus(enabled ? 'GitHub-account recovery is on.' : 'GitHub-account recovery is off.')
+    await refresh()
   }
 
   const runSync = async (): Promise<void> => {
@@ -191,6 +219,12 @@ export function VaultManagerModal({
               <button type="button" className="github-import-action" onClick={() => void copyKey()}>
                 {copied ? 'Copied ✓' : 'Copy'}
               </button>
+              {reveal.githubRecovery ? (
+                <p className="vault-modal-hint">
+                  As a backup, you can also get back in by signing into GitHub — so you won&apos;t be locked out if you
+                  misplace this key. You can turn that off later for maximum security.
+                </p>
+              ) : null}
               <label className="github-import-check vault-key-confirm">
                 <input
                   type="checkbox"
@@ -246,6 +280,22 @@ export function VaultManagerModal({
               >
                 {busy ? 'Unlocking…' : 'Unlock vault'}
               </button>
+              {keyStatus?.githubRecovery ? (
+                <>
+                  <div className="vault-or-divider">or</div>
+                  <button
+                    type="button"
+                    className="github-import-action"
+                    disabled={busy}
+                    onClick={() => void runRecoverViaGithub()}
+                  >
+                    Recover with my GitHub account
+                  </button>
+                  <p className="vault-modal-hint">
+                    You&apos;re signed in as this account, so you can unlock without the recovery key.
+                  </p>
+                </>
+              ) : null}
             </>
           ) : (
             <>
@@ -256,6 +306,20 @@ export function VaultManagerModal({
               <div className="github-vault-label">
                 <span>Last synced</span>
                 <strong>{formatSyncedAt(vault.lastSyncedAt)}</strong>
+              </div>
+              <div className="github-vault-label">
+                <span>GitHub recovery</span>
+                <span className="vault-recovery-toggle">
+                  <strong>{keyStatus?.githubRecovery ? 'On' : 'Off'}</strong>
+                  <button
+                    type="button"
+                    className="github-import-action"
+                    disabled={busy}
+                    onClick={() => void toggleGithubRecovery(!keyStatus?.githubRecovery)}
+                  >
+                    {keyStatus?.githubRecovery ? 'Turn off' : 'Turn on'}
+                  </button>
+                </span>
               </div>
               <div className="vault-manage-actions">
                 <button
@@ -271,7 +335,9 @@ export function VaultManagerModal({
                 </button>
               </div>
               <p className="vault-modal-hint">
-                Rotating replaces your recovery key with a new one — do it if the old key may have been seen.
+                {keyStatus?.githubRecovery
+                  ? 'GitHub recovery lets you unlock a new device by signing in — but anyone who takes over your GitHub account could read your synced context. Turn it off for maximum security (you’ll then need your recovery key).'
+                  : 'With GitHub recovery off, your recovery key is the only way back in on a new device — keep it safe. Rotating replaces it with a new one.'}
               </p>
             </>
           )}

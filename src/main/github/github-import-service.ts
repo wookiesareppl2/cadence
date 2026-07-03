@@ -400,7 +400,13 @@ export async function setupProjectVault(): Promise<GitHubContextVaultSetupResult
       // Fall back to Recovery-Key-only.
     }
     await io.write(keyring)
-    return { ok: true, alreadySetUp: false, unlocked: true, recoveryKey: material.recoveryKey }
+    return {
+      ok: true,
+      alreadySetUp: false,
+      unlocked: true,
+      recoveryKey: material.recoveryKey,
+      githubRecovery: hasGithubRecovery(keyring)
+    }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'Could not set up the context vault.' }
   }

@@ -812,6 +812,38 @@
   font-size: 12px;
 }
 
+/* "or" separator between the recovery-key unlock and the GitHub-account recovery. */
+.vault-or-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+}
+
+.vault-or-divider::before,
+.vault-or-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--border-subtle);
+}
+
+/* On/Off state + toggle button paired in the manage view's GitHub-recovery row. */
+.vault-recovery-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vault-recovery-toggle strong {
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
 .title-generation-dot {
   flex: none;
   width: 9px;

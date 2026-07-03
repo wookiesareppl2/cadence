@@ -191,6 +191,9 @@ export type GitHubContextVaultSetupResult = {
   alreadySetUp?: boolean
   // Whether this device can currently unlock the vault automatically.
   unlocked?: boolean
+  // Whether GitHub-account recovery was enabled (so the reveal can reassure the user
+  // they have a second way back in).
+  githubRecovery?: boolean
   error?: string
 }
 
