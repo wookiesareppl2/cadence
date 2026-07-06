@@ -235,9 +235,31 @@ export async function syncProjectContextToVault(
   const location = await resolveProjectLocation(request.platform, request.projectId, sender)
   if (!location) return { ok: false, error: 'Project folder not found.' }
 
-  // A GitHub remote gives a device-independent key automatically; projects without one
-  // fall back to a locally-persisted `local__<uuid>` so any project can sync.
-  const repoUrl = request.repositoryUrl?.trim() || (await inferGithubRemote(location))
+  // The vault key MUST be derived from the project we're actually reading files from —
+  // never a caller-supplied repo, which can belong to a *different* project. Keying by an
+  // unrelated repo files THIS project's files under THAT repo's key and cross-contaminates
+  // both vaults (the exact defect that put Cadence's context under the on-a-digital-note
+  // key). The project's own git remote is the source of truth; an explicit request URL is
+  // honoured only as a fallback for a project with no remote, and a request URL that
+  // conflicts with the real remote is rejected outright rather than silently mis-filed.
+  const inferredRemote = await inferGithubRemote(location)
+  const requestedUrl = request.repositoryUrl?.trim() || null
+  if (inferredRemote && requestedUrl) {
+    const inferredRepo = parseGitHubRepository(inferredRemote)
+    const requestedRepo = parseGitHubRepository(requestedUrl)
+    if (
+      inferredRepo &&
+      requestedRepo &&
+      gitHubVaultKey(inferredRepo.owner, inferredRepo.repo) !== gitHubVaultKey(requestedRepo.owner, requestedRepo.repo)
+    ) {
+      return {
+        ok: false,
+        error:
+          'This project’s GitHub remote does not match the selected repository. Context sync always uses the project’s own remote — deselect the repository, or sync from the project itself.'
+      }
+    }
+  }
+  const repoUrl = inferredRemote || requestedUrl
   const repo = repoUrl ? parseGitHubRepository(repoUrl) : null
   const resolved = await resolveProjectVaultId(contextVaultLinksPath(), {
     projectId: request.projectId,
@@ -302,7 +324,9 @@ export async function getProjectVaultStatus(
   const location = await resolveProjectLocation(request.platform, request.projectId, sender)
   if (!location) return { ok: false, error: 'Project folder not found.' }
 
-  const repoUrl = request.repositoryUrl?.trim() || (await inferGithubRemote(location))
+  // Status keys by the project's own remote first (mirrors sync) so a caller-supplied repo
+  // can't make the indicator report a different project's vault state.
+  const repoUrl = (await inferGithubRemote(location)) || request.repositoryUrl?.trim() || null
   const repo = repoUrl ? parseGitHubRepository(repoUrl) : null
   const gitHubKey = repo ? gitHubVaultKey(repo.owner, repo.repo) : null
   const link = await getVaultLink(contextVaultLinksPath(), request.projectId)

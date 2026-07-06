@@ -238,7 +238,10 @@ export function GitHubImportModal({
     rememberVaultUrl()
     const result = await browser.syncProjectContext({
       projectId: browser.selectedProject.id,
-      repositoryUrl: (mode === 'oauth' ? selectedRepo?.fullName : repositoryUrl.trim()) || null,
+      // Sync keys by the SELECTED PROJECT's own git remote — never the repo highlighted for
+      // import, which can be a different project and would poison that repo's vault. Leave
+      // repositoryUrl unset so the backend infers it from the project itself.
+      repositoryUrl: null,
       mode: mode === 'oauth' ? 'oauth' : 'git',
       vaultRepositoryUrl: mode === 'manual' ? vaultRepositoryUrl.trim() : null
     })
