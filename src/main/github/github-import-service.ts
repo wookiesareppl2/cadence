@@ -535,10 +535,21 @@ function runGit(args: string[], cwd?: string, timeoutMs = 5 * 60_000): Promise<G
 }
 
 function runGitWithToken(args: string[], token: string, cwd?: string, timeoutMs = 5 * 60_000): Promise<GitResult> {
-  return runGitWithEnv(args, cwd, timeoutMs, {
+  // GitHub's git-over-HTTPS transport wants HTTP Basic auth (the token as the password),
+  // NOT `Authorization: Bearer` — Bearer authenticates the REST API (so repo listing works)
+  // but the git endpoint rejects it as "invalid credentials", which then drags in the system
+  // credential helper (Git Credential Manager). Mirror actions/checkout: Basic auth with the
+  // token as the password under the `x-access-token` username, which every GitHub token type
+  // accepts. The header travels via GIT_CONFIG env, not argv, so the token never hits argv/logs.
+  const basicCredential = Buffer.from(`x-access-token:${token}`).toString('base64')
+  // Disable any system credential helper for this call and forbid interactive prompts: the
+  // token IS the credential, so a rejection should surface as a clean error instead of falling
+  // through to Git Credential Manager's browser flow (which lands on a blank localhost page).
+  return runGitWithEnv(['-c', 'credential.helper=', ...args], cwd, timeoutMs, {
+    GIT_TERMINAL_PROMPT: '0',
     GIT_CONFIG_COUNT: '1',
     GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
-    GIT_CONFIG_VALUE_0: `Authorization: Bearer ${token}`
+    GIT_CONFIG_VALUE_0: `Authorization: Basic ${basicCredential}`
   })
 }
 
