@@ -9,6 +9,17 @@ export type VaultStatusView = {
   refresh: () => void
 }
 
+// A sync/restore mutates vault state that any number of mounted indicators display (the
+// sidebar pill and the manager modal each run their own useVaultStatus). Broadcasting a
+// single window event after a successful sync lets every one of them re-fetch, so the
+// sidebar can't keep showing a pre-sync state ("Conflict") after the modal synced.
+const VAULT_STATUS_CHANGED_EVENT = 'cadence:vault-status-changed'
+
+/** Signal every mounted vault-status indicator to re-fetch (call after a successful sync). */
+export function notifyVaultStatusChanged(): void {
+  window.dispatchEvent(new Event(VAULT_STATUS_CHANGED_EVENT))
+}
+
 /**
  * Read-only vault sync state for the selected project. Re-fetches when the project
  * changes; stale responses (from a previous project) are dropped via a request token.
@@ -47,6 +58,14 @@ export function useVaultStatus(platform: PlatformId, projectId: string | null): 
 
   useEffect(() => {
     refresh()
+  }, [refresh])
+
+  // Re-fetch when any sync elsewhere broadcasts a change, so this indicator never shows a
+  // stale pre-sync state after a sync happened in another component.
+  useEffect(() => {
+    const onChanged = (): void => refresh()
+    window.addEventListener(VAULT_STATUS_CHANGED_EVENT, onChanged)
+    return () => window.removeEventListener(VAULT_STATUS_CHANGED_EVENT, onChanged)
   }, [refresh])
 
   return { state, lastSyncedAt, loading, refresh }

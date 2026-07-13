@@ -21,6 +21,7 @@ import type {
 } from '@shared/github-import'
 import type { SessionMetadata } from '@shared/session-metadata'
 import { applyProjectAlias, applySessionAlias, emptyMetadata } from '@shared/session-metadata'
+import { notifyVaultStatusChanged } from './use-vault-status'
 
 const SESSION_POLL_INTERVAL_MS = 60_000
 
@@ -287,7 +288,11 @@ export function useProjectSessionBrowserState({
     async (request: Omit<GitHubContextSyncRequest, 'platform'>): Promise<GitHubContextSyncResult> => {
       const sync = window.dashboard?.github?.syncProjectContext
       if (!sync) return { ok: false, error: 'Context vault API unavailable' }
-      return sync({ ...request, platform })
+      const result = await sync({ ...request, platform })
+      // Let every mounted vault indicator (sidebar pill, manager modal) re-fetch so none
+      // keeps showing a pre-sync state after this succeeds.
+      if (result.ok) notifyVaultStatusChanged()
+      return result
     },
     [platform]
   )
