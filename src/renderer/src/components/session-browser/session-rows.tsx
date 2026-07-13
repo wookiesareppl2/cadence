@@ -138,7 +138,7 @@ function RowActions({
             type="button"
             className="row-action danger"
             aria-label={`Confirm delete ${label}`}
-            title="Move to Recycle Bin"
+            title="Delete"
             onClick={async () => {
               setConfirming(false)
               const ok = await onDelete()

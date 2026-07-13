@@ -132,7 +132,7 @@ const TOPIC_DEFINITIONS: TopicDefinition[] = [
     title: 'Usage Notification Improvements',
     patterns: [
       /\busage\s+(?:alerts?|notifications?|notices?|popups?|pop ups?)\b/i,
-      /\b(?:claude|codex)\s+usage\b.*\b(?:alerts?|notifications?|notices?|popups?|pop ups?|limits?)\b/i,
+      /\b(?:claude|codex|opencode)\s+usage\b.*\b(?:alerts?|notifications?|notices?|popups?|pop ups?|limits?)\b/i,
       /\busage\b.*\b(?:nearing|limits?|thresholds?|windows?|resets?)\b/i,
       /\bnearing\s+(?:its|the)?\s*(?:usage\s+)?limit\b/i
     ]
@@ -143,7 +143,7 @@ const TOPIC_DEFINITIONS: TopicDefinition[] = [
     title: 'Usage Display Improvements',
     patterns: [
       /\busage\s+(?:bars?|display|meters?|cards?|panels?|polling|api)\b/i,
-      /\b(?:claude|codex)\s+usage\b/i
+      /\b(?:claude|codex|opencode)\s+usage\b/i
     ]
   },
   {

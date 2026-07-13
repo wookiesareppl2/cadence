@@ -6,6 +6,8 @@ import { join } from 'node:path'
 import { nodeExecutable } from '../node-runtime'
 import type { PlatformId } from '@shared/platform'
 import type { TerminalPlatform, TerminalStartResult } from '@shared/terminal'
+import { PLATFORM_IDS } from '@shared/platform'
+import { getOpenCodeTerminalRuntime, windowsPathToWsl } from '../opencode/opencode-runtime'
 
 type WorkerRequest = {
   requestId?: number
@@ -14,6 +16,7 @@ type WorkerRequest = {
   platform?: TerminalPlatform
   cwd?: string
   wslDistro?: string
+  openCodeRuntime?: { baseUrl: string; password: string }
   data?: string
   cols?: number
   rows?: number
@@ -29,7 +32,7 @@ type PendingRequest = {
   reject: (error: Error) => void
 }
 
-const VALID_PLATFORMS = new Set<PlatformId>(['claude', 'codex'])
+const VALID_PLATFORMS = new Set<PlatformId>(PLATFORM_IDS)
 
 let worker: ChildProcess | null = null
 let nextRequestId = 1
@@ -156,23 +159,38 @@ export async function startTerminal(
   platform: string,
   webContents: WebContents,
   cwd?: string,
-  wslDistro?: string
+  wslDistro?: string,
+  managed = true
 ): Promise<TerminalStartResult> {
   assertTerminalId(terminalId)
   assertPlatform(platform)
   subscribe(webContents)
 
-  const distro = typeof wslDistro === 'string' && wslDistro.trim() ? wslDistro.trim() : undefined
+  let distro = typeof wslDistro === 'string' && wslDistro.trim() ? wslDistro.trim() : undefined
+  let openCodeRuntime: WorkerRequest['openCodeRuntime']
+
+  if (platform === 'opencode' && managed) {
+    const runtime = await getOpenCodeTerminalRuntime()
+    distro = runtime.distro
+    openCodeRuntime = { baseUrl: runtime.baseUrl, password: runtime.password }
+  }
 
   let workspaceCwd: string | undefined
   if (typeof cwd === 'string' && cwd.trim()) {
     // A WSL cwd is a POSIX path that won't exist on the Windows side; let
     // `wsl --cd` validate it. Only existence-check native Windows folders.
     if (!distro && !existsSync(cwd)) throw new Error(`Workspace folder not found: ${cwd}`)
-    workspaceCwd = cwd
+    workspaceCwd = platform === 'opencode' && managed ? windowsPathToWsl(cwd) : cwd
   }
 
-  return sendWorkerRequest({ type: 'start', terminalId, platform, cwd: workspaceCwd, wslDistro: distro })
+  return sendWorkerRequest({
+    type: 'start',
+    terminalId,
+    platform,
+    cwd: workspaceCwd,
+    wslDistro: distro,
+    openCodeRuntime
+  })
 }
 
 // A generous upper bound that still guards against a pathological multi-megabyte
@@ -206,7 +224,10 @@ export function closeTerminal(terminalId: string): void {
 }
 
 export function closeAllTerminals(): void {
-  worker?.send?.({ type: 'closeAll' } satisfies WorkerRequest)
-  worker?.kill()
+  const current = worker
   worker = null
+  if (!current?.connected) return
+  current.send?.({ type: 'closeAll' } satisfies WorkerRequest, () => {
+    if (current.connected) current.disconnect()
+  })
 }

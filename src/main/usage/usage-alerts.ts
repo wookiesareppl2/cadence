@@ -1,6 +1,6 @@
 import { Notification } from 'electron'
 import type { UsageWindow } from '@shared/claude-plan-usage'
-import type { PlatformId } from '@shared/platform'
+import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
 
 // Usage tracking is the app's primary purpose; these alerts make the data
 // actionable by warning before a limit is actually hit. A single notification
@@ -17,7 +17,7 @@ export function newlyCrossedThresholds(pct: number, alreadyFired: ReadonlySet<nu
 type WindowKey = '5h' | '7d'
 type WindowState = { fired: Set<number> }
 
-// At most 4 entries (2 platforms x 2 windows). Reset timestamps can drift on
+// At most 6 entries (3 platforms x 2 windows). Reset timestamps can drift on
 // rolling usage windows, so notification state is re-armed by utilization
 // dropping below the first alert tier rather than by exact resetsAt changes.
 const windowStates = new Map<string, WindowState>()
@@ -38,7 +38,7 @@ function showNotification(
   resetsAt: string | null
 ): void {
   if (!Notification.isSupported()) return
-  const name = platform === 'claude' ? 'Claude' : 'Codex'
+  const name = PLATFORM_CONFIG[platform].shortLabel
   const lead = threshold >= 95 ? 'Nearly at your limit.' : 'Usage is getting high.'
   new Notification({
     title: `${name} ${windowLabel} usage at ${pct}%`,

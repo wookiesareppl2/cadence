@@ -11,6 +11,8 @@ import {
 import { getSessionOrigins, type SessionOriginRoot } from './session-origins'
 import { clearProjectAlias, clearSessionAlias } from './session-metadata-service'
 import { removeWorkspace } from '../workspaces/workspace-service'
+import { deleteOpenCodeProject, deleteOpenCodeSession } from '../opencode/opencode-session-service'
+import { invalidateOpenCodeUsage } from '../opencode/opencode-usage-service'
 
 export type DeleteResult = { trashed: number }
 
@@ -179,6 +181,12 @@ async function codexProjectFiles(targetProjectId: string): Promise<string[]> {
 }
 
 export async function deleteSession(platform: PlatformId, sessionId: string): Promise<DeleteResult> {
+  if (platform === 'opencode') {
+    const result = await deleteOpenCodeSession(sessionId)
+    invalidateOpenCodeUsage()
+    await clearSessionAlias(platform, sessionId)
+    return result
+  }
   const files = platform === 'claude' ? await claudeSessionFiles(sessionId) : await codexSessionFiles(sessionId)
   const trashed = await trashAll(files)
   await clearSessionAlias(platform, sessionId)
@@ -186,9 +194,15 @@ export async function deleteSession(platform: PlatformId, sessionId: string): Pr
 }
 
 export async function deleteProject(platform: PlatformId, targetProjectId: string): Promise<DeleteResult> {
-  const targets =
-    platform === 'claude' ? await claudeProjectDirs(targetProjectId) : await codexProjectFiles(targetProjectId)
-  const trashed = await trashAll(targets)
+  let trashed: number
+  if (platform === 'opencode') {
+    trashed = (await deleteOpenCodeProject(targetProjectId)).trashed
+    invalidateOpenCodeUsage()
+  } else {
+    const targets =
+      platform === 'claude' ? await claudeProjectDirs(targetProjectId) : await codexProjectFiles(targetProjectId)
+    trashed = await trashAll(targets)
+  }
 
   await clearProjectAlias(targetProjectId)
   // A projectId is `<platform>:<workspace-id>`; strip the platform prefix to get

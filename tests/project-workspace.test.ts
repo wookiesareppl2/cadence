@@ -58,16 +58,19 @@ describe('sanitizeProjectWorkspace', () => {
 })
 
 describe('projectWorkspaceKey', () => {
-  it('drops the platform prefix so Claude and Codex share one key per directory', () => {
+  it('drops the platform prefix so all providers share one key per directory', () => {
     expect(projectWorkspaceKey('claude:c:\\projects\\app')).toBe('c:\\projects\\app')
     expect(projectWorkspaceKey('codex:c:\\projects\\app')).toBe('c:\\projects\\app')
-    // Both AI models for the same folder map to the same key.
+    expect(projectWorkspaceKey('opencode:c:\\projects\\app')).toBe('c:\\projects\\app')
+    // Every provider for the same folder maps to the same key.
     expect(projectWorkspaceKey('claude:c:\\projects\\app')).toBe(projectWorkspaceKey('codex:c:\\projects\\app'))
+    expect(projectWorkspaceKey('codex:c:\\projects\\app')).toBe(projectWorkspaceKey('opencode:c:\\projects\\app'))
   })
 
   it('keeps the WSL origin namespace (only the leading platform is stripped)', () => {
     expect(projectWorkspaceKey('claude:wsl:Ubuntu:/home/user/app')).toBe('wsl:Ubuntu:/home/user/app')
     expect(projectWorkspaceKey('codex:wsl:Ubuntu:/home/user/app')).toBe('wsl:Ubuntu:/home/user/app')
+    expect(projectWorkspaceKey('opencode:wsl:Ubuntu:/home/user/app')).toBe('wsl:Ubuntu:/home/user/app')
   })
 
   it('passes through ids without a platform prefix unchanged', () => {

@@ -12,6 +12,7 @@ import {
 } from './session-title-generation-service'
 import { getSessionOrigins, toSessionOrigin, type SessionOriginRoot } from './session-origins'
 import { canonicalProjectPath, stripAgentMetadataDir } from '../projects/project-identity'
+import { getOpenCodeSessionHistory } from '../opencode/opencode-session-service'
 
 type ClaudeSessionDraft = {
   id: string
@@ -1059,5 +1060,7 @@ async function getCodexSessionHistory(sessionId: string): Promise<AssistantSessi
 }
 
 export async function getSessionHistory(platform: PlatformId, sessionId: string): Promise<AssistantSessionHistory> {
-  return platform === 'claude' ? getClaudeSessionHistory(sessionId) : getCodexSessionHistory(sessionId)
+  if (platform === 'claude') return getClaudeSessionHistory(sessionId)
+  if (platform === 'codex') return getCodexSessionHistory(sessionId)
+  return getOpenCodeSessionHistory(sessionId)
 }

@@ -7,6 +7,7 @@ import type { FileRequest } from '@shared/project-files'
 import { findFilePathCandidates, offsetToCell } from '@shared/terminal-links'
 import { backgroundTerminalSessions, restorableTabs } from '@shared/terminal'
 import type { TerminalBackgroundLocation, TerminalPlatform, TerminalStartResult, TerminalTab } from '@shared/terminal'
+import { PLATFORM_CONFIG } from '@shared/platform'
 
 export type { TerminalTab } from '@shared/terminal'
 
@@ -353,7 +354,7 @@ export const TerminalDeck = memo(function TerminalDeck({
     <section className="panel terminal-panel" aria-label={`${platform} terminals`}>
       <div className="panel-header terminal-deck-bar">
         <div className="terminal-deck-heading">
-          <h1>{platform === 'claude' ? 'Claude Terminals' : 'Codex Terminals'}</h1>
+          <h1>{PLATFORM_CONFIG[platform].label} Terminals</h1>
           <span>{tabs.length === 1 ? '1 terminal' : `${tabs.length} terminals`}</span>
           {backgroundNote ? (
             <button
@@ -468,7 +469,8 @@ export function TerminalPane({
   title,
   onClose,
   onOpenFile,
-  initialInput
+  initialInput,
+  managed = true
 }: {
   terminalId: string
   platform: TerminalPlatform
@@ -481,6 +483,8 @@ export function TerminalPane({
   // install / sign-in command this way). Sent only on a fresh start, never on a
   // reconnect that replays existing scrollback.
   initialInput?: string
+  // Setup terminals must run the real CLI instead of attaching to Cadence's server.
+  managed?: boolean
 }): JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -559,6 +563,7 @@ export function TerminalPane({
 
   useEffect(() => {
     if (!hostRef.current) return
+    let disposed = false
 
     const terminal = new Terminal({
       allowProposedApi: false,
@@ -570,6 +575,25 @@ export function TerminalPane({
       fontFamily: '"Cascadia Code", "Cascadia Mono", "JetBrains Mono", Consolas, monospace',
       fontSize: 12.5,
       lineHeight: 1.35,
+      linkHandler: {
+        activate: (_event, url) => {
+          const activeTerminal = terminalRef.current
+          activeTerminal?.blur()
+          void window.dashboard.externalLinks
+            .open(url)
+            .then((result) => {
+              if (!result.ok && !result.cancelled) {
+                console.error(result.error ?? 'Could not open the external link.')
+              }
+            })
+            .catch((error: unknown) => {
+              console.error(error instanceof Error ? error.message : 'Could not open the external link.')
+            })
+            .finally(() => {
+              if (!disposed && terminalRef.current === activeTerminal) activeTerminal?.focus()
+            })
+        }
+      },
       scrollback: 6000,
       theme: TERMINAL_THEME
     })
@@ -678,8 +702,9 @@ export function TerminalPane({
     observer.observe(hostRef.current)
     window.requestAnimationFrame(fitTerminal)
     window.dashboard.terminal
-      .start(terminalId, platform, cwd ?? undefined, wslDistro ?? undefined)
+      .start(terminalId, platform, cwd ?? undefined, wslDistro ?? undefined, managed)
       .then((result) => {
+        if (disposed) return
         setSession(result)
         if (result.replay) terminal.write(result.replay)
         fitTerminal()
@@ -690,10 +715,12 @@ export function TerminalPane({
         }
       })
       .catch((err: unknown) => {
+        if (disposed) return
         setError(err instanceof Error ? err.message : 'Terminal failed to start')
       })
 
     return () => {
+      disposed = true
       observer.disconnect()
       if (resizeFitTimerRef.current !== null) {
         window.clearTimeout(resizeFitTimerRef.current)
@@ -707,7 +734,7 @@ export function TerminalPane({
       terminalRef.current = null
       fitAddonRef.current = null
     }
-  }, [terminalId, platform, cwd, wslDistro, fitTerminal, scheduleResizeFit, pasteClipboardText, copySelection])
+  }, [terminalId, platform, cwd, wslDistro, managed, fitTerminal, scheduleResizeFit, pasteClipboardText, copySelection])
 
   const shellLabel = session ? `${session.shell} pid ${session.pid}` : 'starting'
 

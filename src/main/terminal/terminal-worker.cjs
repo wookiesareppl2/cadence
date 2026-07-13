@@ -14,6 +14,7 @@ const INPUT_CHUNK_DELAY_MS = 6
 const INPUT_MAX_TOTAL = 2000000
 
 const sessions = new Map()
+let closeAllInProgress = false
 
 // Inline mirror of chunkTerminalInput() in src/shared/terminal.ts (this worker runs
 // as a plain .cjs child process and cannot import that module). Keep them in sync.
@@ -60,13 +61,21 @@ function terminalCwd() {
 // Each terminal is scoped to one CLI (the tab it lives in). To stop the other CLI
 // from being launched there by mistake, every shell starts with a guard that
 // shadows the foreign command name and refuses to run it.
-const FOREIGN_CLI = { claude: 'codex', codex: 'claude' }
-const CLI_LABEL = { claude: 'Claude', codex: 'Codex' }
+const FOREIGN_CLIS = {
+  claude: ['codex', 'opencode'],
+  codex: ['claude', 'opencode'],
+  opencode: ['claude', 'codex']
+}
+const CLI_LABEL = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' }
 
 function guardTarget(platform) {
-  const blocked = FOREIGN_CLI[platform]
-  if (!blocked) return null
-  return { blocked, blockedLabel: CLI_LABEL[blocked], thisLabel: CLI_LABEL[platform] }
+  const blocked = FOREIGN_CLIS[platform]
+  if (!blocked) return []
+  return blocked.map((command) => ({
+    blocked: command,
+    blockedLabel: CLI_LABEL[command],
+    thisLabel: CLI_LABEL[platform]
+  }))
 }
 
 // PowerShell guard: a global function shadowing the foreign CLI (functions take
@@ -74,20 +83,45 @@ function guardTarget(platform) {
 // so no quoting survives node-pty; -NoExit keeps the shell interactive afterwards.
 function powershellGuard(platform) {
   const target = guardTarget(platform)
-  if (!target) return null
-  const script = `function global:${target.blocked} { Write-Host "Blocked: ${target.blockedLabel} cannot be run in the ${target.thisLabel} tab.\`nSwitch to the ${target.blockedLabel} tab." -ForegroundColor Red }`
+  if (target.length === 0) return null
+  const script = target
+    .map(
+      (entry) =>
+        `function global:${entry.blocked} { Write-Host "Blocked: ${entry.blockedLabel} cannot be run in the ${entry.thisLabel} tab.\`nSwitch to the ${entry.blockedLabel} tab." -ForegroundColor Red }`
+    )
+    .join('; ')
   return Buffer.from(script, 'utf16le').toString('base64')
 }
 
 // Bash guard (WSL): define and export a function shadowing the foreign CLI, then
 // exec an interactive login shell that inherits it. Login (-l) preserves the
 // user's PATH/profile so claude/codex still resolve normally.
-function bashGuard(platform) {
-  const target = guardTarget(platform)
-  if (!target) return null
-  const line1 = `Blocked: ${target.blockedLabel} cannot be run in the ${target.thisLabel} tab.`
-  const line2 = `Switch to the ${target.blockedLabel} tab.`
-  return `${target.blocked}() { printf '%s\\n%s\\n' "${line1}" "${line2}"; return 1; }; export -f ${target.blocked}; exec bash -li`
+function shellSingleQuote(value) {
+  return `'${String(value).replace(/'/g, `'"'"'`)}'`
+}
+
+function bashGuard(platform, openCodeRuntime) {
+  const commands = []
+  for (const target of guardTarget(platform)) {
+    const line1 = `Blocked: ${target.blockedLabel} cannot be run in the ${target.thisLabel} tab.`
+    const line2 = `Switch to the ${target.blockedLabel} tab.`
+    commands.push(
+      `${target.blocked}() { printf '%s\\n%s\\n' "${line1}" "${line2}"; return 1; }`,
+      `export -f ${target.blocked}`
+    )
+  }
+  if (platform === 'opencode' && openCodeRuntime) {
+    commands.push(
+      `export OPENCODE_CONFIG_DIR="$HOME/.config/cadence/opencode"`,
+      `export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`,
+      `export OPENCODE_SERVER_PASSWORD=${shellSingleQuote(openCodeRuntime.password)}`,
+      `export CADENCE_OPENCODE_URL=${shellSingleQuote(openCodeRuntime.baseUrl)}`,
+      `opencode() { command opencode attach "$CADENCE_OPENCODE_URL" --dir "$PWD" "$@"; }`,
+      `export -f opencode`
+    )
+  }
+  commands.push('exec bash -li')
+  return commands.join('; ')
 }
 
 function shellCommand(platform) {
@@ -104,16 +138,16 @@ function shellCommand(platform) {
 // path. The pty process itself (wsl.exe) runs from a valid Windows cwd, while
 // `--cd` sets the Linux working directory so `claude`/`codex` start in-project.
 // The guard runs first, then execs the real interactive shell (see bashGuard).
-function wslCommand(distro, posixCwd, platform) {
+function wslCommand(distro, posixCwd, platform, openCodeRuntime) {
   const args = ['-d', distro]
   if (posixCwd) args.push('--cd', posixCwd)
-  const guard = bashGuard(platform)
+  const guard = bashGuard(platform, openCodeRuntime)
   if (guard) args.push('--', 'bash', '-c', guard)
   return { file: 'wsl.exe', args, label: `wsl:${distro}` }
 }
 
 function send(message) {
-  if (process.send) process.send(message)
+  if (process.connected && process.send) process.send(message, () => undefined)
 }
 
 function rememberOutput(session, data) {
@@ -126,10 +160,10 @@ function rememberOutput(session, data) {
   }
 }
 
-function createSession(terminalId, platform, requestedCwd, wslDistro) {
+function createSession(terminalId, platform, requestedCwd, wslDistro, openCodeRuntime) {
   // For WSL, wsl.exe runs from a valid Windows cwd and `--cd` handles the Linux
   // dir; otherwise the native shell starts directly in the requested folder.
-  const shell = wslDistro ? wslCommand(wslDistro, requestedCwd, platform) : shellCommand(platform)
+  const shell = wslDistro ? wslCommand(wslDistro, requestedCwd, platform, openCodeRuntime) : shellCommand(platform)
   const spawnCwd = wslDistro ? terminalCwd() : requestedCwd || terminalCwd()
   const terminal = pty.spawn(shell.file, shell.args, {
     name: 'xterm-256color',
@@ -145,6 +179,7 @@ function createSession(terminalId, platform, requestedCwd, wslDistro) {
     pty: terminal,
     cwd: wslDistro ? requestedCwd || null : spawnCwd,
     wslDistro: wslDistro || null,
+    openCodeRuntime: openCodeRuntime || null,
     shell: shell.label || basename(shell.file),
     buffer: [],
     // Paced-write state: pending input pieces, whether a piece is mid-flight, and
@@ -175,7 +210,7 @@ function createSession(terminalId, platform, requestedCwd, wslDistro) {
   return session
 }
 
-function start(requestId, terminalId, platform, requestedCwd, wslDistro) {
+function start(requestId, terminalId, platform, requestedCwd, wslDistro, openCodeRuntime) {
   if (typeof terminalId !== 'string' || !terminalId) {
     send({ type: 'error', requestId, message: 'Missing terminal id' })
     return
@@ -186,7 +221,7 @@ function start(requestId, terminalId, platform, requestedCwd, wslDistro) {
   // a duplicate. cwd only matters when creating the session for the first time.
   let session = sessions.get(terminalId)
   if (!session) {
-    session = createSession(terminalId, platform, requestedCwd, wslDistro)
+    session = createSession(terminalId, platform, requestedCwd, wslDistro, openCodeRuntime)
   }
 
   send({
@@ -208,12 +243,13 @@ function restart(requestId, terminalId) {
   const platform = existing ? existing.platform : undefined
   const cwd = existing ? existing.cwd : undefined
   const wslDistro = existing ? existing.wslDistro : undefined
+  const openCodeRuntime = existing ? existing.openCodeRuntime : undefined
   if (existing) {
     existing.closed = true
     existing.pty.kill()
     sessions.delete(terminalId)
   }
-  start(requestId, terminalId, platform, cwd, wslDistro)
+  start(requestId, terminalId, platform, cwd, wslDistro, openCodeRuntime)
 }
 
 function write(terminalId, data) {
@@ -249,17 +285,47 @@ function close(terminalId) {
 }
 
 function closeAll() {
-  for (const session of sessions.values()) {
-    session.closed = true
-    session.pty.kill()
-  }
+  if (closeAllInProgress) return
+  closeAllInProgress = true
+  const pending = [...sessions.values()]
   sessions.clear()
+  for (const session of pending) session.closed = true
+
+  const closeNext = () => {
+    const session = pending.shift()
+    if (!session) {
+      closeAllInProgress = false
+      return
+    }
+    let advanced = false
+    const exitSubscription = session.pty.onExit(() => {
+      if (advanced) return
+      advanced = true
+      exitSubscription.dispose()
+      closeNext()
+    })
+    try {
+      session.pty.kill()
+    } catch {
+      exitSubscription.dispose()
+      closeNext()
+    }
+  }
+
+  closeNext()
 }
 
 process.on('message', (message) => {
   try {
     if (message.type === 'start')
-      start(message.requestId, message.terminalId, message.platform, message.cwd, message.wslDistro)
+      start(
+        message.requestId,
+        message.terminalId,
+        message.platform,
+        message.cwd,
+        message.wslDistro,
+        message.openCodeRuntime
+      )
     if (message.type === 'restart') restart(message.requestId, message.terminalId)
     if (message.type === 'input') write(message.terminalId, message.data)
     if (message.type === 'resize') resize(message.terminalId, message.cols, message.rows)
@@ -276,5 +342,4 @@ process.on('message', (message) => {
 
 process.on('disconnect', () => {
   closeAll()
-  process.exit(0)
 })

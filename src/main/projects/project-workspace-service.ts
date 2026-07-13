@@ -22,7 +22,7 @@ function emptyStore(): WorkspaceStore {
 }
 
 // Combine two workspaces that collapsed onto the same directory key (e.g. legacy
-// claude:/codex: entries for the same folder): union the tasks (dedupe by id) and
+// provider-prefixed entries for the same folder): union the tasks (dedupe by id) and
 // join the notes. Re-sanitized to keep within caps.
 function mergeWorkspaces(a: ProjectWorkspace, b: ProjectWorkspace): ProjectWorkspace {
   const seen = new Set(a.tasks.map((task) => task.id))
@@ -46,7 +46,7 @@ function parseStore(raw: string): WorkspaceStore {
     for (const [storedKey, value] of Object.entries(rawProjects as Record<string, unknown>)) {
       const workspace = sanitizeProjectWorkspace(value)
       if (isProjectWorkspaceEmpty(workspace)) continue
-      // Migrate legacy platform-prefixed keys (claude:/codex:) onto the shared
+      // Migrate platform-prefixed keys onto the shared
       // directory key so data created before notes/tasks were unified across AI
       // models still loads. If both models had data for the same folder, merge.
       const key = projectWorkspaceKey(storedKey)

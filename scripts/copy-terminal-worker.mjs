@@ -5,6 +5,7 @@ import { dirname, resolve } from 'node:path'
 // and are copied alongside the compiled main process.
 const workers = [
   ['src/main/terminal/terminal-worker.cjs', 'out/main/terminal-worker.cjs'],
+  ['src/main/opencode/opencode-wsl-worker.cjs', 'out/main/opencode-wsl-worker.cjs'],
   ['src/main/usage/codex-usage-worker.mjs', 'out/main/codex-usage-worker.mjs']
 ]
 

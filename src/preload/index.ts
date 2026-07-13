@@ -50,6 +50,8 @@ import {
 } from '@shared/terminal'
 import type { ClaudeUsageSummary } from '@shared/usage'
 import type { Workspace } from '@shared/workspaces'
+import type { OpenCodeActivitySnapshot, OpenCodePlanUsage } from '@shared/opencode'
+import type { ExternalLinkOpenResult } from '@shared/external-links'
 
 const api = {
   window: {
@@ -69,14 +71,19 @@ const api = {
     readText: (): Promise<string> => ipcRenderer.invoke('clipboard:read'),
     writeText: (text: string): void => ipcRenderer.send('clipboard:write', text)
   },
+  externalLinks: {
+    open: (url: string): Promise<ExternalLinkOpenResult> => ipcRenderer.invoke('external-links:open', url)
+  },
   usage: {
     getClaudeSummary: (): Promise<ClaudeUsageSummary> => ipcRenderer.invoke('usage:claude-summary'),
     getClaudePlanUsage: (): Promise<ClaudePlanUsage> => ipcRenderer.invoke('usage:claude-plan'),
-    getCodexPlanUsage: (): Promise<CodexPlanUsage> => ipcRenderer.invoke('usage:codex-plan')
+    getCodexPlanUsage: (): Promise<CodexPlanUsage> => ipcRenderer.invoke('usage:codex-plan'),
+    getOpenCodePlanUsage: (): Promise<OpenCodePlanUsage> => ipcRenderer.invoke('usage:opencode-plan')
   },
   sessions: {
     getClaudeSessions: (): Promise<AssistantSession[]> => ipcRenderer.invoke('sessions:claude'),
     getCodexSessions: (): Promise<AssistantSession[]> => ipcRenderer.invoke('sessions:codex'),
+    getOpenCodeSessions: (): Promise<AssistantSession[]> => ipcRenderer.invoke('sessions:opencode'),
     getSessionHistory: (platform: PlatformId, sessionId: string): Promise<AssistantSessionHistory> =>
       ipcRenderer.invoke('sessions:history', platform, sessionId),
     getTitleGenerationStatus: (): Promise<SessionTitleGenerationStatus> =>
@@ -107,7 +114,15 @@ const api = {
     getCommand: (platform: PlatformId, action: SetupAction): Promise<SetupCommand> =>
       ipcRenderer.invoke('setup:command', platform, action),
     disconnect: (platform: PlatformId): Promise<{ ok: boolean }> =>
-      ipcRenderer.invoke('setup:disconnect', platform)
+      ipcRenderer.invoke('setup:disconnect', platform),
+    configure: (platform: PlatformId): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('setup:configure', platform),
+    selectOpenCodeDistro: (distro: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('setup:opencode-distro', distro)
+  },
+  openCode: {
+    getActivity: (sessionId: string): Promise<OpenCodeActivitySnapshot> =>
+      ipcRenderer.invoke('opencode:activity', sessionId)
   },
   memory: {
     list: (platform: PlatformId, projectId: string | null): Promise<ProjectMemory> =>
@@ -184,8 +199,10 @@ const api = {
       terminalId: string,
       platform: TerminalPlatform,
       cwd?: string,
-      wslDistro?: string
-    ): Promise<TerminalStartResult> => ipcRenderer.invoke('terminal:start', terminalId, platform, cwd, wslDistro),
+      wslDistro?: string,
+      managed?: boolean
+    ): Promise<TerminalStartResult> =>
+      ipcRenderer.invoke('terminal:start', terminalId, platform, cwd, wslDistro, managed),
     restart: (terminalId: string): Promise<TerminalStartResult> => ipcRenderer.invoke('terminal:restart', terminalId),
     input: (terminalId: string, data: string): void => ipcRenderer.send('terminal:input', terminalId, data),
     resize: (terminalId: string, cols: number, rows: number): void => {

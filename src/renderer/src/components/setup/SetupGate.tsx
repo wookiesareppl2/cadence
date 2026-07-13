@@ -7,7 +7,13 @@ import './setup.css'
 
 const POLL_INTERVAL_MS = 2_500
 
-type RunningAction = { platform: PlatformId; action: SetupAction; command: string; label: string }
+type RunningAction = {
+  platform: PlatformId
+  action: SetupAction
+  command: string
+  label: string
+  wslDistro: string | null
+}
 
 // First-run onboarding. Detects whether each CLI is installed + signed in, and
 // walks the user through installing / connecting whichever they want — running the
@@ -46,8 +52,24 @@ export function SetupGate({
 
   const startAction = useCallback(async (platform: PlatformId, action: SetupAction) => {
     const command = await window.dashboard.setup.getCommand(platform, action)
-    setRunning({ platform, action, command: command.command, label: command.label })
+    setRunning({
+      platform,
+      action,
+      command: command.command,
+      label: command.label,
+      wslDistro: command.wslDistro ?? null
+    })
   }, [])
+
+  const configure = useCallback(async (platform: PlatformId) => {
+    await window.dashboard.setup.configure(platform)
+    await refresh()
+  }, [refresh])
+
+  const selectDistro = useCallback(async (distro: string) => {
+    await window.dashboard.setup.selectOpenCodeDistro(distro)
+    await refresh()
+  }, [refresh])
 
   const stopAction = useCallback(() => {
     setRunning((current) => {
@@ -77,7 +99,37 @@ export function SetupGate({
     return () => document.removeEventListener('keydown', onKey)
   }, [running, stopAction, onDone])
 
-  const anyConnected = Boolean(status && (status.claude.connected || status.codex.connected))
+  const anyConnected = Boolean(
+    status && (status.claude.connected || status.codex.connected || status.opencode.connected)
+  )
+  const runningSetup = running && status ? status[running.platform] : null
+  const runningComplete = Boolean(
+    running &&
+      runningSetup &&
+      (running.action === 'install'
+        ? running.platform === 'opencode' && !running.wslDistro
+          ? runningSetup.wslDistro
+          : runningSetup.installed
+        : running.platform === 'opencode'
+          ? runningSetup.authenticated
+          : runningSetup.connected)
+  )
+  const runnerHint = runningComplete
+    ? running?.action === 'install'
+      ? 'Installation complete. Continue to connect your account.'
+      : 'Account connected. Continue to apply Cadence routing.'
+    : running?.action === 'install'
+      ? running.platform === 'opencode' && !running.wslDistro
+        ? 'Approve the Windows prompt. Reboot if Windows requires it, then launch Ubuntu once.'
+        : 'The next step will appear here when installation is detected.'
+      : running?.platform === 'opencode'
+        ? 'Enter the API key from your OpenCode Go subscription.'
+        : 'Complete the sign-in that opens in your browser.'
+  const runningActionLabel = runningComplete
+    ? running?.action === 'install'
+      ? 'Continue to account'
+      : 'Continue to routing'
+    : 'Close terminal'
 
   return (
     <div className="setup-gate" role="dialog" aria-modal="true" aria-label="Set up Cadence">
@@ -87,7 +139,7 @@ export function SetupGate({
           <p>
             {mode === 'manage'
               ? 'Connect or disconnect your AI coding tools. Cadence detects and sets them up for you.'
-              : 'Connect the AI coding tools you use. Cadence detects and sets them up for you — pick one or both. You can change this later.'}
+              : 'Connect the AI coding tools you use. Cadence detects and sets them up for you. You can change this later.'}
           </p>
         </header>
 
@@ -100,7 +152,9 @@ export function SetupGate({
               busy={running?.platform === platform}
               onInstall={() => startAction(platform, 'install')}
               onConnect={() => startAction(platform, 'connect')}
+              onConfigure={() => configure(platform)}
               onDisconnect={() => disconnect(platform)}
+              onSelectDistro={selectDistro}
             />
           ))}
         </div>
@@ -109,12 +163,8 @@ export function SetupGate({
           <section className="setup-runner" aria-label={running.label}>
             <div className="setup-runner-head">
               <span className="setup-runner-label">{running.label}</span>
-              <span className="setup-runner-hint">
-                {running.action === 'install'
-                  ? 'When it finishes, restart Cadence so it picks up the newly installed tool.'
-                  : 'Complete the sign-in that opens in your browser, then come back here.'}
-              </span>
-              {running.action === 'install' ? (
+              <span className="setup-runner-hint">{runnerHint}</span>
+              {running.action === 'install' && running.platform !== 'opencode' ? (
                 <button
                   type="button"
                   className="setup-runner-close"
@@ -123,9 +173,6 @@ export function SetupGate({
                   Restart Cadence
                 </button>
               ) : null}
-              <button type="button" className="setup-runner-close" onClick={stopAction}>
-                Done
-              </button>
             </div>
             <div className="setup-runner-terminal">
               <TerminalPane
@@ -133,9 +180,10 @@ export function SetupGate({
                 terminalId={terminalIdFor(running)}
                 platform={running.platform}
                 cwd={null}
-                wslDistro={null}
+                wslDistro={running.wslDistro}
                 title={`${PLATFORM_CONFIG[running.platform].label} ${running.action}`}
                 initialInput={running.command}
+                managed={false}
                 onClose={stopAction}
               />
             </div>
@@ -147,7 +195,11 @@ export function SetupGate({
             {anyConnected ? 'You’re connected — you can start using Cadence.' : 'Connect at least one tool to begin.'}
           </span>
           <div className="setup-foot-actions">
-            {mode === 'manage' ? (
+            {running ? (
+              <button type="button" className="setup-continue" onClick={stopAction}>
+                {runningActionLabel}
+              </button>
+            ) : mode === 'manage' ? (
               <button type="button" className="setup-continue" onClick={onDone}>
                 Done
               </button>
@@ -178,14 +230,18 @@ function SetupCard({
   busy,
   onInstall,
   onConnect,
-  onDisconnect
+  onConfigure,
+  onDisconnect,
+  onSelectDistro
 }: {
   platform: PlatformId
   setup: PlatformSetup | null
   busy: boolean
   onInstall: () => void
   onConnect: () => void
+  onConfigure: () => void
   onDisconnect: () => void
+  onSelectDistro: (distro: string) => void
 }): JSX.Element {
   const label = PLATFORM_CONFIG[platform].label
   const state = cardState(setup)
@@ -199,6 +255,15 @@ function SetupCard({
         <span className={`setup-status setup-status-${state.key}`}>{state.status}</span>
       </div>
       {setup?.version ? <p className="setup-card-version">{setup.version}</p> : null}
+      {setup?.detail ? <p className="setup-card-detail">{setup.detail}</p> : null}
+      {platform === 'opencode' && (setup?.availableWslDistros?.length ?? 0) > 1 ? (
+        <label className="setup-distro-field">
+          <span>WSL distribution</span>
+          <select value={setup?.wslDistro ?? ''} onChange={(event) => onSelectDistro(event.target.value)}>
+            {setup?.availableWslDistros?.map((distro) => <option key={distro}>{distro}</option>)}
+          </select>
+        </label>
+      ) : null}
       <div className="setup-card-action">
         {state.key === 'checking' ? (
           <span className="setup-card-checking">Checking…</span>
@@ -228,6 +293,14 @@ function SetupCard({
               </button>
             )}
           </div>
+        ) : state.key === 'needs-config' ? (
+          <button type="button" className="setup-action" disabled={busy} onClick={onConfigure}>
+            Apply Cadence routing
+          </button>
+        ) : state.key === 'needs-update' ? (
+          <button type="button" className="setup-action" disabled={busy} onClick={onInstall}>
+            Update {label}
+          </button>
         ) : state.key === 'not-installed' ? (
           <button type="button" className="setup-action" disabled={busy} onClick={onInstall}>
             Set up {label}
@@ -245,6 +318,10 @@ function SetupCard({
 function cardState(setup: PlatformSetup | null): { key: string; status: string } {
   if (!setup) return { key: 'checking', status: 'Checking' }
   if (setup.connected) return { key: 'connected', status: 'Ready' }
+  if (setup.installed && setup.compatible === false) return { key: 'needs-update', status: 'Update required' }
+  if (setup.installed && setup.authenticated && !setup.configured) {
+    return { key: 'needs-config', status: 'Routing not configured' }
+  }
   if (setup.installed) return { key: 'not-connected', status: 'Installed — not connected' }
   return { key: 'not-installed', status: 'Not set up yet' }
 }

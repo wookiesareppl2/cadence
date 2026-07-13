@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, screen, session, type Rectangle, type WebContentsConsoleMessageEventParams } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, screen, session, shell, type Rectangle, type WebContentsConsoleMessageEventParams } from 'electron'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -59,7 +59,13 @@ import {
 import { searchWorkspace } from './search/search-service'
 import type { SearchQuery } from '@shared/search'
 import { getProjectMemory, readMemoryFile, writeMemoryFile } from './memory/memory-service'
-import { disconnectPlatform, getSetupCommand, getSetupStatus } from './setup/setup-service'
+import {
+  configurePlatform,
+  disconnectPlatform,
+  getSetupCommand,
+  getSetupStatus,
+  selectOpenCodeDistro
+} from './setup/setup-service'
 import type { SetupAction } from '@shared/setup'
 import type {
   GitHubContextStatusRequest,
@@ -77,6 +83,10 @@ import {
   TERMINAL_DETACHED_CLOSED_CHANNEL,
   type TerminalDetachedEvent
 } from '@shared/terminal'
+import { getOpenCodePlanUsage } from './opencode/opencode-usage-service'
+import { getOpenCodeActivity } from './opencode/opencode-session-service'
+import { stopOpenCodeRuntime } from './opencode/opencode-runtime'
+import { normalizeExternalHttpUrl, type ExternalLinkOpenResult } from '@shared/external-links'
 
 let restoreBounds: Rectangle | null = null
 const UI_ZOOM_FACTOR = 1.1
@@ -438,6 +448,38 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     app.quit()
   })
 
+  ipcMain.handle('external-links:open', async (event, value: unknown): Promise<ExternalLinkOpenResult> => {
+    const url = normalizeExternalHttpUrl(value)
+    if (!url) return { ok: false, error: 'Cadence only opens valid HTTP or HTTPS links.' }
+
+    const parsed = new URL(url)
+    const options = {
+      type: 'warning' as const,
+      title: 'Open external link?',
+      message: `Open ${parsed.hostname} in your browser?`,
+      detail: url,
+      buttons: ['Open link', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true
+    }
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const confirmation = parent
+      ? await dialog.showMessageBox(parent, options)
+      : await dialog.showMessageBox(options)
+    if (confirmation.response !== 0) return { ok: false, cancelled: true }
+
+    try {
+      await shell.openExternal(url)
+      return { ok: true }
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Could not open the external link.'
+      }
+    }
+  })
+
   ipcMain.handle('usage:claude-summary', () => refreshClaudeUsageSummary())
   ipcMain.handle('usage:claude-plan', async () => {
     const usage = await getCachedClaudePlanUsage()
@@ -449,8 +491,14 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     notifyUsageThresholds('codex', usage.fiveHour, usage.sevenDay)
     return usage
   })
+  ipcMain.handle('usage:opencode-plan', async () => {
+    const usage = await getOpenCodePlanUsage()
+    notifyUsageThresholds('opencode', usage.fiveHour, usage.sevenDay)
+    return usage
+  })
   ipcMain.handle('sessions:claude', (event) => scanSessions('claude', event.sender))
   ipcMain.handle('sessions:codex', (event) => scanSessions('codex', event.sender))
+  ipcMain.handle('sessions:opencode', (event) => scanSessions('opencode', event.sender))
   ipcMain.handle('sessions:history', (_event, platform: PlatformId, sessionId: string) => getSessionHistory(platform, sessionId))
   ipcMain.handle('sessions:title-generation-status', () => getSessionTitleGenerationStatus())
   ipcMain.handle('sessions:metadata', () => getSessionMetadata())
@@ -487,6 +535,9 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     getSetupCommand(platform, action)
   )
   ipcMain.handle('setup:disconnect', (_event, platform: PlatformId) => disconnectPlatform(platform))
+  ipcMain.handle('setup:configure', (_event, platform: PlatformId) => configurePlatform(platform))
+  ipcMain.handle('setup:opencode-distro', (_event, distro: string) => selectOpenCodeDistro(distro))
+  ipcMain.handle('opencode:activity', (_event, sessionId: string) => getOpenCodeActivity(sessionId))
 
   ipcMain.handle('workspaces:list', () => listWorkspaces())
   ipcMain.handle('workspaces:attach', (event) => attachWorkspace(BrowserWindow.fromWebContents(event.sender)))
@@ -538,8 +589,15 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   ipcMain.handle('project-files:delete', (_event, req: FileRequest) => deleteEntry(req))
   ipcMain.handle('project-files:reveal', (_event, req: FileRequest) => revealInExplorer(req))
   ipcMain.handle('project-files:open', (_event, req: FileRequest) => openExternally(req))
-  ipcMain.handle('terminal:start', (event, terminalId: string, platform: string, cwd?: string, wslDistro?: string) =>
-    startTerminal(terminalId, platform, event.sender, cwd, wslDistro)
+  ipcMain.handle('terminal:start', (
+    event,
+    terminalId: string,
+    platform: string,
+    cwd?: string,
+    wslDistro?: string,
+    managed?: boolean
+  ) =>
+    startTerminal(terminalId, platform, event.sender, cwd, wslDistro, managed)
   )
   ipcMain.handle('terminal:open-detached', (_event, platform: PlatformId) => {
     if (!PLATFORM_CONFIG[platform]) return false
@@ -572,5 +630,6 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   closeAllTerminals()
+  void stopOpenCodeRuntime()
   closeClaudeUsageStore()
 })

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
-import type { PlatformId } from '@shared/platform'
+import { PLATFORM_IDS, type PlatformId } from '@shared/platform'
 import type {
   AssistantProject,
   AssistantSession,
@@ -526,28 +526,29 @@ const sessionsCache = new Map<PlatformId, AssistantSession[]>()
 const prewarmInFlight = new Set<PlatformId>()
 
 function getSessionsLoader(platform: PlatformId): (() => Promise<AssistantSession[]>) | undefined {
-  return platform === 'claude'
-    ? window.dashboard?.sessions?.getClaudeSessions
-    : window.dashboard?.sessions?.getCodexSessions
+  if (platform === 'claude') return window.dashboard?.sessions?.getClaudeSessions
+  if (platform === 'codex') return window.dashboard?.sessions?.getCodexSessions
+  return window.dashboard?.sessions?.getOpenCodeSessions
 }
 
 // Fetch the inactive platform's sessions once in the background to prime its cache,
 // so the very first switch to it is instant too. Best-effort: failures are ignored
 // and the normal per-mount fetch still runs.
 function prewarmOtherPlatform(current: PlatformId): void {
-  const other: PlatformId = current === 'claude' ? 'codex' : 'claude'
-  if (sessionsCache.has(other) || prewarmInFlight.has(other)) return
-  const loader = getSessionsLoader(other)
-  if (!loader) return
-  prewarmInFlight.add(other)
-  loader()
-    .then((list) => {
-      sessionsCache.set(other, list)
-    })
-    .catch(() => {})
-    .finally(() => {
-      prewarmInFlight.delete(other)
-    })
+  for (const other of PLATFORM_IDS) {
+    if (other === current || sessionsCache.has(other) || prewarmInFlight.has(other)) continue
+    const loader = getSessionsLoader(other)
+    if (!loader) continue
+    prewarmInFlight.add(other)
+    loader()
+      .then((list) => {
+        sessionsCache.set(other, list)
+      })
+      .catch(() => {})
+      .finally(() => {
+        prewarmInFlight.delete(other)
+      })
+  }
 }
 
 function usePlatformSessions(platform: PlatformId): {

@@ -19,9 +19,11 @@ import { FileTreePanel, FilePreviewModal, FilePreviewPane } from '@renderer/comp
 import { TitlebarSearch } from '@renderer/components/search/TitlebarSearch'
 import { MemoryView } from '@renderer/components/memory/MemoryView'
 import { SetupGate } from '@renderer/components/setup/SetupGate'
+import { OpenCodeActivityPanel } from '@renderer/components/opencode/OpenCodeActivityPanel'
 import type { ClaudePlanUsage, PlanUsageRefreshMeta, UsageWindow } from '@shared/claude-plan-usage'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
-import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
+import type { OpenCodePlanUsage } from '@shared/opencode'
+import { isPlatformId, PLATFORM_CONFIG, PLATFORM_IDS, type PlatformId } from '@shared/platform'
 import { APP_NAME } from '@shared/brand'
 import type { AssistantSession, SessionOrigin } from '@shared/sessions'
 import { memoryIdFromProjectRelPath } from '@shared/memory'
@@ -75,6 +77,13 @@ const DEFAULT_PANEL_SIZES: PanelSizePreferences = {
     filesPanel: null,
     historySidebar: null,
     workspaceDock: null
+  },
+  opencode: {
+    projectSidebar: null,
+    projectList: null,
+    filesPanel: null,
+    historySidebar: null,
+    workspaceDock: null
   }
 }
 
@@ -118,6 +127,13 @@ function revivePanelSizePreferences(value: PanelSizePreferences): PanelSizePrefe
       filesPanel: normalizePanelSize('filesPanel', value.codex?.filesPanel),
       historySidebar: normalizePanelSize('historySidebar', value.codex?.historySidebar),
       workspaceDock: normalizePanelSize('workspaceDock', value.codex?.workspaceDock)
+    },
+    opencode: {
+      projectSidebar: normalizePanelSize('projectSidebar', value.opencode?.projectSidebar),
+      projectList: normalizePanelSize('projectList', value.opencode?.projectList),
+      filesPanel: normalizePanelSize('filesPanel', value.opencode?.filesPanel),
+      historySidebar: normalizePanelSize('historySidebar', value.opencode?.historySidebar),
+      workspaceDock: normalizePanelSize('workspaceDock', value.opencode?.workspaceDock)
     }
   }
 }
@@ -180,7 +196,7 @@ function getDetachedTerminalPlatform(): PlatformId | null {
   const params = new URLSearchParams(window.location.search)
   if (params.get('view') !== 'terminals') return null
   const platform = params.get('platform')
-  return platform === 'claude' || platform === 'codex' ? platform : null
+  return isPlatformId(platform) ? platform : null
 }
 
 // Split the platform's flat terminal list into the selected session's terminals
@@ -412,7 +428,12 @@ function useSessionScopedTerminals(
     (session: AssistantSession) => {
       if (session.projectId) onSelectedProjectIdChange(session.projectId)
       onSelectedSessionIdChange(session.id)
-      const command = platform === 'claude' ? `claude --resume ${session.id}` : `codex resume ${session.id}`
+      const command =
+        platform === 'claude'
+          ? `claude --resume ${session.id}`
+          : platform === 'codex'
+            ? `codex resume ${session.id}`
+            : `opencode --session ${session.id}`
       const existing = tabs.find((tab) => tab.sessionKey === session.id)
       if (existing) {
         window.dashboard.terminal.input(existing.id, `${command}\r`)
@@ -543,6 +564,8 @@ function useSessionScopedTerminals(
 type PlanUsageDisplay = {
   fiveHour: UsageWindow | null
   sevenDay: UsageWindow | null
+  monthly?: UsageWindow | null
+  isEstimate?: boolean
   fetchedAt: string
   refresh?: PlanUsageRefreshMeta
 }
@@ -554,6 +577,7 @@ type PlanUsageState<T extends PlanUsageDisplay> = {
 type PlanUsageStates = {
   claude: PlanUsageState<ClaudePlanUsage>
   codex: PlanUsageState<CodexPlanUsage>
+  opencode: PlanUsageState<OpenCodePlanUsage>
 }
 type FilePreviewSelection = {
   projectId: string | null
@@ -680,10 +704,10 @@ function DashboardApp(): JSX.Element {
   const [memoryOpen, setMemoryOpen] = useState(false)
   const memorySelectionSequenceRef = useRef(0)
   const [memorySelectionRequest, setMemorySelectionRequest] = useState<MemorySelectionRequest | null>(null)
-  const planUsageStates = usePlanUsagePolling()
+  const planUsageStates = usePlanUsagePolling(connectedPlatforms)
   const [selectedSessionIds, setSelectedSessionIds] = usePersistentState<Record<PlatformId, string | null>>(
     'selection:sessions:v1',
-    { claude: null, codex: null },
+    { claude: null, codex: null, opencode: null },
     undefined,
     // Don't restore a transient pending-session selection from a previous run —
     // start clean. Passed as the load-only transform so a live pending selection
@@ -691,34 +715,36 @@ function DashboardApp(): JSX.Element {
     // must not scrub itself as the selection round-trips main ↔ detached window).
     (value) => ({
       claude: isPendingSessionId(value.claude) ? null : value.claude,
-      codex: isPendingSessionId(value.codex) ? null : value.codex
+      codex: isPendingSessionId(value.codex) ? null : value.codex,
+      opencode: isPendingSessionId(value.opencode) ? null : value.opencode
     })
   )
   const [selectedProjectIds, setSelectedProjectIds] = usePersistentState<Record<PlatformId, string | null>>(
     'selection:projects:v1',
-    { claude: null, codex: null }
+    { claude: null, codex: null, opencode: null }
   )
   // Session details is now a modal popup (not a persistent panel), so this is a
   // transient per-platform open flag, not persisted across launches.
   const [sessionDetailOpen, setSessionDetailOpen] = useState<Record<PlatformId, boolean>>({
     claude: false,
-    codex: false
+    codex: false,
+    opencode: false
   })
   const [historySidebarOpen, setHistorySidebarOpen] = usePersistentState<Record<PlatformId, boolean>>(
     'selection:history-sidebar:v1',
-    { claude: false, codex: false }
+    { claude: false, codex: false, opencode: false }
   )
   const [projectSidebarOpen, setProjectSidebarOpen] = usePersistentState<Record<PlatformId, boolean>>(
     'selection:project-sidebar:v1',
-    { claude: true, codex: true }
+    { claude: true, codex: true, opencode: true }
   )
   const [workspaceDockOpen, setWorkspaceDockOpen] = usePersistentState<Record<PlatformId, boolean>>(
     'selection:workspace-dock:v1',
-    { claude: false, codex: false }
+    { claude: false, codex: false, opencode: false }
   )
   const [filesPanelOpen, setFilesPanelOpen] = usePersistentState<Record<PlatformId, boolean>>(
     'selection:files-panel:v1',
-    { claude: false, codex: false }
+    { claude: false, codex: false, opencode: false }
   )
   const [panelSizes, setPanelSizes] = usePersistentState<PanelSizePreferences>(
     'selection:panel-sizes:v1',
@@ -727,15 +753,17 @@ function DashboardApp(): JSX.Element {
   )
   const [terminalDetached, setTerminalDetached] = useState<Record<PlatformId, boolean>>({
     claude: false,
-    codex: false
+    codex: false,
+    opencode: false
   })
   const [previewFollowEdits, setPreviewFollowEdits] = usePersistentState<Record<PlatformId, boolean>>(
     'selection:file-preview-follow-edits:v1',
-    { claude: true, codex: true }
+    { claude: true, codex: true, opencode: true }
   )
   const [filePreviewSelections, setFilePreviewSelections] = useState<Record<PlatformId, FilePreviewSelection | null>>({
     claude: null,
-    codex: null
+    codex: null,
+    opencode: null
   })
   const activePlatform = PLATFORM_CONFIG[platform]
 
@@ -851,53 +879,57 @@ function DashboardApp(): JSX.Element {
     )
   }, [])
 
-  const selectCodexSession = useCallback((sessionId: string | null) => {
-    setSelectedSessionIds((current) => (current.codex === sessionId ? current : { ...current, codex: sessionId }))
-  }, [])
+  const selectProviderSession = useCallback((sessionId: string | null) => {
+    setSelectedSessionIds((current) =>
+      current[platform] === sessionId ? current : { ...current, [platform]: sessionId }
+    )
+  }, [platform, setSelectedSessionIds])
 
-  const selectCodexProject = useCallback((projectId: string | null) => {
-    setSelectedProjectIds((current) => (current.codex === projectId ? current : { ...current, codex: projectId }))
-  }, [])
+  const selectProviderProject = useCallback((projectId: string | null) => {
+    setSelectedProjectIds((current) =>
+      current[platform] === projectId ? current : { ...current, [platform]: projectId }
+    )
+  }, [platform, setSelectedProjectIds])
 
   const toggleClaudeSessionDetail = useCallback(() => {
     setSessionDetailOpen((current) => ({ ...current, claude: !current.claude }))
   }, [setSessionDetailOpen])
 
-  const toggleCodexSessionDetail = useCallback(() => {
-    setSessionDetailOpen((current) => ({ ...current, codex: !current.codex }))
-  }, [setSessionDetailOpen])
+  const toggleProviderSessionDetail = useCallback(() => {
+    setSessionDetailOpen((current) => ({ ...current, [platform]: !current[platform] }))
+  }, [platform, setSessionDetailOpen])
 
   const toggleClaudeHistorySidebar = useCallback(() => {
     setHistorySidebarOpen((current) => ({ ...current, claude: !current.claude }))
   }, [setHistorySidebarOpen])
 
-  const toggleCodexHistorySidebar = useCallback(() => {
-    setHistorySidebarOpen((current) => ({ ...current, codex: !current.codex }))
-  }, [setHistorySidebarOpen])
+  const toggleProviderHistorySidebar = useCallback(() => {
+    setHistorySidebarOpen((current) => ({ ...current, [platform]: !current[platform] }))
+  }, [platform, setHistorySidebarOpen])
 
   const toggleClaudeProjectSidebar = useCallback(() => {
     setProjectSidebarOpen((current) => ({ ...current, claude: !current.claude }))
   }, [setProjectSidebarOpen])
 
-  const toggleCodexProjectSidebar = useCallback(() => {
-    setProjectSidebarOpen((current) => ({ ...current, codex: !current.codex }))
-  }, [setProjectSidebarOpen])
+  const toggleProviderProjectSidebar = useCallback(() => {
+    setProjectSidebarOpen((current) => ({ ...current, [platform]: !current[platform] }))
+  }, [platform, setProjectSidebarOpen])
 
   const toggleClaudeWorkspaceDock = useCallback(() => {
     setWorkspaceDockOpen((current) => ({ ...current, claude: !current.claude }))
   }, [setWorkspaceDockOpen])
 
-  const toggleCodexWorkspaceDock = useCallback(() => {
-    setWorkspaceDockOpen((current) => ({ ...current, codex: !current.codex }))
-  }, [setWorkspaceDockOpen])
+  const toggleProviderWorkspaceDock = useCallback(() => {
+    setWorkspaceDockOpen((current) => ({ ...current, [platform]: !current[platform] }))
+  }, [platform, setWorkspaceDockOpen])
 
   const toggleClaudeFilesPanel = useCallback(() => {
     setFilesPanelOpen((current) => ({ ...current, claude: !current.claude }))
   }, [setFilesPanelOpen])
 
-  const toggleCodexFilesPanel = useCallback(() => {
-    setFilesPanelOpen((current) => ({ ...current, codex: !current.codex }))
-  }, [setFilesPanelOpen])
+  const toggleProviderFilesPanel = useCallback(() => {
+    setFilesPanelOpen((current) => ({ ...current, [platform]: !current[platform] }))
+  }, [platform, setFilesPanelOpen])
 
   const setPanelSize = useCallback(
     (targetPlatform: PlatformId, key: PanelSizeKey, size: number) => {
@@ -1074,38 +1106,39 @@ function DashboardApp(): JSX.Element {
           onAttachTerminals={() => attachTerminals('claude')}
         />
       ) : (
-        <CodexWorkspace
+        <ProviderWorkspace
+          platform={platform}
           onReady={handleWorkspaceReady}
-          usageState={planUsageStates.codex}
-          selectedProjectId={selectedProjectIds.codex}
-          selectedSessionId={selectedSessionIds.codex}
-          sessionDetailOpen={sessionDetailOpen.codex}
-          projectSidebarOpen={projectSidebarOpen.codex}
-          historySidebarOpen={historySidebarOpen.codex}
-          workspaceDockOpen={workspaceDockOpen.codex}
-          filesPanelOpen={filesPanelOpen.codex}
-          panelSizes={panelSizes.codex}
-          terminalsDetached={terminalDetached.codex}
-          followEdits={previewFollowEdits.codex}
-          previewSelection={filePreviewSelections.codex}
-          onSelectedProjectIdChange={selectCodexProject}
-          onSelectedSessionIdChange={selectCodexSession}
-          onToggleSessionDetail={toggleCodexSessionDetail}
-          onToggleProjectSidebar={toggleCodexProjectSidebar}
-          onToggleHistorySidebar={toggleCodexHistorySidebar}
-          onToggleWorkspaceDock={toggleCodexWorkspaceDock}
-          onToggleFilesPanel={toggleCodexFilesPanel}
-          onPanelResize={(key, size) => setPanelSize('codex', key, size)}
+          usageState={planUsageStates[platform]}
+          selectedProjectId={selectedProjectIds[platform]}
+          selectedSessionId={selectedSessionIds[platform]}
+          sessionDetailOpen={sessionDetailOpen[platform]}
+          projectSidebarOpen={projectSidebarOpen[platform]}
+          historySidebarOpen={historySidebarOpen[platform]}
+          workspaceDockOpen={workspaceDockOpen[platform]}
+          filesPanelOpen={filesPanelOpen[platform]}
+          panelSizes={panelSizes[platform]}
+          terminalsDetached={terminalDetached[platform]}
+          followEdits={previewFollowEdits[platform]}
+          previewSelection={filePreviewSelections[platform]}
+          onSelectedProjectIdChange={selectProviderProject}
+          onSelectedSessionIdChange={selectProviderSession}
+          onToggleSessionDetail={toggleProviderSessionDetail}
+          onToggleProjectSidebar={toggleProviderProjectSidebar}
+          onToggleHistorySidebar={toggleProviderHistorySidebar}
+          onToggleWorkspaceDock={toggleProviderWorkspaceDock}
+          onToggleFilesPanel={toggleProviderFilesPanel}
+          onPanelResize={(key, size) => setPanelSize(platform, key, size)}
           onPreviewFile={(selection) =>
-            setFilePreviewSelections((current) => ({ ...current, codex: selection }))
+            setFilePreviewSelections((current) => ({ ...current, [platform]: selection }))
           }
           onOpenTerminalFile={openTerminalFile}
           onToggleFollowEdits={() =>
-            setPreviewFollowEdits((current) => ({ ...current, codex: !current.codex }))
+            setPreviewFollowEdits((current) => ({ ...current, [platform]: !current[platform] }))
           }
-          onDetachTerminals={() => detachTerminals('codex')}
-          onOpenDetachedTerminals={() => openDetachedTerminals('codex')}
-          onAttachTerminals={() => attachTerminals('codex')}
+          onDetachTerminals={() => detachTerminals(platform)}
+          onOpenDetachedTerminals={() => openDetachedTerminals(platform)}
+          onAttachTerminals={() => attachTerminals(platform)}
         />
       )}
       {searchPreview ? (
@@ -1125,18 +1158,19 @@ function DetachedTerminalWindow({ platform }: { platform: PlatformId }): JSX.Ele
   const platformConfig = PLATFORM_CONFIG[platform]
   const [selectedSessionIds, setSelectedSessionIds] = usePersistentState<Record<PlatformId, string | null>>(
     'selection:sessions:v1',
-    { claude: null, codex: null },
+    { claude: null, codex: null, opencode: null },
     undefined,
     // Load-only (see the main window's copy): strip a stale pending selection on
     // first mount, but let a live pending selection sync in from the main window.
     (value) => ({
       claude: isPendingSessionId(value.claude) ? null : value.claude,
-      codex: isPendingSessionId(value.codex) ? null : value.codex
+      codex: isPendingSessionId(value.codex) ? null : value.codex,
+      opencode: isPendingSessionId(value.opencode) ? null : value.opencode
     })
   )
   const [selectedProjectIds, setSelectedProjectIds] = usePersistentState<Record<PlatformId, string | null>>(
     'selection:projects:v1',
-    { claude: null, codex: null }
+    { claude: null, codex: null, opencode: null }
   )
   const selectSession = useCallback(
     (sessionId: string | null) => {
@@ -1559,17 +1593,20 @@ function usePersistentState<T extends object>(
   return [value, setValue]
 }
 
-function usePlanUsagePolling(): PlanUsageStates {
+function usePlanUsagePolling(connectedPlatforms: PlatformId[] | null): PlanUsageStates {
   const [states, setStates] = useState<PlanUsageStates>({
     claude: { planUsage: null, planError: null, refreshing: false },
-    codex: { planUsage: null, planError: null, refreshing: false }
+    codex: { planUsage: null, planError: null, refreshing: false },
+    opencode: { planUsage: null, planError: null, refreshing: false }
   })
 
   const fetchPlan = useCallback((platform: PlatformId) => {
-    const loader =
+    const loader: (() => Promise<PlanUsageDisplay>) | undefined =
       platform === 'claude'
         ? window.dashboard?.usage?.getClaudePlanUsage
-        : window.dashboard?.usage?.getCodexPlanUsage
+        : platform === 'codex'
+          ? window.dashboard?.usage?.getCodexPlanUsage
+          : window.dashboard?.usage?.getOpenCodePlanUsage
 
     if (!loader) {
       setStates((current) => ({
@@ -1608,14 +1645,26 @@ function usePlanUsagePolling(): PlanUsageStates {
   }, [])
 
   useEffect(() => {
-    fetchPlan('claude')
-    fetchPlan('codex')
+    if (!connectedPlatforms) return
+
+    const connected = new Set(connectedPlatforms)
+    setStates((current) => {
+      const next = { ...current }
+      for (const platform of PLATFORM_IDS) {
+        if (!connected.has(platform)) {
+          next[platform] = { planUsage: null, planError: null, refreshing: false }
+        }
+      }
+      return next
+    })
+
+    connectedPlatforms.forEach(fetchPlan)
+    if (connectedPlatforms.length === 0) return
     const id = setInterval(() => {
-      fetchPlan('claude')
-      fetchPlan('codex')
+      connectedPlatforms.forEach(fetchPlan)
     }, PLAN_POLL_INTERVAL_MS)
     return () => clearInterval(id)
-  }, [fetchPlan])
+  }, [connectedPlatforms, fetchPlan])
 
   return states
 }
@@ -2105,7 +2154,8 @@ function ClaudeWorkspace({
   )
 }
 
-function CodexWorkspace({
+function ProviderWorkspace({
+  platform,
   onReady,
   usageState,
   selectedProjectId,
@@ -2134,8 +2184,9 @@ function CodexWorkspace({
   onOpenDetachedTerminals,
   onAttachTerminals
 }: {
+  platform: PlatformId
   onReady: () => void
-  usageState: PlanUsageState<CodexPlanUsage>
+  usageState: PlanUsageState<PlanUsageDisplay>
   selectedProjectId: string | null
   selectedSessionId: string | null
   sessionDetailOpen: boolean
@@ -2163,8 +2214,9 @@ function CodexWorkspace({
   onAttachTerminals: () => void
 }): JSX.Element {
   const { planUsage, planError } = usageState
+  const platformConfig = PLATFORM_CONFIG[platform]
   const sessionBrowser = useProjectSessionBrowserState({
-    platform: 'codex',
+    platform,
     selectedProjectId,
     selectedSessionId,
     onSelectedProjectIdChange,
@@ -2190,7 +2242,7 @@ function CodexWorkspace({
     abandonPendingSession,
     renamePendingSession
   } = useSessionScopedTerminals(
-    'codex',
+    platform,
     sessionBrowser,
     selectedSessionId,
     onSelectedProjectIdChange,
@@ -2261,8 +2313,8 @@ function CodexWorkspace({
     <main className="workspace">
       <ProjectSessionSidebar
         title="Projects"
-        ariaLabel="Codex projects"
-        emptyLabel="No Codex projects found"
+        ariaLabel={`${platformConfig.label} projects`}
+        emptyLabel={`No ${platformConfig.label} projects found`}
         browser={sessionBrowser}
         pendingSessions={pendingSessions}
         open={projectSidebarOpen}
@@ -2276,11 +2328,11 @@ function CodexWorkspace({
         onRenamePendingSession={renamePendingSession}
       />
 
-      <section className="content-grid" aria-label="Codex dashboard">
+      <section className="content-grid" aria-label={`${platformConfig.label} dashboard`}>
         <UsageStrip
           planUsage={planUsage}
           planError={planError}
-          loadingLabel="Fetching Codex usage"
+          loadingLabel={`Fetching ${platformConfig.label} usage`}
         />
 
         <div
@@ -2320,7 +2372,7 @@ function CodexWorkspace({
               />
             ) : (
               <TerminalDeck
-                platform="codex"
+                platform={platform}
                 tabs={visibleTabs}
                 defaultCwd={sessionBrowser.selectedProject?.path ?? null}
                 defaultWslDistro={sessionBrowser.selectedProject?.origin?.distro ?? null}
@@ -2336,6 +2388,9 @@ function CodexWorkspace({
                 onDetach={onDetachTerminals}
               />
             )}
+            {platform === 'opencode' ? (
+              <OpenCodeActivityPanel sessionId={newSession ? null : selectedSessionId} />
+            ) : null}
             <ProjectWorkspaceDock
               projectId={sessionBrowser.selectedProject?.id ?? null}
               projectName={sessionBrowser.selectedProject?.name ?? null}
@@ -2401,6 +2456,19 @@ function UsageStrip({
       ) : (
         <UsageBarPlaceholder label="Weekly Usage" message={planError ? 'Waiting for safe retry' : loadingLabel} />
       )}
+      {planUsage && 'monthly' in planUsage ? (
+        planUsage.monthly ? (
+          <UsageBar
+            label="Monthly Estimate"
+            utilization={planUsage.monthly.utilization}
+            resetsAt={planUsage.monthly.resetsAt}
+            refreshLabel={refreshLabel}
+            refreshTitle={refreshTitle}
+          />
+        ) : (
+          <UsageBarPlaceholder label="Monthly Estimate" message={planError ?? loadingLabel} />
+        )
+      ) : null}
     </div>
   )
 }
@@ -2411,7 +2479,7 @@ function usageRefreshLabel(
 ): string {
   if (error) return 'Refresh error'
   if (usage.refresh?.state === 'rate_limited') return 'Rate limited'
-  return `Updated ${formatUsageFetchedAt(usage.fetchedAt)}`
+  return `${usage.isEstimate ? 'Estimated' : 'Updated'} ${formatUsageFetchedAt(usage.fetchedAt)}`
 }
 
 function formatUsageFetchedAt(value: string): string {

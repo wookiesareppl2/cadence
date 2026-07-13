@@ -25,6 +25,7 @@
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",
     "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1",
+    "@opencode-ai/sdk": "^1.17.18",
     "@tiptap/pm": "^3.26.1",
     "@tiptap/react": "^3.26.1",
     "@tiptap/starter-kit": "^3.26.1",

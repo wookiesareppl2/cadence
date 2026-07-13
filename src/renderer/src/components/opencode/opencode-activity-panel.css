@@ -1,0 +1,133 @@
+.opencode-activity {
+  flex: 0 0 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.opencode-activity-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  cursor: pointer;
+  text-align: left;
+}
+
+.opencode-activity-header[aria-expanded='false']:hover {
+  background: var(--surface-2);
+}
+
+.opencode-activity-header:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.opencode-activity-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.opencode-activity-summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.opencode-activity-chevron {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 15px;
+}
+
+.opencode-activity-header:hover .opencode-activity-chevron {
+  color: var(--text-1);
+}
+
+.opencode-activity-body {
+  max-height: 148px;
+  padding: 0 12px 10px;
+  overflow: auto;
+}
+
+.opencode-activity-empty,
+.opencode-activity-error {
+  display: block;
+  padding: 8px 0;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.opencode-activity-error {
+  color: var(--caution);
+}
+
+.opencode-activity-jobs {
+  display: grid;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.opencode-activity-job {
+  display: grid;
+  grid-template-columns: 8px minmax(72px, auto) minmax(120px, 1fr) minmax(110px, auto) 52px;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 11px;
+}
+
+.opencode-activity-status {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.opencode-activity-status[data-status='busy'] {
+  background: var(--accent);
+}
+
+.opencode-activity-status[data-status='retry'] {
+  background: var(--caution);
+}
+
+.opencode-activity-agent,
+.opencode-activity-model,
+.opencode-activity-cost {
+  font-family: var(--font-mono);
+}
+
+.opencode-activity-agent {
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.opencode-activity-job-title,
+.opencode-activity-model {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.opencode-activity-job-title {
+  color: var(--text-2);
+}
+
+.opencode-activity-model,
+.opencode-activity-cost {
+  color: var(--text-3);
+}
+
+.opencode-activity-cost {
+  text-align: right;
+}
