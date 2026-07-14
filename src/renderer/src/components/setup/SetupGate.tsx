@@ -21,23 +21,32 @@ type RunningAction = {
 // can be entered once at least one platform is connected (or skipped entirely).
 export function SetupGate({
   onDone,
-  mode = 'onboarding'
+  mode = 'onboarding',
+  initialStatus = null,
+  onStatusChange
 }: {
   onDone: () => void
   // 'onboarding' = first-run gate (Skip / Continue). 'manage' = re-opened from the
   // titlebar to connect or disconnect tools later (single Done button).
   mode?: 'onboarding' | 'manage'
+  initialStatus?: SetupStatus | null
+  onStatusChange?: (status: SetupStatus) => void
 }): JSX.Element {
   const [status, setStatus] = useState<SetupStatus | null>(null)
   const [running, setRunning] = useState<RunningAction | null>(null)
+  const [configuring, setConfiguring] = useState<PlatformId | null>(null)
+  const [operationError, setOperationError] = useState<string | null>(null)
+  const displayedStatus = status ?? initialStatus
 
   const refresh = useCallback(async () => {
     try {
-      setStatus(await window.dashboard.setup.getStatus())
+      const next = await window.dashboard.setup.getStatus()
+      setStatus(next)
+      onStatusChange?.(next)
     } catch {
       // Leave the last known status; the next poll retries.
     }
-  }, [])
+  }, [onStatusChange])
 
   useEffect(() => {
     refresh()
@@ -51,19 +60,33 @@ export function SetupGate({
   }, [refresh])
 
   const startAction = useCallback(async (platform: PlatformId, action: SetupAction) => {
-    const command = await window.dashboard.setup.getCommand(platform, action)
-    setRunning({
-      platform,
-      action,
-      command: command.command,
-      label: command.label,
-      wslDistro: command.wslDistro ?? null
-    })
+    setOperationError(null)
+    try {
+      const command = await window.dashboard.setup.getCommand(platform, action)
+      setRunning({
+        platform,
+        action,
+        command: command.command,
+        label: command.label,
+        wslDistro: command.wslDistro ?? null
+      })
+    } catch (error) {
+      setOperationError(setupErrorMessage(error))
+    }
   }, [])
 
   const configure = useCallback(async (platform: PlatformId) => {
-    await window.dashboard.setup.configure(platform)
-    await refresh()
+    setConfiguring(platform)
+    setOperationError(null)
+    try {
+      const result = await window.dashboard.setup.configure(platform)
+      if (!result.ok) throw new Error('Cadence could not apply the routing configuration.')
+    } catch (error) {
+      setOperationError(setupErrorMessage(error))
+    } finally {
+      setConfiguring(null)
+      await refresh()
+    }
   }, [refresh])
 
   const selectDistro = useCallback(async (distro: string) => {
@@ -100,9 +123,10 @@ export function SetupGate({
   }, [running, stopAction, onDone])
 
   const anyConnected = Boolean(
-    status && (status.claude.connected || status.codex.connected || status.opencode.connected)
+    displayedStatus &&
+      (displayedStatus.claude.connected || displayedStatus.codex.connected || displayedStatus.opencode.connected)
   )
-  const runningSetup = running && status ? status[running.platform] : null
+  const runningSetup = running && displayedStatus ? displayedStatus[running.platform] : null
   const runningComplete = Boolean(
     running &&
       runningSetup &&
@@ -116,8 +140,12 @@ export function SetupGate({
   )
   const runnerHint = runningComplete
     ? running?.action === 'install'
-      ? 'Installation complete. Continue to connect your account.'
-      : 'Account connected. Continue to apply Cadence routing.'
+      ? running.platform === 'opencode' && !running.wslDistro
+        ? 'Ubuntu is ready. Continue to install OpenCode.'
+        : 'Installation complete. Connect your account next.'
+      : running?.platform === 'opencode'
+        ? 'API key saved. Apply Cadence routing to finish setup.'
+        : 'Account connected. Finish setup.'
     : running?.action === 'install'
       ? running.platform === 'opencode' && !running.wslDistro
         ? 'Approve the Windows prompt. Reboot if Windows requires it, then launch Ubuntu once.'
@@ -127,9 +155,49 @@ export function SetupGate({
         : 'Complete the sign-in that opens in your browser.'
   const runningActionLabel = runningComplete
     ? running?.action === 'install'
-      ? 'Continue to account'
-      : 'Continue to routing'
+      ? running.platform === 'opencode' && !running.wslDistro
+        ? 'Install OpenCode'
+        : 'Connect account'
+      : running?.platform === 'opencode'
+        ? 'Apply routing'
+        : 'Finish'
     : 'Close terminal'
+
+  const continueRunningAction = useCallback(async (): Promise<void> => {
+    const current = running
+    if (!current) return
+
+    window.dashboard.terminal.close(terminalIdFor(current))
+    setRunning(null)
+    setOperationError(null)
+
+    if (!runningComplete) {
+      await refresh()
+      return
+    }
+
+    if (current.action === 'install') {
+      const nextAction: SetupAction =
+        current.platform === 'opencode' && !current.wslDistro ? 'install' : 'connect'
+      await startAction(current.platform, nextAction)
+      return
+    }
+
+    if (current.platform === 'opencode') {
+      await configure('opencode')
+      return
+    }
+
+    await refresh()
+  }, [configure, refresh, running, runningComplete, startAction])
+
+  const footNote = operationError
+    ? operationError
+    : configuring
+      ? 'Applying Cadence routing...'
+      : anyConnected
+        ? 'You’re connected — you can start using Cadence.'
+        : 'Connect at least one tool to begin.'
 
   return (
     <div className="setup-gate" role="dialog" aria-modal="true" aria-label="Set up Cadence">
@@ -148,8 +216,17 @@ export function SetupGate({
             <SetupCard
               key={platform}
               platform={platform}
-              setup={status?.[platform] ?? null}
-              busy={running?.platform === platform}
+              setup={displayedStatus?.[platform] ?? null}
+              busy={running?.platform === platform || configuring === platform}
+              busyLabel={
+                configuring === platform
+                  ? 'Applying routing...'
+                  : running?.platform === platform
+                    ? runningComplete
+                      ? `Use “${runningActionLabel}” below`
+                      : 'Setup in progress below'
+                    : undefined
+              }
               onInstall={() => startAction(platform, 'install')}
               onConnect={() => startAction(platform, 'connect')}
               onConfigure={() => configure(platform)}
@@ -191,12 +268,16 @@ export function SetupGate({
         ) : null}
 
         <footer className="setup-foot">
-          <span className="setup-foot-note">
-            {anyConnected ? 'You’re connected — you can start using Cadence.' : 'Connect at least one tool to begin.'}
+          <span className={`setup-foot-note${operationError ? ' is-error' : ''}`} role={operationError ? 'alert' : undefined}>
+            {footNote}
           </span>
           <div className="setup-foot-actions">
-            {running ? (
-              <button type="button" className="setup-continue" onClick={stopAction}>
+            {configuring ? (
+              <button type="button" className="setup-continue" disabled>
+                Applying routing...
+              </button>
+            ) : running ? (
+              <button type="button" className="setup-continue" onClick={() => void continueRunningAction()}>
                 {runningActionLabel}
               </button>
             ) : mode === 'manage' ? (
@@ -228,6 +309,7 @@ function SetupCard({
   platform,
   setup,
   busy,
+  busyLabel,
   onInstall,
   onConnect,
   onConfigure,
@@ -237,6 +319,7 @@ function SetupCard({
   platform: PlatformId
   setup: PlatformSetup | null
   busy: boolean
+  busyLabel?: string
   onInstall: () => void
   onConnect: () => void
   onConfigure: () => void
@@ -267,6 +350,8 @@ function SetupCard({
       <div className="setup-card-action">
         {state.key === 'checking' ? (
           <span className="setup-card-checking">Checking…</span>
+        ) : busy ? (
+          <span className="setup-card-checking">{busyLabel ?? 'Working...'}</span>
         ) : state.key === 'connected' ? (
           <div className="setup-card-connected">
             <span className="setup-card-done">✓ Connected</span>
@@ -313,6 +398,10 @@ function SetupCard({
       </div>
     </div>
   )
+}
+
+function setupErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Setup could not be completed.'
 }
 
 function cardState(setup: PlatformSetup | null): { key: string; status: string } {

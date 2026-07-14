@@ -4,6 +4,7 @@ import { applyProjectAlias } from '@shared/session-metadata'
 import { scanSessions } from '../sessions/session-scan'
 import { getSessionMetadata } from '../sessions/session-metadata-service'
 import { listWorkspaces } from '../workspaces/workspace-service'
+import { listProjectCatalog } from './project-catalog-service'
 import type { WebContents } from 'electron'
 
 // A project grouped from its sessions: display name + the folder it lives in
@@ -97,5 +98,16 @@ export async function resolveProjectLocation(
   if (!projectId) return null
   const [sessions, metadata] = await Promise.all([scanSessions(platform, sender), getSessionMetadata()])
   const groups = groupProjects(sessions, metadata.projectAliases)
-  return resolveLocation(projectId, groups, platform, metadata.projectAliases)
+  const direct = await resolveLocation(projectId, groups, platform, metadata.projectAliases)
+  if (direct) return direct
+
+  const entry = (await listProjectCatalog(platform, sender)).find((project) => project.id === projectId)
+  if (!entry) return null
+  return {
+    id: entry.id,
+    name: applyProjectAlias(entry.name, entry.id, metadata.projectAliases),
+    path: entry.path,
+    distro: entry.origin.distro,
+    sessions: []
+  }
 }

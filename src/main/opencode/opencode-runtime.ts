@@ -6,19 +6,26 @@ import { randomBytes } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { OPENCODE_MINIMUM_VERSION, OPENCODE_ROUTING_PROFILE } from '@shared/opencode'
+import {
+  OPENCODE_MINIMUM_VERSION,
+  OPENCODE_ROUTING_PROFILE,
+  OPENCODE_ROUTING_REVISION
+} from '@shared/opencode'
 import {
   runWslCommandViaPty,
   startOpenCodeServerViaPty,
   stopOpenCodeServerViaPty
 } from './opencode-wsl-bridge'
+import { OpenCodeLifecycle } from './opencode-lifecycle'
+import { installManagedOpenCodeMemoryBankWorkflow } from './opencode-memory-bank-workflow'
+import { managedOpenCodeConfigDir } from './opencode-profile-paths'
 
 const execFileAsync = promisify(execFile)
 const COMMAND_TIMEOUT_MS = 10_000
 const START_TIMEOUT_MS = 60_000
 const MANAGED_AGENT_TIMEOUT_MS = 30_000
 const SKIP_DISTRO = /^docker-desktop(-data)?$/i
-const REQUIRED_MANAGED_AGENTS = [
+export const REQUIRED_MANAGED_AGENTS = [
   'orchestrator',
   'oracle',
   'explorer',
@@ -52,6 +59,34 @@ type RunningOpenCode = {
 }
 
 let running: RunningOpenCode | null = null
+const lifecycle = new OpenCodeLifecycle<RunningOpenCode>()
+
+function abortError(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new Error('OpenCode runtime startup stopped')
+}
+
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw abortError(signal)
+}
+
+async function wait(delayMs: number, signal: AbortSignal): Promise<void> {
+  throwIfAborted(signal)
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, delayMs)
+    const onAbort = (): void => {
+      clearTimeout(timer)
+      reject(abortError(signal))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+function requestSignal(signal: AbortSignal, timeoutMs: number): AbortSignal {
+  return AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+}
 
 function versionParts(value: string): [number, number, number] | null {
   const match = value.match(/(?:^|\D)(\d+)\.(\d+)\.(\d+)(?:\D|$)/)
@@ -191,7 +226,7 @@ export async function detectOpenCodeRuntime(): Promise<OpenCodeRuntimeDetection>
         `printf 'home=%s\\n' "$HOME"`,
         `if test -x $HOME/.opencode/bin/opencode; then printf 'version=%s\\n' "$($HOME/.opencode/bin/opencode --version | head -n 1)"; else printf 'version=\\n'; fi`,
         `if test -f "$HOME/.local/share/opencode/auth.json" && grep -q '"opencode-go"' "$HOME/.local/share/opencode/auth.json"; then printf 'connected=yes\\n'; else printf 'connected=no\\n'; fi`,
-        `if test -f "$HOME/.config/cadence/opencode/oh-my-opencode-slim.json" && grep -q ${shellSingleQuote(OPENCODE_ROUTING_PROFILE)} "$HOME/.config/cadence/opencode/oh-my-opencode-slim.json"; then printf 'configured=yes\\n'; else printf 'configured=no\\n'; fi`
+        `if test -f "$HOME/.config/cadence/opencode/oh-my-opencode-slim.json" && grep -q ${shellSingleQuote(OPENCODE_ROUTING_PROFILE)} "$HOME/.config/cadence/opencode/oh-my-opencode-slim.json" && test -f "$HOME/.config/cadence/opencode/cadence-routing-manifest.json" && grep -q ${shellSingleQuote(`"routingRevision": ${OPENCODE_ROUTING_REVISION}`)} "$HOME/.config/cadence/opencode/cadence-routing-manifest.json"; then printf 'configured=yes\\n'; else printf 'configured=no\\n'; fi`
       ].join('; ')
     )
     const fields = new Map(
@@ -252,26 +287,32 @@ function basicAuth(password: string): string {
   return `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`
 }
 
-async function waitForHealth(baseUrl: string, password: string): Promise<void> {
+async function waitForHealth(baseUrl: string, password: string, signal: AbortSignal): Promise<void> {
   const deadline = Date.now() + START_TIMEOUT_MS
   let lastError: unknown
   while (Date.now() < deadline) {
+    throwIfAborted(signal)
     try {
       const response = await fetch(`${baseUrl}/global/health`, {
         headers: { Authorization: basicAuth(password) },
-        signal: AbortSignal.timeout(1_500)
+        signal: requestSignal(signal, 1_500)
       })
       if (response.ok) return
       lastError = new Error(`OpenCode health returned ${response.status}`)
     } catch (error) {
+      throwIfAborted(signal)
       lastError = error
     }
-    await new Promise((resolve) => setTimeout(resolve, 250))
+    await wait(250, signal)
   }
   throw lastError instanceof Error ? lastError : new Error('OpenCode server did not become ready')
 }
 
-async function validateManagedAgents(baseUrl: string, password: string): Promise<void> {
+async function validateManagedAgents(
+  baseUrl: string,
+  password: string,
+  signal: AbortSignal
+): Promise<void> {
   const client = createOpencodeClient({
     baseUrl,
     headers: { Authorization: basicAuth(password) },
@@ -282,6 +323,7 @@ async function validateManagedAgents(baseUrl: string, password: string): Promise
   let lastError: unknown
   let missing = [...REQUIRED_MANAGED_AGENTS]
   while (Date.now() < deadline) {
+    throwIfAborted(signal)
     try {
       const response = await client.app.agents()
       const names = new Set((response.data ?? []).map((agent) => agent.name))
@@ -289,24 +331,30 @@ async function validateManagedAgents(baseUrl: string, password: string): Promise
       if (missing.length === 0) return
       lastError = new Error(`missing ${missing.join(', ')}`)
     } catch (error) {
+      throwIfAborted(signal)
       lastError = error
     }
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    await wait(500, signal)
   }
 
   const detail = lastError instanceof Error ? lastError.message : `missing ${missing.join(', ')}`
   throw new Error(`Cadence OpenCode profile did not load: ${detail}`)
 }
 
-async function ensureOpenCodeRuntime(): Promise<RunningOpenCode> {
+async function startOpenCodeRuntime(signal: AbortSignal): Promise<RunningOpenCode> {
+  throwIfAborted(signal)
   if (running) {
     try {
       const response = await fetch(`${running.baseUrl}/global/health`, {
         headers: { Authorization: basicAuth(running.password) },
-        signal: AbortSignal.timeout(1_500)
+        signal: requestSignal(signal, 1_500)
       })
-      if (response.ok) return running
+      if (response.ok) {
+        throwIfAborted(signal)
+        return running
+      }
     } catch {
+      throwIfAborted(signal)
       // The worker or server exited; clear it and start a fresh managed runtime.
     }
     running = null
@@ -314,14 +362,22 @@ async function ensureOpenCodeRuntime(): Promise<RunningOpenCode> {
   }
 
   const detection = await detectOpenCodeRuntime()
+  throwIfAborted(signal)
   if (!detection.distro) throw new Error(detection.detail ?? 'OpenCode requires a WSL distribution')
   if (!detection.installed) throw new Error(`OpenCode is not installed in ${detection.distro}`)
   if (!detection.compatible) {
     throw new Error(`OpenCode ${OPENCODE_MINIMUM_VERSION} or newer is required`)
   }
   if (!detection.configured) throw new Error('Configure the Cadence OpenCode routing profile first')
+  if (!detection.home) throw new Error(`Unable to resolve the home directory in ${detection.distro}`)
+
+  await installManagedOpenCodeMemoryBankWorkflow(
+    managedOpenCodeConfigDir(detection.distro, detection.home)
+  )
+  throwIfAborted(signal)
 
   const port = await availablePort()
+  throwIfAborted(signal)
   const password = randomBytes(24).toString('hex')
   const baseUrl = `http://127.0.0.1:${port}`
   const command = [
@@ -334,14 +390,20 @@ async function ensureOpenCodeRuntime(): Promise<RunningOpenCode> {
 
   try {
     await startOpenCodeServerViaPty(detection.distro, command)
-    await waitForHealth(baseUrl, password)
-    await validateManagedAgents(baseUrl, password)
+    throwIfAborted(signal)
+    await waitForHealth(baseUrl, password, signal)
+    await validateManagedAgents(baseUrl, password, signal)
+    throwIfAborted(signal)
     running = candidate
     return candidate
   } catch (error) {
-    await stopOpenCodeServerViaPty().catch(() => undefined)
+    if (!signal.aborted) await stopOpenCodeServerViaPty().catch(() => undefined)
     throw error
   }
+}
+
+async function ensureOpenCodeRuntime(): Promise<RunningOpenCode> {
+  return lifecycle.ensure(startOpenCodeRuntime)
 }
 
 export async function getOpenCodeClient(directory?: string): Promise<OpencodeClient> {
@@ -364,8 +426,10 @@ export async function getOpenCodeTerminalRuntime(): Promise<{
 }
 
 export async function stopOpenCodeRuntime(): Promise<void> {
-  running = null
-  await stopOpenCodeServerViaPty()
+  await lifecycle.stop(async () => {
+    running = null
+    await stopOpenCodeServerViaPty()
+  })
 }
 
 export function windowsPathToWsl(path: string): string {

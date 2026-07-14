@@ -4,12 +4,13 @@ import type { AssistantSession } from '@shared/sessions'
 import type { SearchQuery, SearchResultItem, SearchResults } from '@shared/search'
 import { bestScore, buildSnippet, emptyResults, matchScore } from '@shared/search'
 import { isTextLikeProjectFile, MAX_TEXT_PREVIEW_BYTES } from '@shared/project-files'
-import { applySessionAlias } from '@shared/session-metadata'
+import { applyProjectAlias, applySessionAlias } from '@shared/session-metadata'
 import { scanSessions } from '../sessions/session-scan'
 import { getSessionHistory } from '../sessions/session-service'
 import { getSessionMetadata } from '../sessions/session-metadata-service'
 import { listDirectory, readFilePreview } from '../projects/project-files-service'
 import { groupProjects, resolveLocation, type ProjectLocation } from '../projects/project-locator'
+import { listProjectCatalog } from '../projects/project-catalog-service'
 
 // Result/work caps. Project + session matching is in-memory and cheap; the deep
 // (file-content + history-content) pass walks the disk, so it is scoped to one
@@ -172,7 +173,11 @@ export async function searchWorkspace(query: SearchQuery, sender: WebContents): 
   const needle = query.query.trim()
   if (!needle) return emptyResults(query.query)
 
-  const [sessions, metadata] = await Promise.all([scanSessions(query.platform, sender), getSessionMetadata()])
+  const [sessions, metadata, catalog] = await Promise.all([
+    scanSessions(query.platform, sender),
+    getSessionMetadata(),
+    listProjectCatalog(query.platform, sender)
+  ])
   const aliased = sessions.map((session) => applySessionAlias(session, metadata.sessionAliases))
   const groups = groupProjects(aliased, metadata.projectAliases)
 
@@ -184,6 +189,17 @@ export async function searchWorkspace(query: SearchQuery, sender: WebContents): 
       projectMatches.push({
         score,
         item: { kind: 'project', id: group.id, title: group.name, subtitle: group.path, projectId: group.id }
+      })
+    }
+  }
+  for (const entry of catalog) {
+    if (groups.has(entry.id)) continue
+    const name = applyProjectAlias(entry.name, entry.id, metadata.projectAliases)
+    const score = bestScore([name, entry.path], needle)
+    if (score > 0) {
+      projectMatches.push({
+        score,
+        item: { kind: 'project', id: entry.id, title: name, subtitle: entry.path, projectId: entry.id }
       })
     }
   }
@@ -211,7 +227,19 @@ export async function searchWorkspace(query: SearchQuery, sender: WebContents): 
   let history: SearchResultItem[] = []
   let deepTruncated = false
 
-  const target = await resolveLocation(query.projectId, groups, query.platform, metadata.projectAliases)
+  let target = await resolveLocation(query.projectId, groups, query.platform, metadata.projectAliases)
+  if (!target && query.projectId) {
+    const entry = catalog.find((project) => project.id === query.projectId)
+    if (entry) {
+      target = {
+        id: entry.id,
+        name: applyProjectAlias(entry.name, entry.id, metadata.projectAliases),
+        path: entry.path,
+        distro: entry.origin.distro,
+        sessions: []
+      }
+    }
+  }
   if (target) {
     const deadline = Date.now() + DEEP_SEARCH_BUDGET_MS
     const fileResult = await searchFiles(target, needle, deadline)

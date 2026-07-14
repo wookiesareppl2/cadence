@@ -1,20 +1,43 @@
 import { describe, expect, it } from 'vitest'
 import {
   createOpenCodeConfig,
+  createOpenCodeRoutingManifest,
   createSlimConfig,
   OPENCODE_GO_MODELS,
+  OPENCODE_MEMORY_BANK_WORKFLOW_REVISION,
   OPENCODE_ROUTING_PROFILE,
+  OPENCODE_ROUTING_REVISION,
   OPENCODE_SLIM_VERSION
 } from '../src/shared/opencode'
 
 describe('Cadence OpenCode configuration', () => {
-  it('pins the plugin and isolates OpenCode Go as the provider', () => {
+  it('allows compatible Slim auto-updates while isolating OpenCode Go as the provider', () => {
     expect(createOpenCodeConfig()).toMatchObject({
       autoupdate: false,
       default_agent: 'orchestrator',
       enabled_providers: ['opencode-go'],
-      plugin: [`oh-my-opencode-slim@${OPENCODE_SLIM_VERSION}`]
+      plugin: ['oh-my-opencode-slim']
     })
+    expect(createOpenCodeRoutingManifest()).toMatchObject({
+      profile: OPENCODE_ROUTING_PROFILE,
+      routingRevision: OPENCODE_ROUTING_REVISION,
+      memoryBankWorkflowRevision: OPENCODE_MEMORY_BANK_WORKFLOW_REVISION,
+      managedSkills: ['start', 'save'],
+      managedCommands: ['start', 'save'],
+      slimVersion: OPENCODE_SLIM_VERSION,
+      managedBy: 'Cadence'
+    })
+  })
+
+  it('can pin an isolated candidate for transactional major validation', () => {
+    expect(createOpenCodeConfig({ slimVersion: '3.0.0', pinSlimPlugin: true })).toMatchObject({
+      plugin: ['oh-my-opencode-slim@3.0.0']
+    })
+    expect(createSlimConfig({ slimVersion: '3.0.0', autoUpdate: false })).toMatchObject({
+      $schema: 'https://unpkg.com/oh-my-opencode-slim@3.0.0/oh-my-opencode-slim.schema.json',
+      autoUpdate: false
+    })
+    expect(createOpenCodeRoutingManifest('3.0.0')).toMatchObject({ slimVersion: '3.0.0' })
   })
 
   it('uses the approved primary and fallback chain for every role', () => {
@@ -51,12 +74,30 @@ describe('Cadence OpenCode configuration', () => {
     ])
   })
 
-  it('keeps background orchestration on while disabling duplicate companion surfaces', () => {
+  it('keeps background orchestration and compatible updates on while disabling duplicate companion surfaces', () => {
     expect(createSlimConfig()).toMatchObject({
-      autoUpdate: false,
+      autoUpdate: true,
       companion: { enabled: false },
       multiplexer: { type: 'none' },
       fallback: { enabled: true, retry_on_empty: true, runtimeOverride: true }
     })
+  })
+
+  it('does not alias custom agents with invalid human-readable display names', () => {
+    const config = createSlimConfig() as {
+      agents: Record<string, { displayName?: string }>
+      presets: Record<string, Record<string, { displayName?: string }>>
+    }
+    const entries = [
+      ...Object.values(config.agents),
+      ...Object.values(config.presets[OPENCODE_ROUTING_PROFILE])
+    ]
+
+    for (const entry of entries) {
+      if (entry.displayName === undefined) continue
+      expect(entry.displayName).toMatch(/^[a-z][a-z0-9_-]*$/i)
+    }
+    expect(config.agents['quick-fixer']).not.toHaveProperty('displayName')
+    expect(config.agents['deep-fixer']).not.toHaveProperty('displayName')
   })
 })

@@ -219,6 +219,73 @@ vs. `Select a project to open a terminal` when none is picked.
   Do not use xterm's `paste('\n')` helper for either (it normalizes LF to CR and
   submits).
 
+### OpenCode agent panes
+
+- The OpenCode Agent Activity panel has `Activity` and `Live panes` views using the
+  standard segmented-toggle treatment. Activity remains the compact scanning view;
+  Live panes attaches real terminal viewers to OpenCode child sessions.
+- Live panes support `Tiled`, `Rows`, and `Columns` layouts. Tiles have stable minimum
+  dimensions and scroll inside the activity panel so adding an agent never resizes
+  neighbouring terminal controls.
+- Opening a row action shows that agent alone; `Show all` restores every child session.
+  New agents appear automatically while Live panes is selected.
+- Closing or collapsing an agent pane closes only its viewer PTY. It must never cancel,
+  delete, or otherwise change the underlying OpenCode child session.
+- Agent tiles reuse `TerminalPane`, `.terminal-tile`, and `.terminal-action`; do not
+  introduce a second xterm theme or terminal-header pattern for child agents.
+
+### OpenCode Companion
+
+- Companion is an optional Cadence-owned, always-on-top Electron window. Its On/Off
+  control is a labelled binary switch at the right edge of the Agent Activity toolbar;
+  use `role="switch"` with `aria-checked`, a 28x16px track, and a 10px circular thumb.
+- The window is a compact operational surface, not a decorative card: one draggable
+  title band, one project context band, a scrollable agent list, and a footer command.
+  It uses the OpenCode accent and the standard surface, border, text, and status tokens.
+- Each agent row shows status, agent, task title, model, and state. Busy and retry rows
+  sort ahead of idle rows, while all text remains single-line with ellipsis so resizing
+  the window never causes horizontal layout shifts.
+- The close action turns Companion off. Normal Cadence shutdown preserves the enabled
+  state, last OpenCode target, size, and screen position so the window can return on the
+  next launch. Clicking an agent row or `Open in Cadence` focuses that exact project and
+  session in the main window.
+- Companion does not start, stop, or mutate agents. It reads the same activity snapshot
+  as the in-app panel and only controls its own visibility and Cadence focus.
+
+### OpenCode Slim updates
+
+- Major Slim releases surface as a full-width operational band directly below the
+  titlebar. It is not a modal and does not block Claude or Codex work. Use the OpenCode
+  accent for an available/installing update, `--success` after validation, and
+  `--caution` only when validation failed or a Cadence update is required.
+- The band contains one compact title, one single-line detail, and right-aligned actions.
+  `Validate & install` is the only primary command; dismissal uses the standard 15px
+  stroked close icon. During validation the action is replaced by quiet mono progress.
+- Compatible patch/minor releases update in the background and do not create a band.
+  A major is promoted only after the isolated OpenCode configuration registers every
+  Cadence-required agent. A failed candidate is rolled back before the band reports the
+  failure; never ask the user to run the compatibility checks manually.
+- `Cadence update required` means the current Slim version remains active. Persist this
+  result per Cadence app version so the same incompatible major is not offered repeatedly,
+  while a newer Cadence build automatically gets a fresh validation opportunity.
+
+### OpenCode session workflow
+
+- Cadence's isolated OpenCode profile owns one canonical `start` / `save` skill pair and
+  matching `/start` / `/save` commands. Keep them in the managed profile instead of copying
+  them into each project, so Claude Code, Codex, and OpenCode continue to share the same
+  project `.claude/` Memory Bank without duplicate command entries.
+- Each skill uses exactly one synchronous `deep-fixer` task with
+  `run_in_background=false`. The parent supplies only command fidelity and known session
+  facts, then relays the result; every project read, git/port check, pin review, and Memory
+  Bank write stays inside that worker. Fail closed when the worker cannot start.
+- `/start` defaults to targeted high-fidelity loading and accepts `max`. `/save` defaults
+  to an incremental checkpoint and accepts `max`, `full`, or `audit`, with automatic
+  escalation when targeted reads cannot prove safety.
+- Routing setup, profile maintenance, and runtime startup all install or repair these four
+  managed resources. Existing Ready connections therefore gain workflow updates after a
+  Cadence app update without reconnecting or reapplying routing.
+
 ## Context-usage gauge
 
 The selected session shows a **context gauge** (`.context-gauge`) in the History

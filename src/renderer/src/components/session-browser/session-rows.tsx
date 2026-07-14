@@ -113,7 +113,7 @@ function RowActions({
   label: string
   confirmText?: string
   onRename: () => void
-  onDelete: () => Promise<boolean>
+  onDelete?: () => Promise<boolean>
 }): JSX.Element {
   const [confirming, setConfirming] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -131,7 +131,7 @@ function RowActions({
           {error}
         </span>
       ) : null}
-      {confirming ? (
+      {confirming && onDelete ? (
         <div className="row-actions row-confirm" role="group" aria-label={`Confirm delete ${label}`}>
           <span className="row-confirm-label">{confirmText}</span>
           <button
@@ -171,18 +171,20 @@ function RowActions({
           >
             <PencilIcon />
           </button>
-          <button
-            type="button"
-            className="row-action"
-            aria-label={`Delete ${label}`}
-            title={`Delete ${label}`}
-            onClick={() => {
-              setError(null)
-              setConfirming(true)
-            }}
-          >
-            <TrashIcon />
-          </button>
+          {onDelete ? (
+            <button
+              type="button"
+              className="row-action"
+              aria-label={`Delete ${label}`}
+              title={`Delete ${label}`}
+              onClick={() => {
+                setError(null)
+                setConfirming(true)
+              }}
+            >
+              <TrashIcon />
+            </button>
+          ) : null}
         </div>
       )}
     </>
@@ -200,7 +202,7 @@ function ProjectRow({
   isActive: boolean
   onSelect: () => void
   onRename: (name: string | null) => void
-  onDelete: () => Promise<boolean>
+  onDelete?: () => Promise<boolean>
 }): JSX.Element {
   const [editing, setEditing] = useState(false)
   const confirmText =
@@ -239,7 +241,13 @@ function ProjectRow({
               </span>
             ) : null}
             <span>{project.sessionCount === 0 ? 'No sessions yet' : `${project.sessionCount} sessions`}</span>
-            <span>{project.sessionCount === 0 ? 'Attached' : `Updated ${project.age}`}</span>
+            {project.sessionCount === 0 ? (
+              <span className={`project-status-badge ${project.catalogSource}`}>
+                {project.catalogSource === 'attached' ? 'Attached' : 'Available'}
+              </span>
+            ) : (
+              <span>Updated {project.age}</span>
+            )}
           </span>
         </button>
       )}
@@ -343,11 +351,15 @@ export function ProjectList({
           isActive={project.id === selectedProjectId}
           onSelect={() => onSelectProject(project.id)}
           onRename={(name) => onRenameProject(project.id, name)}
-          onDelete={async () => {
-            const result = await onDeleteProject(project.id)
-            // Empty (attached-only) projects detach with nothing trashed.
-            return project.sessionCount === 0 || result.trashed > 0
-          }}
+          onDelete={
+            project.catalogSource === 'provider'
+              ? undefined
+              : async () => {
+                  const result = await onDeleteProject(project.id)
+                  // Empty, manually attached projects detach with nothing trashed.
+                  return project.catalogSource === 'attached' || result.trashed > 0
+                }
+          }
         />
       ))}
     </>

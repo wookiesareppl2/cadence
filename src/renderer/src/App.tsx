@@ -20,6 +20,8 @@ import { TitlebarSearch } from '@renderer/components/search/TitlebarSearch'
 import { MemoryView } from '@renderer/components/memory/MemoryView'
 import { SetupGate } from '@renderer/components/setup/SetupGate'
 import { OpenCodeActivityPanel } from '@renderer/components/opencode/OpenCodeActivityPanel'
+import { OpenCodeCompanionWindow } from '@renderer/components/opencode/OpenCodeCompanionWindow'
+import { OpenCodeSlimUpdateBanner } from '@renderer/components/opencode/OpenCodeSlimUpdateBanner'
 import type { ClaudePlanUsage, PlanUsageRefreshMeta, UsageWindow } from '@shared/claude-plan-usage'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import type { OpenCodePlanUsage } from '@shared/opencode'
@@ -39,8 +41,10 @@ import type {
   ProjectFileWatchRequest
 } from '@shared/project-files'
 import type { SearchResultItem } from '@shared/search'
+import type { SetupStatus } from '@shared/setup'
 
-const PLAN_POLL_INTERVAL_MS = 30_000
+const PLAN_POLL_INTERVAL_MS = 60_000
+const SETUP_STATUS_CACHE_KEY = 'setup:last-status:v1'
 // Splash: keep it on screen long enough to read (no jarring flash on a warm cache),
 // fade out once the active platform's first project scan resolves, and never trap
 // the user if a scan stalls.
@@ -579,6 +583,43 @@ type PlanUsageStates = {
   codex: PlanUsageState<CodexPlanUsage>
   opencode: PlanUsageState<OpenCodePlanUsage>
 }
+
+function isOpenCodeCompanionWindow(): boolean {
+  return new URLSearchParams(window.location.search).get('view') === 'opencode-companion'
+}
+
+function isSetupStatus(value: unknown): value is SetupStatus {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Partial<Record<PlatformId, unknown>>
+  return PLATFORM_IDS.every((platform) => {
+    const setup = record[platform]
+    return (
+      Boolean(setup) &&
+      typeof setup === 'object' &&
+      typeof (setup as { installed?: unknown }).installed === 'boolean' &&
+      typeof (setup as { connected?: unknown }).connected === 'boolean'
+    )
+  })
+}
+
+function readCachedSetupStatus(): SetupStatus | null {
+  try {
+    const raw = window.localStorage.getItem(SETUP_STATUS_CACHE_KEY)
+    if (!raw) return null
+    const parsed: unknown = JSON.parse(raw)
+    return isSetupStatus(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function cacheSetupStatus(status: SetupStatus): void {
+  try {
+    window.localStorage.setItem(SETUP_STATUS_CACHE_KEY, JSON.stringify(status))
+  } catch {
+    // A live in-memory status still works when storage is unavailable.
+  }
+}
 type FilePreviewSelection = {
   projectId: string | null
   request: FileRequest
@@ -655,6 +696,8 @@ function useProjectFileWatcher(
 }
 
 export function App(): JSX.Element {
+  if (isOpenCodeCompanionWindow()) return <OpenCodeCompanionWindow />
+
   const detachedTerminalPlatform = getDetachedTerminalPlatform()
   if (detachedTerminalPlatform) return <DetachedTerminalWindow platform={detachedTerminalPlatform} />
 
@@ -668,19 +711,24 @@ function DashboardApp(): JSX.Element {
   const [setupState, setSetupState] = usePersistentState<{ done: boolean }>('setup:completed:v1', {
     done: false
   })
-  // Which platforms are connected (signed in) — drives whether the platform switcher
-  // appears. Refreshed on mount and whenever the connections screen closes.
-  const [connectedPlatforms, setConnectedPlatforms] = useState<PlatformId[] | null>(null)
+  // Keep the complete last-known setup status so Connections can paint immediately.
+  // A fresh main-process scan runs in the background and replaces this cached snapshot.
+  const [connectionStatus, setConnectionStatus] = useState<SetupStatus | null>(readCachedSetupStatus)
   const [connectionsOpen, setConnectionsOpen] = useState(false)
+
+  const updateConnectionStatus = useCallback((next: SetupStatus) => {
+    cacheSetupStatus(next)
+    setConnectionStatus(next)
+  }, [])
 
   const refreshConnections = useCallback(async () => {
     try {
       const status = await window.dashboard.setup.getStatus()
-      setConnectedPlatforms((Object.keys(status) as PlatformId[]).filter((id) => status[id].connected))
+      updateConnectionStatus(status)
     } catch {
       // Keep the last known set; the next refresh retries.
     }
-  }, [])
+  }, [updateConnectionStatus])
 
   useEffect(() => {
     refreshConnections()
@@ -689,6 +737,11 @@ function DashboardApp(): JSX.Element {
   // Active platforms = those connected. Until the first status lands, or if none are
   // connected (e.g. onboarding was skipped), keep all platforms available so the app
   // isn't a dead end. The switcher only appears when more than one is active.
+  const connectedPlatforms = useMemo<PlatformId[] | null>(() => {
+    if (!isSetupStatus(connectionStatus)) return null
+    return PLATFORM_IDS.filter((id) => connectionStatus[id].connected)
+  }, [connectionStatus])
+
   const activePlatforms = useMemo<PlatformId[]>(() => {
     const all = Object.keys(PLATFORM_CONFIG) as PlatformId[]
     if (!connectedPlatforms || connectedPlatforms.length === 0) return all
@@ -766,6 +819,25 @@ function DashboardApp(): JSX.Element {
     opencode: null
   })
   const activePlatform = PLATFORM_CONFIG[platform]
+
+  useEffect(
+    () =>
+      window.dashboard.openCode.onCompanionFocus((target) => {
+        setPlatform('opencode')
+        if (target.projectId) {
+          setSelectedProjectIds((current) =>
+            current.opencode === target.projectId ? current : { ...current, opencode: target.projectId }
+          )
+        }
+        setSelectedSessionIds((current) =>
+          current.opencode === target.sessionId ? current : { ...current, opencode: target.sessionId }
+        )
+        setProjectSidebarOpen((current) =>
+          current.opencode ? current : { ...current, opencode: true }
+        )
+      }),
+    [setProjectSidebarOpen, setSelectedProjectIds, setSelectedSessionIds]
+  )
 
   // A file result from global search opens the shared preview modal at the app
   // level (decoupled from the file tree), so search can preview any project file
@@ -1028,6 +1100,8 @@ function DashboardApp(): JSX.Element {
       {!setupState.done || connectionsOpen ? (
         <SetupGate
           mode={setupState.done ? 'manage' : 'onboarding'}
+          initialStatus={isSetupStatus(connectionStatus) ? connectionStatus : null}
+          onStatusChange={updateConnectionStatus}
           onDone={() => {
             if (!setupState.done) setSetupState({ done: true })
             setConnectionsOpen(false)
@@ -1058,6 +1132,7 @@ function DashboardApp(): JSX.Element {
         selectedProjectId={selectedProjectIds[platform]}
         onSearchActivate={handleSearchActivate}
       />
+      <OpenCodeSlimUpdateBanner />
       {memoryOpen ? (
         <MemoryView
           platform={platform}
@@ -2255,6 +2330,24 @@ function ProviderWorkspace({
   const panelResize = usePanelResizeHandlers(panelSizes, onPanelResize)
   const newSession = isPendingSessionId(selectedSessionId)
   const selectedProject = sessionBrowser.selectedProject
+  useEffect(() => {
+    if (platform !== 'opencode' || sessionBrowser.loading) return
+    window.dashboard.openCode
+      .setCompanionTarget({
+        sessionId: newSession ? null : selectedSessionId,
+        projectId: selectedProject?.id ?? null,
+        projectName: selectedProject?.name ?? sessionBrowser.selectedSession?.project ?? null
+      })
+      .catch(() => undefined)
+  }, [
+    newSession,
+    platform,
+    sessionBrowser.loading,
+    selectedProject?.id,
+    selectedProject?.name,
+    selectedSessionId,
+    sessionBrowser.selectedSession?.project
+  ])
   const watchRoot = useMemo<ProjectFileWatchRequest | null>(
     () =>
       selectedProject?.path
@@ -2389,7 +2482,12 @@ function ProviderWorkspace({
               />
             )}
             {platform === 'opencode' ? (
-              <OpenCodeActivityPanel sessionId={newSession ? null : selectedSessionId} />
+              <OpenCodeActivityPanel
+                sessionId={newSession ? null : selectedSessionId}
+                projectPath={sessionBrowser.selectedProject?.path ?? null}
+                wslDistro={sessionBrowser.selectedProject?.origin?.distro ?? null}
+                onOpenFile={onOpenTerminalFile}
+              />
             ) : null}
             <ProjectWorkspaceDock
               projectId={sessionBrowser.selectedProject?.id ?? null}
@@ -2431,6 +2529,10 @@ function UsageStrip({
 }): JSX.Element {
   const refreshLabel = planUsage ? usageRefreshLabel(planUsage, planError) : null
   const refreshTitle = planUsage ? planError ?? planUsage.refresh?.message ?? undefined : undefined
+  const unavailableMessage =
+    planError ??
+    (planUsage?.refresh?.state === 'rate_limited' ? refreshLabel : planUsage?.refresh?.message) ??
+    loadingLabel
 
   return (
     <div className="usage-strip">
@@ -2443,7 +2545,7 @@ function UsageStrip({
           refreshTitle={refreshTitle}
         />
       ) : (
-        <UsageBarPlaceholder label="5-Hour Usage" message={planError ?? loadingLabel} />
+        <UsageBarPlaceholder label="5-Hour Usage" message={unavailableMessage} />
       )}
       {planUsage?.sevenDay ? (
         <UsageBar
@@ -2454,7 +2556,7 @@ function UsageStrip({
           refreshTitle={refreshTitle}
         />
       ) : (
-        <UsageBarPlaceholder label="Weekly Usage" message={planError ? 'Waiting for safe retry' : loadingLabel} />
+        <UsageBarPlaceholder label="Weekly Usage" message={unavailableMessage} />
       )}
       {planUsage && 'monthly' in planUsage ? (
         planUsage.monthly ? (
@@ -2466,7 +2568,7 @@ function UsageStrip({
             refreshTitle={refreshTitle}
           />
         ) : (
-          <UsageBarPlaceholder label="Monthly Estimate" message={planError ?? loadingLabel} />
+          <UsageBarPlaceholder label="Monthly Estimate" message={unavailableMessage} />
         )
       ) : null}
     </div>
@@ -2478,7 +2580,14 @@ function usageRefreshLabel(
   error: string | null
 ): string {
   if (error) return 'Refresh error'
-  if (usage.refresh?.state === 'rate_limited') return 'Rate limited'
+  if (usage.refresh?.state === 'rate_limited') {
+    const retryAtMs = usage.refresh.nextRefreshAt ? Date.parse(usage.refresh.nextRefreshAt) : Number.NaN
+    if (!Number.isNaN(retryAtMs)) {
+      const minutes = Math.max(1, Math.ceil((retryAtMs - Date.now()) / 60_000))
+      return `Rate limited · retry in ${minutes} min`
+    }
+    return 'Rate limited · safe retry pending'
+  }
   return `${usage.isEstimate ? 'Estimated' : 'Updated'} ${formatUsageFetchedAt(usage.fetchedAt)}`
 }
 

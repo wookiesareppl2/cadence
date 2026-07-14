@@ -470,7 +470,11 @@ export function TerminalPane({
   onClose,
   onOpenFile,
   initialInput,
-  managed = true
+  managed = true,
+  headerMeta,
+  statusLabel,
+  closeOnUnmount = false,
+  closeTitle
 }: {
   terminalId: string
   platform: TerminalPlatform
@@ -485,6 +489,14 @@ export function TerminalPane({
   initialInput?: string
   // Setup terminals must run the real CLI instead of attaching to Cadence's server.
   managed?: boolean
+  // Agent panes use the same terminal surface but replace shell metadata/status
+  // with the child agent's task, model, and live OpenCode status.
+  headerMeta?: string
+  statusLabel?: string
+  // Normal deck terminals survive renderer remounts. Ephemeral viewers such as
+  // child-agent panes close their attachment PTY when their pane disappears.
+  closeOnUnmount?: boolean
+  closeTitle?: string
 }): JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const terminalRef = useRef<Terminal | null>(null)
@@ -537,6 +549,9 @@ export function TerminalPane({
         setSession(result)
         if (result.replay) terminal.write(result.replay)
         fitTerminal()
+        if (initialInputRef.current) {
+          window.dashboard.terminal.input(terminalId, `${initialInputRef.current}\r`)
+        }
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : 'Terminal restart failed')
@@ -704,7 +719,10 @@ export function TerminalPane({
     window.dashboard.terminal
       .start(terminalId, platform, cwd ?? undefined, wslDistro ?? undefined, managed)
       .then((result) => {
-        if (disposed) return
+        if (disposed) {
+          if (closeOnUnmount) window.dashboard.terminal.close(terminalId)
+          return
+        }
         setSession(result)
         if (result.replay) terminal.write(result.replay)
         fitTerminal()
@@ -721,6 +739,7 @@ export function TerminalPane({
 
     return () => {
       disposed = true
+      if (closeOnUnmount) window.dashboard.terminal.close(terminalId)
       observer.disconnect()
       if (resizeFitTimerRef.current !== null) {
         window.clearTimeout(resizeFitTimerRef.current)
@@ -734,23 +753,30 @@ export function TerminalPane({
       terminalRef.current = null
       fitAddonRef.current = null
     }
-  }, [terminalId, platform, cwd, wslDistro, managed, fitTerminal, scheduleResizeFit, pasteClipboardText, copySelection])
+  }, [terminalId, platform, cwd, wslDistro, managed, closeOnUnmount, fitTerminal, scheduleResizeFit, pasteClipboardText, copySelection])
 
   const shellLabel = session ? `${session.shell} pid ${session.pid}` : 'starting'
+  const effectiveStatus = error ? 'error' : statusLabel ?? (session ? 'ready' : 'starting')
 
   return (
     <div className="terminal-tile">
       <div className="panel-header terminal-header">
         <div className="terminal-heading">
           <h1>{title}</h1>
-          <span>{shellLabel}</span>
+          <span>{headerMeta ?? shellLabel}</span>
         </div>
         <div className="terminal-actions">
-          <span className="status-pill">{error ? 'error' : session ? 'ready' : 'starting'}</span>
+          <span className="status-pill">{effectiveStatus}</span>
           <button type="button" className="terminal-action" onClick={restartTerminal}>
             Restart
           </button>
-          <button type="button" className="terminal-action terminal-close" onClick={onClose} aria-label={`Close ${title}`}>
+          <button
+            type="button"
+            className="terminal-action terminal-close"
+            onClick={onClose}
+            aria-label={`Close ${title}`}
+            title={closeTitle}
+          >
             ✕
           </button>
         </div>

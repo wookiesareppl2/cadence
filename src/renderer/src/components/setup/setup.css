@@ -332,6 +332,10 @@
   font-size: 12px;
 }
 
+.setup-foot-note.is-error {
+  color: var(--caution);
+}
+
 .setup-foot-actions {
   display: flex;
   align-items: center;

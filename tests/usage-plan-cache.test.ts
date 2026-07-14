@@ -24,7 +24,7 @@ describe('createCachedPlanUsage', () => {
     const fetcher = vi
       .fn<() => Promise<ClaudePlanUsage>>()
       .mockResolvedValueOnce(usage('2026-06-03T00:00:00.000Z', 20))
-      .mockResolvedValueOnce(usage('2026-06-03T00:00:30.000Z', 30))
+      .mockResolvedValueOnce(usage('2026-06-03T00:01:00.000Z', 30))
     const getUsage = createCachedPlanUsage('Test', fetcher)
 
     const first = await getUsage()
@@ -35,7 +35,7 @@ describe('createCachedPlanUsage', () => {
     expect(cached.refresh?.state).toBe('cached')
     expect(cached.fiveHour?.utilization).toBe(20)
 
-    vi.advanceTimersByTime(29_000)
+    vi.advanceTimersByTime(59_000)
     const stillCached = await getUsage()
 
     expect(fetcher).toHaveBeenCalledTimes(1)
@@ -78,6 +78,29 @@ describe('createCachedPlanUsage', () => {
     const refreshed = await getUsage()
     expect(fetcher).toHaveBeenCalledTimes(3)
     expect(refreshed.fiveHour?.utilization).toBe(45)
+  })
+
+  it('returns an unavailable usage state when the first request is rate limited', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-06-03T00:00:00.000Z'))
+
+    const fetcher = vi
+      .fn<() => Promise<ClaudePlanUsage>>()
+      .mockRejectedValue(new UsageRateLimitError('rate limited', 0))
+    const getUsage = createCachedPlanUsage('Test', fetcher, {
+      rateLimitFallback: () => usage('2026-06-03T00:00:00.000Z', 0)
+    })
+
+    const first = await getUsage()
+    const cached = await getUsage()
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(first.refresh).toMatchObject({
+      state: 'rate_limited',
+      nextRefreshAt: '2026-06-03T00:15:00.000Z',
+      message: 'Test usage API rate limited; showing last known values'
+    })
+    expect(cached.refresh?.state).toBe('rate_limited')
   })
 
   it('throttles repeated failures even before a first usage value is cached', async () => {
