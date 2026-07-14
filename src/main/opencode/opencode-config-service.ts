@@ -2,15 +2,79 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
   createOpenCodeConfig,
+  createOpenCodeRoutingManifest,
   createSlimConfig,
   OPENCODE_MINIMUM_VERSION,
   OPENCODE_ROUTING_PROFILE,
-  OPENCODE_SLIM_VERSION
+  type ManagedOpenCodeConfigOptions
 } from '@shared/opencode'
 import { detectOpenCodeRuntime, stopOpenCodeRuntime } from './opencode-runtime'
+import { installManagedOpenCodeMemoryBankWorkflow } from './opencode-memory-bank-workflow'
+import { managedOpenCodeConfigDir, wslHomeToUnc } from './opencode-profile-paths'
 
-function wslHomeToUnc(distro: string, home: string): string {
-  return `\\\\wsl.localhost\\${distro}${home.replace(/\//g, '\\')}`
+export { managedOpenCodeConfigDir, wslHomeToUnc } from './opencode-profile-paths'
+
+async function writeJsonAtomically(path: string, value: Record<string, unknown>): Promise<void> {
+  const temporaryPath = `${path}.cadence.tmp`
+  await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, 'utf-8')
+  await rename(temporaryPath, path)
+}
+
+export async function writeManagedOpenCodeConfiguration({
+  configDir,
+  slimVersion,
+  pinSlimPlugin = false,
+  autoUpdate = true
+}: ManagedOpenCodeConfigOptions & { configDir: string }): Promise<void> {
+  await mkdir(configDir, { recursive: true })
+  await Promise.all([
+    writeJsonAtomically(
+      join(configDir, 'opencode.json'),
+      createOpenCodeConfig({ slimVersion, pinSlimPlugin, autoUpdate })
+    ),
+    writeJsonAtomically(
+      join(configDir, 'oh-my-opencode-slim.json'),
+      createSlimConfig({ slimVersion, pinSlimPlugin, autoUpdate })
+    ),
+    writeJsonAtomically(
+      join(configDir, 'cadence-routing-manifest.json'),
+      createOpenCodeRoutingManifest(slimVersion)
+    ),
+    installManagedOpenCodeMemoryBankWorkflow(configDir)
+  ])
+}
+
+export async function enableManagedSlimAutoUpdates(): Promise<void> {
+  const runtime = await detectOpenCodeRuntime()
+  if (!runtime.distro || !runtime.home || !runtime.configured) return
+  const configDir = managedOpenCodeConfigDir(runtime.distro, runtime.home)
+  const openCodePath = join(configDir, 'opencode.json')
+  const slimPath = join(configDir, 'oh-my-opencode-slim.json')
+  try {
+    await installManagedOpenCodeMemoryBankWorkflow(configDir)
+    const [openCode, slim] = await Promise.all([
+      readFile(openCodePath, 'utf-8').then((value) => JSON.parse(value) as Record<string, unknown>),
+      readFile(slimPath, 'utf-8').then((value) => JSON.parse(value) as Record<string, unknown>)
+    ])
+    const plugins = Array.isArray(openCode.plugin)
+      ? openCode.plugin.filter((entry): entry is string => typeof entry === 'string')
+      : []
+    const nextPlugins = [
+      ...plugins.filter((entry) => !entry.startsWith('oh-my-opencode-slim')),
+      'oh-my-opencode-slim'
+    ]
+    const pluginChanged = JSON.stringify(nextPlugins) !== JSON.stringify(plugins)
+    const autoUpdateChanged = slim.autoUpdate !== true
+    if (!pluginChanged && !autoUpdateChanged) return
+    openCode.plugin = nextPlugins
+    slim.autoUpdate = true
+    await Promise.all([
+      pluginChanged ? writeJsonAtomically(openCodePath, openCode) : Promise.resolve(),
+      autoUpdateChanged ? writeJsonAtomically(slimPath, slim) : Promise.resolve()
+    ])
+  } catch {
+    // A partial/older managed profile is repaired by the normal Apply routing flow.
+  }
 }
 
 export async function configureOpenCodeForCadence(): Promise<{
@@ -25,30 +89,8 @@ export async function configureOpenCodeForCadence(): Promise<{
   if (!runtime.compatible) throw new Error(`Update OpenCode to ${OPENCODE_MINIMUM_VERSION} or newer first`)
   if (!runtime.connected) throw new Error('Connect your OpenCode Go subscription first')
 
-  const configDir = join(wslHomeToUnc(runtime.distro, runtime.home), '.config', 'cadence', 'opencode')
-  await mkdir(configDir, { recursive: true })
-  await Promise.all([
-    writeFile(join(configDir, 'opencode.json'), `${JSON.stringify(createOpenCodeConfig(), null, 2)}\n`, 'utf-8'),
-    writeFile(
-      join(configDir, 'oh-my-opencode-slim.json'),
-      `${JSON.stringify(createSlimConfig(), null, 2)}\n`,
-      'utf-8'
-    ),
-    writeFile(
-      join(configDir, 'cadence-routing-manifest.json'),
-      `${JSON.stringify(
-        {
-          profile: OPENCODE_ROUTING_PROFILE,
-          openCodeMinimumVersion: OPENCODE_MINIMUM_VERSION,
-          slimVersion: OPENCODE_SLIM_VERSION,
-          managedBy: 'Cadence'
-        },
-        null,
-        2
-      )}\n`,
-      'utf-8'
-    )
-  ])
+  const configDir = managedOpenCodeConfigDir(runtime.distro, runtime.home)
+  await writeManagedOpenCodeConfiguration({ configDir })
 
   return { ok: true, distro: runtime.distro, configDir, profile: OPENCODE_ROUTING_PROFILE }
 }

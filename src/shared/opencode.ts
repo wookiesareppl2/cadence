@@ -5,6 +5,8 @@ export const OPENCODE_CONFIG_DIR = '$HOME/.config/cadence/opencode'
 export const OPENCODE_MINIMUM_VERSION = '1.17.18'
 export const OPENCODE_SLIM_VERSION = '2.1.1'
 export const OPENCODE_ROUTING_PROFILE = 'cadence-go-capability-v1'
+export const OPENCODE_ROUTING_REVISION = 2
+export const OPENCODE_MEMORY_BANK_WORKFLOW_REVISION = 1
 
 type ModelEntry = string | { id: string; variant?: string }
 
@@ -30,19 +32,43 @@ const models = {
 
 export const OPENCODE_GO_MODELS = Object.freeze({ ...models })
 
-export function createOpenCodeConfig(): Record<string, unknown> {
+export type ManagedOpenCodeConfigOptions = {
+  slimVersion?: string
+  pinSlimPlugin?: boolean
+  autoUpdate?: boolean
+}
+
+export function createOpenCodeConfig({
+  slimVersion = OPENCODE_SLIM_VERSION,
+  pinSlimPlugin = false
+}: ManagedOpenCodeConfigOptions = {}): Record<string, unknown> {
   return {
     $schema: 'https://opencode.ai/config.json',
     autoupdate: false,
     default_agent: 'orchestrator',
     enabled_providers: [OPENCODE_PROVIDER_ID],
-    plugin: [`oh-my-opencode-slim@${OPENCODE_SLIM_VERSION}`]
+    plugin: [pinSlimPlugin ? `oh-my-opencode-slim@${slimVersion}` : 'oh-my-opencode-slim']
   }
 }
 
-export function createSlimConfig(): Record<string, unknown> {
+export function createOpenCodeRoutingManifest(slimVersion = OPENCODE_SLIM_VERSION): Record<string, unknown> {
+  return {
+    profile: OPENCODE_ROUTING_PROFILE,
+    routingRevision: OPENCODE_ROUTING_REVISION,
+    memoryBankWorkflowRevision: OPENCODE_MEMORY_BANK_WORKFLOW_REVISION,
+    managedSkills: ['start', 'save'],
+    managedCommands: ['start', 'save'],
+    openCodeMinimumVersion: OPENCODE_MINIMUM_VERSION,
+    slimVersion,
+    managedBy: 'Cadence'
+  }
+}
+
+export function createSlimConfig({
+  slimVersion = OPENCODE_SLIM_VERSION,
+  autoUpdate = true
+}: ManagedOpenCodeConfigOptions = {}): Record<string, unknown> {
   const quickFixer: OpenCodeAgentConfig = {
-    displayName: 'Quick Fixer',
     model: [{ id: models.deepSeekFlash, variant: 'high' }, models.mimo, models.minimaxM3],
     prompt:
       'Implement small deterministic changes exactly as requested. Stay within the stated files and contract. Run focused validation. Escalate instead of changing architecture, public APIs, persistence, authentication, concurrency, native boundaries, or security behavior.',
@@ -51,7 +77,6 @@ export function createSlimConfig(): Record<string, unknown> {
   }
 
   const deepFixer: OpenCodeAgentConfig = {
-    displayName: 'Deep Fixer',
     model: [models.kimi27, models.glm52, models.deepSeekPro],
     prompt:
       'Own complex implementation tasks end to end. Inspect the relevant architecture before editing, preserve established contracts, coordinate file ownership, add risk-proportionate tests, and verify the complete behavior. Prefer root-cause fixes over patches and report unresolved risks precisely.',
@@ -89,7 +114,7 @@ export function createSlimConfig(): Record<string, unknown> {
   }
 
   return {
-    $schema: `https://unpkg.com/oh-my-opencode-slim@${OPENCODE_SLIM_VERSION}/oh-my-opencode-slim.schema.json`,
+    $schema: `https://unpkg.com/oh-my-opencode-slim@${slimVersion}/oh-my-opencode-slim.schema.json`,
     preset: OPENCODE_ROUTING_PROFILE,
     setDefaultAgent: true,
     presets: { [OPENCODE_ROUTING_PROFILE]: preset },
@@ -99,7 +124,7 @@ export function createSlimConfig(): Record<string, unknown> {
     },
     disabled_agents: [],
     image_routing: 'auto',
-    autoUpdate: false,
+    autoUpdate,
     compactSidebar: true,
     multiplexer: { type: 'none' },
     companion: { enabled: false },
@@ -163,10 +188,103 @@ export type OpenCodeAgentActivity = {
   cost: number
 }
 
+export type OpenCodeAgentPaneLayout = 'tiled' | 'rows' | 'columns'
+
+function terminalIdPart(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]/g, '_').slice(-48) || 'session'
+}
+
+export function openCodeAgentTerminalId(parentSessionId: string, childSessionId: string): string {
+  return `opencode-agent-${terminalIdPart(parentSessionId)}-${terminalIdPart(childSessionId)}`
+}
+
+export function openCodeAgentAttachCommand(sessionId: string): string {
+  const quoted = `'${sessionId.replace(/'/g, `'"'"'`)}'`
+  return `opencode --session ${quoted}`
+}
+
 export type OpenCodeActivitySnapshot = {
   sessionId: string
   jobs: OpenCodeAgentActivity[]
   pendingTodos: number
   completedTodos: number
   fetchedAt: string
+}
+
+export const OPENCODE_COMPANION_STATE_CHANNEL = 'opencode:companion-state'
+export const OPENCODE_COMPANION_FOCUS_CHANNEL = 'opencode:companion-focus'
+
+export type OpenCodeCompanionTarget = {
+  sessionId: string | null
+  projectId: string | null
+  projectName: string | null
+}
+
+export type OpenCodeCompanionState = {
+  enabled: boolean
+  target: OpenCodeCompanionTarget
+}
+
+export type OpenCodeCompanionBounds = {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export type OpenCodeCompanionPreferences = OpenCodeCompanionState & {
+  bounds: OpenCodeCompanionBounds | null
+}
+
+export const DEFAULT_OPENCODE_COMPANION_PREFERENCES: OpenCodeCompanionPreferences = {
+  enabled: false,
+  target: {
+    sessionId: null,
+    projectId: null,
+    projectName: null
+  },
+  bounds: null
+}
+
+function nullableText(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null
+}
+
+export function parseOpenCodeCompanionPreferences(value: unknown): OpenCodeCompanionPreferences {
+  if (typeof value !== 'object' || value === null) return DEFAULT_OPENCODE_COMPANION_PREFERENCES
+  const source = value as Partial<OpenCodeCompanionPreferences>
+  const targetSource =
+    typeof source.target === 'object' && source.target !== null
+      ? (source.target as Partial<OpenCodeCompanionTarget>)
+      : {}
+  const boundsSource =
+    typeof source.bounds === 'object' && source.bounds !== null
+      ? (source.bounds as Partial<OpenCodeCompanionBounds>)
+      : null
+  const x = finiteNumber(boundsSource?.x)
+  const y = finiteNumber(boundsSource?.y)
+  const width = finiteNumber(boundsSource?.width)
+  const height = finiteNumber(boundsSource?.height)
+
+  return {
+    enabled: source.enabled === true,
+    target: {
+      sessionId: nullableText(targetSource.sessionId),
+      projectId: nullableText(targetSource.projectId),
+      projectName: nullableText(targetSource.projectName)
+    },
+    bounds:
+      x !== null && y !== null && width !== null && height !== null
+        ? {
+            x,
+            y,
+            width: Math.min(640, Math.max(300, width)),
+            height: Math.min(720, Math.max(180, height))
+          }
+        : null
+  }
 }

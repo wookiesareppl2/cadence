@@ -7,8 +7,7 @@ import type {
   AssistantSessionHistory,
   SessionTitleGenerationStatus
 } from '@shared/sessions'
-import { WINDOWS_ORIGIN } from '@shared/sessions'
-import type { Workspace } from '@shared/workspaces'
+import type { ProjectCatalogEntry, ProjectCatalogSource } from '@shared/project-catalog'
 import type {
   GitHubAuthStatus,
   GitHubContextSyncRequest,
@@ -48,6 +47,7 @@ export function isPendingSessionId(id: string | null | undefined): boolean {
 
 export type ProjectSessionGroup = AssistantProject & {
   sessions: AssistantSession[]
+  catalogSource: 'session' | ProjectCatalogSource
 }
 
 type UseProjectSessionBrowserStateArgs = {
@@ -114,7 +114,7 @@ export function useProjectSessionBrowserState({
     titleGenerationStatus,
     refresh: refreshSessions
   } = usePlatformSessions(platform)
-  const { workspaces, refresh: refreshWorkspaces } = useWorkspaces()
+  const { catalog, refresh: refreshCatalog } = useProjectCatalog(platform)
   const { metadata, refresh: refreshMetadata } = useSessionMetadata()
   const [query, setQuery] = useState('')
 
@@ -128,13 +128,12 @@ export function useProjectSessionBrowserState({
 
   const projects = useMemo(
     () =>
-      mergeWorkspaceProjects(
-        platform,
+      mergeCatalogProjects(
         groupSessionsByProject(platform, sessions, metadata.projectAliases),
-        workspaces,
+        catalog,
         metadata.projectAliases
       ),
-    [platform, sessions, workspaces, metadata.projectAliases]
+    [platform, sessions, catalog, metadata.projectAliases]
   )
   const filteredProjects = useMemo(() => filterProjects(projects, query), [projects, query])
 
@@ -218,10 +217,10 @@ export function useProjectSessionBrowserState({
   const attachWorkspace = useCallback(async () => {
     const workspace = await window.dashboard?.workspaces?.attach()
     if (!workspace) return
-    await refreshWorkspaces()
+    await refreshCatalog()
     onSelectedProjectIdChange(`${platform}:${workspaceProjectKey(workspace.path)}`)
     onSelectedSessionIdChange(null)
-  }, [onSelectedProjectIdChange, onSelectedSessionIdChange, platform, refreshWorkspaces])
+  }, [onSelectedProjectIdChange, onSelectedSessionIdChange, platform, refreshCatalog])
 
   const chooseGithubImportDirectory = useCallback(async (): Promise<string | null> => {
     return (await window.dashboard?.github?.chooseImportDirectory?.()) ?? null
@@ -268,7 +267,7 @@ export function useProjectSessionBrowserState({
       if (!importer) return { ok: false, error: 'GitHub import API unavailable' }
       const result = await importer({ ...request, platform })
       if (result.ok && result.workspace) {
-        await Promise.all([refreshWorkspaces(), refreshSessions(), refreshMetadata()])
+        await Promise.all([refreshCatalog(), refreshSessions(), refreshMetadata()])
         onSelectedProjectIdChange(`${platform}:${workspaceProjectKey(result.workspace.path)}`)
         onSelectedSessionIdChange(null)
       }
@@ -280,7 +279,7 @@ export function useProjectSessionBrowserState({
       platform,
       refreshMetadata,
       refreshSessions,
-      refreshWorkspaces
+      refreshCatalog
     ]
   )
 
@@ -329,13 +328,13 @@ export function useProjectSessionBrowserState({
     async (projectId: string): Promise<{ trashed: number }> => {
       const result = (await window.dashboard?.sessions?.deleteProject(platform, projectId)) ?? { trashed: 0 }
       // An attached-but-empty project trashes 0 files yet is still removed
-      // (detached), so success = trashed something OR it had no sessions.
-      const wasEmpty = (projects.find((project) => project.id === projectId)?.sessionCount ?? 0) === 0
-      if ((result.trashed > 0 || wasEmpty) && selectedProjectId === projectId) {
+      // (detached), so it counts as success without a trashed transcript.
+      const wasAttached = projects.find((project) => project.id === projectId)?.catalogSource === 'attached'
+      if ((result.trashed > 0 || wasAttached) && selectedProjectId === projectId) {
         onSelectedProjectIdChange(null)
         onSelectedSessionIdChange(null)
       }
-      await Promise.all([refreshSessions(), refreshWorkspaces(), refreshMetadata()])
+      await Promise.all([refreshSessions(), refreshCatalog(), refreshMetadata()])
       return result
     },
     [
@@ -345,7 +344,7 @@ export function useProjectSessionBrowserState({
       projects,
       refreshMetadata,
       refreshSessions,
-      refreshWorkspaces,
+      refreshCatalog,
       selectedProjectId
     ]
   )
@@ -420,24 +419,35 @@ export function useProjectSessionBrowserState({
   )
 }
 
-function useWorkspaces(): { workspaces: Workspace[]; refresh: () => Promise<void> } {
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+function useProjectCatalog(platform: PlatformId): {
+  catalog: ProjectCatalogEntry[]
+  refresh: () => Promise<void>
+} {
+  const [catalog, setCatalog] = useState<ProjectCatalogEntry[]>([])
 
   const refresh = useCallback(async () => {
-    const list = window.dashboard?.workspaces?.list
+    const list = window.dashboard?.projects?.catalog
     if (!list) return
     try {
-      setWorkspaces(await list())
+      setCatalog(await list(platform))
     } catch {
-      setWorkspaces([])
+      // Keep the last good catalog through a transient provider scan failure.
     }
-  }, [])
+  }, [platform])
 
   useEffect(() => {
-    refresh()
+    void refresh()
+    const interval = setInterval(refresh, SESSION_POLL_INTERVAL_MS)
+    const unsubscribe = window.dashboard?.sessions?.onSessionsUpdated?.(() => {
+      void refresh()
+    })
+    return () => {
+      clearInterval(interval)
+      unsubscribe?.()
+    }
   }, [refresh])
 
-  return { workspaces, refresh }
+  return { catalog, refresh }
 }
 
 function useSessionMetadata(): { metadata: SessionMetadata; refresh: () => Promise<void> } {
@@ -645,7 +655,8 @@ function groupSessionsByProject(
       sessionCount: 1,
       latestUpdatedAt: session.updatedAt,
       age: session.age,
-      sessions: [session]
+      sessions: [session],
+      catalogSource: 'session'
     })
   }
 
@@ -657,40 +668,37 @@ function groupSessionsByProject(
     .sort((a, b) => Date.parse(b.latestUpdatedAt ?? '0') - Date.parse(a.latestUpdatedAt ?? '0'))
 }
 
-// Mirror of session-service.projectId normalization, usable in the renderer where
-// node's path.resolve is unavailable. Stored workspace paths are already resolved
-// in the main process, so lowercasing is enough to match a session-backed project.
+// Stored workspace paths are already resolved in the main process, so lowercasing
+// matches the Windows project id returned by the project catalog.
 function workspaceProjectKey(path: string): string {
   return path.toLowerCase()
 }
 
-// Surface attached workspaces as projects so a freshly created/attached folder
-// appears immediately, even before it has any session history. A workspace whose
-// folder already has sessions reuses that existing project entry instead.
-function mergeWorkspaceProjects(
-  platform: PlatformId,
+// Surface known folders before this provider has created a session there. A
+// provider-backed group always wins once its own first session is discovered.
+function mergeCatalogProjects(
   projects: ProjectSessionGroup[],
-  workspaces: Workspace[],
+  catalog: ProjectCatalogEntry[],
   projectAliases: Record<string, string>
 ): ProjectSessionGroup[] {
   const existing = new Set(projects.map((project) => project.id))
   const extras: ProjectSessionGroup[] = []
 
-  for (const workspace of workspaces) {
-    const id = `${platform}:${workspaceProjectKey(workspace.path)}`
-    if (existing.has(id)) continue
-    existing.add(id)
+  for (const entry of catalog) {
+    if (existing.has(entry.id)) continue
+    existing.add(entry.id)
     extras.push({
-      id,
-      platform,
-      name: applyProjectAlias(workspace.name, id, projectAliases),
-      path: workspace.path,
-      branch: null,
-      origin: WINDOWS_ORIGIN,
+      id: entry.id,
+      platform: entry.platform,
+      name: applyProjectAlias(entry.name, entry.id, projectAliases),
+      path: entry.path,
+      branch: entry.branch,
+      origin: entry.origin,
       sessionCount: 0,
-      latestUpdatedAt: new Date(workspace.addedAtMs).toISOString(),
-      age: 'attached',
-      sessions: []
+      latestUpdatedAt: entry.latestUpdatedAt,
+      age: entry.age,
+      sessions: [],
+      catalogSource: entry.source
     })
   }
 

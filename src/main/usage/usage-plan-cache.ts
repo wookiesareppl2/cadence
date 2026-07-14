@@ -4,12 +4,15 @@ import { fetchClaudePlanUsage } from './claude-plan-usage-service'
 import { fetchCodexPlanUsage } from './codex-plan-usage-service'
 import { UsageRateLimitError } from './usage-rate-limit'
 
-const LIVE_FETCH_INTERVAL_MS = 30_000
+const LIVE_FETCH_INTERVAL_MS = 60_000
 const RATE_LIMIT_FALLBACK_MS = 15 * 60_000
 const ERROR_RETRY_INTERVAL_MS = 60_000
 
 type PlanUsageWithRefresh = { fetchedAt: string; refresh?: PlanUsageRefreshMeta }
 type PlanUsageFetcher<T extends PlanUsageWithRefresh> = () => Promise<T>
+type PlanUsageCacheOptions<T extends PlanUsageWithRefresh> = {
+  rateLimitFallback?: () => T
+}
 
 type CacheState<T extends PlanUsageWithRefresh> = {
   value: T | null
@@ -29,7 +32,8 @@ function attachRefresh<T extends PlanUsageWithRefresh>(usage: T, refresh: PlanUs
 
 export function createCachedPlanUsage<T extends PlanUsageWithRefresh>(
   label: string,
-  fetcher: PlanUsageFetcher<T>
+  fetcher: PlanUsageFetcher<T>,
+  options: PlanUsageCacheOptions<T> = {}
 ): () => Promise<T> {
   const state: CacheState<T> = {
     value: null,
@@ -54,10 +58,16 @@ export function createCachedPlanUsage<T extends PlanUsageWithRefresh>(
       })
       .catch((error: unknown) => {
         if (error instanceof UsageRateLimitError) {
-          const retryAfterMs = Math.max(error.retryAfterMs ?? RATE_LIMIT_FALLBACK_MS, LIVE_FETCH_INTERVAL_MS)
+          const requestedDelay =
+            error.retryAfterMs !== null && error.retryAfterMs > 0
+              ? error.retryAfterMs
+              : RATE_LIMIT_FALLBACK_MS
+          const retryAfterMs = Math.max(requestedDelay, LIVE_FETCH_INTERVAL_MS)
           state.rateLimitedUntilMs = Date.now() + retryAfterMs
           state.nextFetchAtMs = state.rateLimitedUntilMs
           state.lastError = error.message
+
+          state.value ??= options.rateLimitFallback?.() ?? null
 
           if (state.value) {
             return attachRefresh(state.value, {
@@ -109,5 +119,31 @@ export function createCachedPlanUsage<T extends PlanUsageWithRefresh>(
   }
 }
 
-export const getCachedClaudePlanUsage = createCachedPlanUsage<ClaudePlanUsage>('Claude', fetchClaudePlanUsage)
-export const getCachedCodexPlanUsage = createCachedPlanUsage<CodexPlanUsage>('Codex', fetchCodexPlanUsage)
+export const getCachedClaudePlanUsage = createCachedPlanUsage<ClaudePlanUsage>(
+  'Claude',
+  fetchClaudePlanUsage,
+  {
+    rateLimitFallback: () => ({
+      fiveHour: null,
+      sevenDay: null,
+      extraUsage: null,
+      fetchedAt: new Date().toISOString()
+    })
+  }
+)
+export const getCachedCodexPlanUsage = createCachedPlanUsage<CodexPlanUsage>(
+  'Codex',
+  fetchCodexPlanUsage,
+  {
+    rateLimitFallback: () => ({
+      fiveHour: null,
+      sevenDay: null,
+      planType: null,
+      sourcePath: null,
+      sourceTimestamp: null,
+      isStale: true,
+      staleReason: 'Codex usage API rate limited',
+      fetchedAt: new Date().toISOString()
+    })
+  }
+)
