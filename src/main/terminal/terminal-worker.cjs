@@ -138,11 +138,19 @@ function shellCommand(platform) {
 // path. The pty process itself (wsl.exe) runs from a valid Windows cwd, while
 // `--cd` sets the Linux working directory so `claude`/`codex` start in-project.
 // The guard runs first, then execs the real interactive shell (see bashGuard).
+//
+// `--exec` (NOT bare `--`) is required: `wsl -- bash -c <guard>` runs the guard
+// through WSL's *default login shell* first, which pre-expands the guard's `$`
+// references before `bash -c` ever parses it. For OpenCode that corrupted the
+// `opencode` wrapper — `CADENCE_OPENCODE_URL` is exported *inside* the guard, so
+// it was still empty during that premature pass, baking `attach ""` (no server
+// URL) into the function and making every `opencode` invocation print help.
+// `--exec` bypasses the default shell and hands the guard to bash verbatim.
 function wslCommand(distro, posixCwd, platform, openCodeRuntime) {
   const args = ['-d', distro]
   if (posixCwd) args.push('--cd', posixCwd)
   const guard = bashGuard(platform, openCodeRuntime)
-  if (guard) args.push('--', 'bash', '-c', guard)
+  if (guard) args.push('--exec', 'bash', '-c', guard)
   return { file: 'wsl.exe', args, label: `wsl:${distro}` }
 }
 
