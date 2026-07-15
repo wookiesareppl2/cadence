@@ -49,7 +49,8 @@ describe('backgroundTerminalLocations', () => {
         terminalId: 't3',
         title: 'Terminal 1',
         sessionKey: 'missing',
-        sessionTitle: 'missing',
+        // No locator: falls back to the terminal's own title, never the raw key.
+        sessionTitle: 'Terminal 1',
         projectId: null,
         projectName: 'Unknown project',
         projectPath: null,

@@ -130,7 +130,9 @@ export function backgroundTerminalLocations(
         terminalId: tab.id,
         title: tab.title,
         sessionKey: tab.sessionKey,
-        sessionTitle: locator?.sessionTitle ?? tab.sessionKey,
+        // Fall back to the terminal's own title, never the raw session key: an
+        // orphaned session (no locator) should read as a terminal, not a UUID.
+        sessionTitle: locator?.sessionTitle ?? tab.title ?? 'Background session',
         projectId: locator?.projectId ?? null,
         projectName: locator?.projectName ?? 'Unknown project',
         projectPath: locator?.projectPath ?? null,

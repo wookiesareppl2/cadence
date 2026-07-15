@@ -392,17 +392,18 @@ export const TerminalDeck = memo(function TerminalDeck({
           {backgroundSessions.length > 0 ? (
             backgroundSessions.map((session) => {
               const location = session.cwd ?? session.projectPath ?? 'No working directory'
-              const selectable = Boolean(session.projectId)
               const countLabel = `${session.terminalCount} ${session.terminalCount === 1 ? 'terminal' : 'terminals'}`
               return (
+                // Every background session jumps by its session key, which is always
+                // present — even a session Cadence can no longer resolve to a project
+                // (an "Unknown project" orphan) stays reachable so its live terminal
+                // can be opened and closed rather than stranded here forever.
                 <button
                   key={session.sessionKey}
                   type="button"
                   role="menuitem"
                   className="terminal-bg-row"
-                  disabled={!selectable}
                   onClick={() => {
-                    if (!selectable) return
                     onSelectBackgroundTerminal?.(session.terminals[0])
                     setBackgroundMenuOpen(false)
                   }}

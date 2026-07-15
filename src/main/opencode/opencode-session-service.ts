@@ -1,4 +1,12 @@
-import type { AssistantMessage, Message, Part, Session, SessionStatus, UserMessage } from '@opencode-ai/sdk'
+import type {
+  AssistantMessage,
+  Message,
+  OpencodeClient,
+  Part,
+  Session,
+  SessionStatus,
+  UserMessage
+} from '@opencode-ai/sdk'
 import { posix, win32 } from 'node:path'
 import type {
   AssistantSession,
@@ -107,21 +115,58 @@ function statusLabel(status: SessionStatus | undefined): string {
   return 'idle'
 }
 
+// A bare `/session` list is scoped to the OpenCode server's own working directory.
+// The managed server inherits Cadence's process cwd, which is the project folder in
+// dev but the install folder in a packaged build — so the bare list comes back empty
+// for real users even though their sessions are on disk. `/project`, by contrast, is
+// not cwd-scoped, so enumerate every known project and list its sessions by directory.
+// The result is then independent of where the managed server happened to be launched.
+async function collectOpenCodeSessions(
+  client: OpencodeClient
+): Promise<{ sessions: Session[]; statuses: Record<string, SessionStatus | undefined> }> {
+  const projectResponse = await client.project.list()
+  const projects = projectResponse.data ?? []
+  const perProject = await Promise.all(
+    projects.map(async (project) => {
+      const directory = project.worktree
+      try {
+        const [sessionResponse, statusResponse] = await Promise.all([
+          client.session.list({ query: { directory } }),
+          client.session.status({ query: { directory } })
+        ])
+        return { sessions: sessionResponse.data ?? [], statuses: statusResponse.data ?? {} }
+      } catch {
+        // One project's store can fail (removed worktree, migration) without
+        // dropping the others.
+        return { sessions: [] as Session[], statuses: {} as Record<string, SessionStatus> }
+      }
+    })
+  )
+  const statuses: Record<string, SessionStatus | undefined> = {}
+  const byId = new Map<string, Session>()
+  for (const group of perProject) {
+    Object.assign(statuses, group.statuses)
+    for (const session of group.sessions) {
+      if (!byId.has(session.id)) byId.set(session.id, session)
+    }
+  }
+  return { sessions: [...byId.values()], statuses }
+}
+
 export async function getOpenCodeSessions(): Promise<AssistantSession[]> {
   const runtime = await detectOpenCodeRuntime()
   if (!runtime.distro || !runtime.installed || !runtime.connected || !runtime.configured) return []
   const client = await getOpenCodeClient()
-  const [sessionResponse, statusResponse, providerResponse] = await Promise.all([
-    client.session.list(),
-    client.session.status(),
+  const [collected, providerResponse] = await Promise.all([
+    collectOpenCodeSessions(client),
     client.provider.list()
   ])
-  const statuses = statusResponse.data ?? {}
+  const statuses = collected.statuses
   const goProvider = providerResponse.data?.all.find((provider) => provider.id === 'opencode-go')
   const contextWindows = new Map(
     Object.values(goProvider?.models ?? {}).map((model) => [model.id, model.limit.context])
   )
-  const sessions = (sessionResponse.data ?? [])
+  const sessions = collected.sessions
     .filter((session) => !session.parentID)
     .sort((a, b) => b.time.updated - a.time.updated)
     .slice(0, MAX_SESSIONS)
@@ -229,8 +274,8 @@ export async function deleteOpenCodeProject(projectId: string): Promise<{ trashe
   const runtime = await detectOpenCodeRuntime()
   if (!runtime.distro) return { trashed: 0 }
   const client = await getOpenCodeClient()
-  const response = await client.session.list()
-  const targets = (response.data ?? []).filter(
+  const { sessions } = await collectOpenCodeSessions(client)
+  const targets = sessions.filter(
     (session) => !session.parentID && sessionLocation(session.directory, runtime.distro!).projectId === projectId
   )
   const results = await Promise.all(targets.map((session) => deleteOpenCodeSession(session.id)))
@@ -289,8 +334,7 @@ export async function getOpenCodeActivity(sessionId: string): Promise<OpenCodeAc
 
 export async function listAllOpenCodeMessages(): Promise<MessageWithParts[]> {
   const client = await getOpenCodeClient()
-  const response = await client.session.list()
-  const sessions = response.data ?? []
+  const { sessions } = await collectOpenCodeSessions(client)
   const groups = await Promise.all(
     sessions.map(async (session) => {
       try {
