@@ -6,6 +6,10 @@ import { contentText, resolveSessionTitle, titleCandidate, type TitleMessage } f
 import { isCodexSubagentSessionMeta, rankRolloutFiles } from './codex-rollout'
 import { cleanHistoryText } from './session-history-text'
 import {
+  isClaudeFinalAssistantMessage,
+  isCodexFinalAssistantMessage
+} from './session-history-completion'
+import {
   resolveGeneratedSessionTitle,
   sourceFromPath,
   type SessionTranscriptSource
@@ -349,6 +353,7 @@ function claudeHistoryEntry(row: any, index: number): HistoryDraft | null {
   }
 
   if (row?.type === 'assistant') {
+    if (!isClaudeFinalAssistantMessage(row.message)) return null
     return historyEntry({
       row,
       index,
@@ -369,6 +374,7 @@ function codexHistoryEntry(row: any, index: number): HistoryDraft | null {
   if (payload?.type === 'message') {
     const role = payload.role === 'assistant' ? 'assistant' : payload.role === 'user' ? 'user' : null
     if (!role) return null
+    if (role === 'assistant' && !isCodexFinalAssistantMessage(payload)) return null
     return historyEntry({
       row,
       index,
