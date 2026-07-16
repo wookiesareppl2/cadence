@@ -1,7 +1,25 @@
 # Context Vault — cross-device memory/context sync
 
-Status: **in progress** (approved 2026-07-01). This document is the design of record;
-build against it and keep it updated as phases land.
+Status: **banked / postponed** (2026-07-16). This document preserves the design and
+implementation record, but cross-device sync is not part of the current release prototype.
+
+## Banked behaviour
+
+`CONTEXT_VAULT_SYNC_ENABLED` in `src/shared/context-vault-feature.ts` is the single
+re-entry gate and is intentionally `false`.
+
+- Cadence does not mount project vault status indicators, so local Felix/Obsidian
+  changes cannot produce persistent `Conflict` pills in the Sessions sidebar.
+- GitHub import remains available, but its context restore and manual sync controls
+  are hidden and every import passes `restoreContext: null`.
+- The preload bridge rejects direct vault calls with a banked-feature message, and
+  the main process does not register vault sync/status/key-management IPC handlers.
+- Existing encrypted snapshots, local link metadata, implementation modules, and
+  focused crypto/identity tests are preserved untouched for a future dedicated
+  cross-device design phase.
+
+Re-enable only as an explicit project after Cadence is a stable release prototype and
+Felix has a deliberate multi-device storage, identity, merge, and recovery design.
 
 ## Goal
 

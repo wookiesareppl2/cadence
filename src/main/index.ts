@@ -37,6 +37,7 @@ import {
 } from './projects/project-files-service'
 import { unwatchProjectFiles, watchProjectFiles } from './projects/project-file-watch-service'
 import type { FileKind, FileRequest, ProjectFileWatchRequest } from '@shared/project-files'
+import { CONTEXT_VAULT_SYNC_ENABLED } from '@shared/context-vault-feature'
 import { attachWorkspace, listWorkspaces } from './workspaces/workspace-service'
 import {
   chooseGithubImportDirectory,
@@ -789,24 +790,26 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     chooseGithubImportDirectory(BrowserWindow.fromWebContents(event.sender))
   )
   ipcMain.handle('github:import-project', (_event, request: GitHubImportRequest) =>
-    importGithubProject(request)
+    importGithubProject(CONTEXT_VAULT_SYNC_ENABLED ? request : { ...request, restoreContext: null })
   )
-  ipcMain.handle('github:sync-project-context', (event, request: GitHubContextSyncRequest) =>
-    syncProjectContextToVault(request, event.sender)
-  )
-  ipcMain.handle('github:project-context-status', (event, request: GitHubContextStatusRequest) =>
-    getProjectVaultStatus(request, event.sender)
-  )
-  ipcMain.handle('github:vault-key-status', () => getVaultKeyStatus())
-  ipcMain.handle('github:vault-setup', () => setupProjectVault())
-  ipcMain.handle('github:vault-unlock', (_event, request: GitHubContextVaultUnlockRequest) =>
-    unlockProjectVault(request)
-  )
-  ipcMain.handle('github:vault-rotate-recovery-key', () => rotateProjectVaultRecoveryKey())
-  ipcMain.handle('github:vault-recover-via-github', () => recoverProjectVaultViaGitHub())
-  ipcMain.handle('github:vault-set-github-recovery', (_event, request: GitHubContextVaultGithubRecoveryRequest) =>
-    setVaultGithubRecovery(request)
-  )
+  if (CONTEXT_VAULT_SYNC_ENABLED) {
+    ipcMain.handle('github:sync-project-context', (event, request: GitHubContextSyncRequest) =>
+      syncProjectContextToVault(request, event.sender)
+    )
+    ipcMain.handle('github:project-context-status', (event, request: GitHubContextStatusRequest) =>
+      getProjectVaultStatus(request, event.sender)
+    )
+    ipcMain.handle('github:vault-key-status', () => getVaultKeyStatus())
+    ipcMain.handle('github:vault-setup', () => setupProjectVault())
+    ipcMain.handle('github:vault-unlock', (_event, request: GitHubContextVaultUnlockRequest) =>
+      unlockProjectVault(request)
+    )
+    ipcMain.handle('github:vault-rotate-recovery-key', () => rotateProjectVaultRecoveryKey())
+    ipcMain.handle('github:vault-recover-via-github', () => recoverProjectVaultViaGitHub())
+    ipcMain.handle('github:vault-set-github-recovery', (_event, request: GitHubContextVaultGithubRecoveryRequest) =>
+      setVaultGithubRecovery(request)
+    )
+  }
   ipcMain.handle('project-workspace:get', (_event, projectId: string) => getProjectWorkspace(projectId))
   ipcMain.handle('project-workspace:save', (_event, projectId: string, data: unknown) =>
     saveProjectWorkspace(projectId, data)
