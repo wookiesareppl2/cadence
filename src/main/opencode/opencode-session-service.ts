@@ -18,6 +18,10 @@ import type { OpenCodeActivitySnapshot, OpenCodeAgentActivity } from '@shared/op
 import { WINDOWS_ORIGIN } from '@shared/sessions'
 import { workspaceProjectId } from '../workspaces/workspace-utils'
 import { detectOpenCodeRuntime, getOpenCodeClient, wslPathToWindows } from './opencode-runtime'
+import {
+  completedOpenCodeAssistantText,
+  isOpenCodeSessionActive
+} from '../sessions/session-history-completion'
 
 type MessageWithParts = { info: Message; parts: Part[] }
 
@@ -223,16 +227,32 @@ function partText(part: Part): string | null {
   return null
 }
 
-function historyEntries(messages: MessageWithParts[]): AssistantSessionHistoryEntry[] {
+function historyEntries(messages: MessageWithParts[], sessionActive: boolean): AssistantSessionHistoryEntry[] {
   const entries: AssistantSessionHistoryEntry[] = []
-  for (const row of messages) {
+  let lastUserIndex = -1
+  if (sessionActive) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (isUserMessage(messages[index].info)) {
+        lastUserIndex = index
+        break
+      }
+    }
+  }
+
+  for (let index = 0; index < messages.length; index += 1) {
+    const row = messages[index]
     const timestamp = new Date(row.info.time.created).toISOString()
     const role = row.info.role === 'user' ? 'user' : 'assistant'
     const label = row.info.role === 'user' ? 'You' : isAssistantMessage(row.info) ? row.info.mode || 'OpenCode' : 'OpenCode'
-    const text = row.parts
-      .map(partText)
-      .filter((value): value is string => Boolean(value?.trim()))
-      .join('\n\n')
+    if (role === 'assistant' && sessionActive && index > lastUserIndex) continue
+
+    const text =
+      role === 'assistant'
+        ? completedOpenCodeAssistantText(row.info, row.parts)
+        : row.parts
+            .map(partText)
+            .filter((value): value is string => Boolean(value?.trim()))
+            .join('\n\n')
     if (text) entries.push({ id: row.info.id, role, label, text, timestamp })
   }
   return entries
@@ -247,13 +267,17 @@ export async function getOpenCodeSessionHistory(sessionId: string): Promise<Assi
   }
   const runtime = await detectOpenCodeRuntime()
   const location = sessionLocation(session.directory, runtime.distro ?? 'WSL')
-  const messages = await sessionMessages(session)
+  const [messages, statusResponse] = await Promise.all([
+    sessionMessages(session),
+    client.session.status({ query: { directory: session.directory } }).catch(() => null)
+  ])
+  const status = statusResponse?.data?.[sessionId]
   return {
     sessionId,
     platform: 'opencode',
     title: session.title || 'OpenCode session',
     project: location.project,
-    entries: historyEntries(messages)
+    entries: historyEntries(messages, isOpenCodeSessionActive(status))
   }
 }
 
