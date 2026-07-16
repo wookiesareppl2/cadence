@@ -24,6 +24,7 @@ import type {
 import type { SearchQuery, SearchResults } from '@shared/search'
 import type { SetupAction, SetupCommand, SetupStatus } from '@shared/setup'
 import type { MemoryFileContent, MemoryWriteResult, ProjectMemory } from '@shared/memory'
+import { CONTEXT_VAULT_BANKED_REASON, CONTEXT_VAULT_SYNC_ENABLED } from '@shared/context-vault-feature'
 import type {
   GitHubAuthStatus,
   GitHubContextStatusRequest,
@@ -190,22 +191,50 @@ const api = {
       ipcRenderer.invoke('github:list-repositories', page),
     chooseImportDirectory: (): Promise<string | null> => ipcRenderer.invoke('github:choose-import-directory'),
     importProject: (request: GitHubImportRequest): Promise<GitHubImportResult> =>
-      ipcRenderer.invoke('github:import-project', request),
+      ipcRenderer.invoke(
+        'github:import-project',
+        CONTEXT_VAULT_SYNC_ENABLED ? request : { ...request, restoreContext: null }
+      ),
     syncProjectContext: (request: GitHubContextSyncRequest): Promise<GitHubContextSyncResult> =>
-      ipcRenderer.invoke('github:sync-project-context', request),
+      CONTEXT_VAULT_SYNC_ENABLED
+        ? ipcRenderer.invoke('github:sync-project-context', request)
+        : Promise.resolve({ ok: false, error: CONTEXT_VAULT_BANKED_REASON }),
     projectContextStatus: (request: GitHubContextStatusRequest): Promise<GitHubContextStatusResult> =>
-      ipcRenderer.invoke('github:project-context-status', request),
-    vaultKeyStatus: (): Promise<GitHubContextVaultKeyStatus> => ipcRenderer.invoke('github:vault-key-status'),
-    setupVault: (): Promise<GitHubContextVaultSetupResult> => ipcRenderer.invoke('github:vault-setup'),
+      CONTEXT_VAULT_SYNC_ENABLED
+        ? ipcRenderer.invoke('github:project-context-status', request)
+        : Promise.resolve({ ok: false, error: CONTEXT_VAULT_BANKED_REASON }),
+    vaultKeyStatus: (): Promise<GitHubContextVaultKeyStatus> =>
+      CONTEXT_VAULT_SYNC_ENABLED
+        ? ipcRenderer.invoke('github:vault-key-status')
+        : Promise.resolve({
+            ok: false,
+            exists: false,
+            unlocked: false,
+            githubRecovery: false,
+            error: CONTEXT_VAULT_BANKED_REASON
+          }),
+    setupVault: (): Promise<GitHubContextVaultSetupResult> =>
+      CONTEXT_VAULT_SYNC_ENABLED
+        ? ipcRenderer.invoke('github:vault-setup')
+        : Promise.resolve({ ok: false, error: CONTEXT_VAULT_BANKED_REASON }),
     unlockVault: (request: GitHubContextVaultUnlockRequest): Promise<GitHubContextVaultActionResult> =>
-      ipcRenderer.invoke('github:vault-unlock', request),
+      CONTEXT_VAULT_SYNC_ENABLED
+        ? ipcRenderer.invoke('github:vault-unlock', request)
+        : Promise.resolve({ ok: false, error: CONTEXT_VAULT_BANKED_REASON }),
     rotateVaultRecoveryKey: (): Promise<GitHubContextVaultSetupResult> =>
-      ipcRenderer.invoke('github:vault-rotate-recovery-key'),
+      CONTEXT_VAULT_SYNC_ENABLED
+        ? ipcRenderer.invoke('github:vault-rotate-recovery-key')
+        : Promise.resolve({ ok: false, error: CONTEXT_VAULT_BANKED_REASON }),
     recoverVaultViaGitHub: (): Promise<GitHubContextVaultActionResult> =>
-      ipcRenderer.invoke('github:vault-recover-via-github'),
+      CONTEXT_VAULT_SYNC_ENABLED
+        ? ipcRenderer.invoke('github:vault-recover-via-github')
+        : Promise.resolve({ ok: false, error: CONTEXT_VAULT_BANKED_REASON }),
     setVaultGithubRecovery: (
       request: GitHubContextVaultGithubRecoveryRequest
-    ): Promise<GitHubContextVaultActionResult> => ipcRenderer.invoke('github:vault-set-github-recovery', request)
+    ): Promise<GitHubContextVaultActionResult> =>
+      CONTEXT_VAULT_SYNC_ENABLED
+        ? ipcRenderer.invoke('github:vault-set-github-recovery', request)
+        : Promise.resolve({ ok: false, error: CONTEXT_VAULT_BANKED_REASON })
   },
   projectWorkspace: {
     get: (projectId: string): Promise<ProjectWorkspace> => ipcRenderer.invoke('project-workspace:get', projectId),

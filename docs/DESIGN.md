@@ -96,6 +96,10 @@ Use the `github-import-*` modal family as the canonical pattern for account-back
 project import flows (GitHub OAuth, repository picking, context-vault sync). It is
 a compact operational dialog, not a setup wizard or landing page.
 
+Context-vault sync is currently banked behind `CONTEXT_VAULT_SYNC_ENABLED`; while the
+gate is off this modal is import-only and must not show sync, restore, vault, or
+conflict-status controls. The patterns below remain the preserved design for later work.
+
 - **Mode switch:** use the same segmented-toggle model as File Preview modes:
   a two-segment control (`GitHub` / `Manual`) with shared border, `--surface-0`
   background, inactive `--text-3`, active `color-mix(... var(--accent) 16% ...)`,

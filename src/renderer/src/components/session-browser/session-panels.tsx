@@ -5,6 +5,7 @@ import type {
   AssistantSession,
   AssistantSessionHistoryEntry
 } from '@shared/sessions'
+import { CONTEXT_VAULT_SYNC_ENABLED } from '@shared/context-vault-feature'
 import { CopyableCodeBlock, HistoryMarkdown } from '../history-markdown'
 import { GitHubImportModal } from './github-import-modal'
 import { ProjectList, SessionList } from './session-rows'
@@ -205,11 +206,13 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
               <span className="session-stack-title">
                 Sessions
                 <TitleGenerationStatus browser={browser} />
-                <VaultStatusIndicator
-                  platform={browser.platform}
-                  projectId={selectedProject?.id ?? null}
-                  onOpen={() => setVaultManagerOpen(true)}
-                />
+                {CONTEXT_VAULT_SYNC_ENABLED ? (
+                  <VaultStatusIndicator
+                    platform={browser.platform}
+                    projectId={selectedProject?.id ?? null}
+                    onOpen={() => setVaultManagerOpen(true)}
+                  />
+                ) : null}
               </span>
               <button
                 type="button"
@@ -257,7 +260,7 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
         ) : null}
       </aside>
       {githubImportOpen ? <GitHubImportModal browser={browser} onClose={() => setGithubImportOpen(false)} /> : null}
-      {vaultManagerOpen ? (
+      {CONTEXT_VAULT_SYNC_ENABLED && vaultManagerOpen ? (
         <VaultManagerModal
           browser={browser}
           projectId={selectedProject?.id ?? null}

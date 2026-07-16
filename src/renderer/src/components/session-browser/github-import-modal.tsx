@@ -9,6 +9,7 @@ import {
   type GitHubDeviceFlowStartResult,
   type GitHubRepositorySummary
 } from '@shared/github-import'
+import { CONTEXT_VAULT_SYNC_ENABLED } from '@shared/context-vault-feature'
 import type { ProjectSessionBrowserState } from './use-session-browser'
 
 const CLIENT_ID_KEY = 'cadence.github.oauthClientId'
@@ -171,7 +172,7 @@ export function GitHubImportModal({
       setError('Choose a destination folder.')
       return false
     }
-    if (mode === 'manual' && restoreContext && !vaultRepositoryUrl.trim()) {
+    if (CONTEXT_VAULT_SYNC_ENABLED && mode === 'manual' && restoreContext && !vaultRepositoryUrl.trim()) {
       setError('Enter the vault repository URL, or turn off restore.')
       return false
     }
@@ -184,13 +185,13 @@ export function GitHubImportModal({
     if (!validateImport()) return
 
     setBusy('import')
-    rememberVaultUrl()
+    if (CONTEXT_VAULT_SYNC_ENABLED) rememberVaultUrl()
     const result = await browser.importGithubProject({
       repositoryUrl: repoForImport,
       authMode: mode === 'oauth' ? 'oauth' : 'git',
       destinationParentPath: destinationParentPath.trim(),
       targetDirectoryName: targetDirectoryName.trim() || null,
-      restoreContext: restoreContext
+      restoreContext: CONTEXT_VAULT_SYNC_ENABLED && restoreContext
         ? {
             mode: mode === 'oauth' ? 'oauth' : 'git',
             vaultRepositoryUrl: mode === 'manual' ? vaultRepositoryUrl.trim() : null
@@ -395,15 +396,17 @@ export function GitHubImportModal({
                   onChange={(event) => setRepositoryUrl(event.target.value)}
                 />
               </label>
-              <label className="github-import-field">
-                <span>Vault repository</span>
-                <input
-                  value={vaultRepositoryUrl}
-                  spellCheck={false}
-                  placeholder="git@github.com:owner/cadence-context-vault.git"
-                  onChange={(event) => setVaultRepositoryUrl(event.target.value)}
-                />
-              </label>
+              {CONTEXT_VAULT_SYNC_ENABLED ? (
+                <label className="github-import-field">
+                  <span>Vault repository</span>
+                  <input
+                    value={vaultRepositoryUrl}
+                    spellCheck={false}
+                    placeholder="git@github.com:owner/cadence-context-vault.git"
+                    onChange={(event) => setVaultRepositoryUrl(event.target.value)}
+                  />
+                </label>
+              ) : null}
             </section>
           )}
 
@@ -427,20 +430,28 @@ export function GitHubImportModal({
             />
           </label>
 
-          <label className="github-import-check">
-            <input
-              type="checkbox"
-              checked={restoreContext}
-              onChange={(event) => setRestoreContext(event.target.checked)}
-            />
-            <span>Restore private context</span>
-          </label>
+          {CONTEXT_VAULT_SYNC_ENABLED ? (
+            <>
+              <label className="github-import-check">
+                <input
+                  type="checkbox"
+                  checked={restoreContext}
+                  onChange={(event) => setRestoreContext(event.target.checked)}
+                />
+                <span>Restore private context</span>
+              </label>
 
-          {mode === 'oauth' ? (
-            <div className="github-vault-label">
-              <span>Vault</span>
-              <strong>{auth?.login ? `${auth.login}/${GITHUB_CONTEXT_VAULT_REPO_NAME}` : GITHUB_CONTEXT_VAULT_REPO_NAME}</strong>
-            </div>
+              {mode === 'oauth' ? (
+                <div className="github-vault-label">
+                  <span>Vault</span>
+                  <strong>
+                    {auth?.login
+                      ? `${auth.login}/${GITHUB_CONTEXT_VAULT_REPO_NAME}`
+                      : GITHUB_CONTEXT_VAULT_REPO_NAME}
+                  </strong>
+                </div>
+              ) : null}
+            </>
           ) : null}
 
           {error ? (
@@ -455,15 +466,17 @@ export function GitHubImportModal({
         </div>
 
         <div className="github-import-footer">
-          <button
-            type="button"
-            className="github-import-action"
-            disabled={busy !== null || !canSyncSelected}
-            onClick={() => void runSync()}
-            title={canSyncSelected ? 'Sync selected project context' : 'Select a project with a folder'}
-          >
-            {busy === 'sync' ? 'Syncing...' : 'Sync Context'}
-          </button>
+          {CONTEXT_VAULT_SYNC_ENABLED ? (
+            <button
+              type="button"
+              className="github-import-action"
+              disabled={busy !== null || !canSyncSelected}
+              onClick={() => void runSync()}
+              title={canSyncSelected ? 'Sync selected project context' : 'Select a project with a folder'}
+            >
+              {busy === 'sync' ? 'Syncing...' : 'Sync Context'}
+            </button>
+          ) : null}
           <button
             type="button"
             className="github-import-action primary"
