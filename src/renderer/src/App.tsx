@@ -316,7 +316,7 @@ function useSessionScopedTerminals(
   abandonPendingSession: (id: string) => Promise<{ trashed: number }>
   renamePendingSession: (id: string, title: string | null) => Promise<void>
 } {
-  const { tabs, addTerminal, closeTerminal, retagSession } = useTerminalDeck(platform)
+  const { tabs, reconciled, addTerminal, closeTerminal, retagSession } = useTerminalDeck(platform)
   // Seeded from the module store so a platform-switch remount restores any pending
   // slots (and their adoption ability); mirrored back to the store on every change.
   const [pending, setPending] = useState<PendingSessionSlot[]>(() => pendingSessionsByPlatform.get(platform) ?? [])
@@ -325,10 +325,14 @@ function useSessionScopedTerminals(
   }, [platform, pending])
   const { sessions, selectedProject, refreshSessions } = browser
 
-  const { visibleTabs, backgroundTabCount, backgroundSessionCount } = useMemo(
-    () => partitionTerminalTabs(tabs, selectedSessionId),
-    [tabs, selectedSessionId]
-  )
+  const partition = useMemo(() => partitionTerminalTabs(tabs, selectedSessionId), [tabs, selectedSessionId])
+  // Until reconciliation confirms which restored tabs still have a live pty, expose
+  // nothing: rendering a pane would respawn a dead shell, and counting a dead tab
+  // would show a phantom "running" background terminal. Both resolve a beat later
+  // once the worker's live set is known.
+  const visibleTabs = reconciled ? partition.visibleTabs : []
+  const backgroundTabCount = reconciled ? partition.backgroundTabCount : 0
+  const backgroundSessionCount = reconciled ? partition.backgroundSessionCount : 0
 
   const pendingSessions = useMemo(() => pending.map((slot) => toPendingSession(slot, platform)), [pending, platform])
   const terminalSessionLocators = useMemo<TerminalSessionLocator[]>(
@@ -351,8 +355,8 @@ function useSessionScopedTerminals(
     [pending, sessions]
   )
   const backgroundTerminals = useMemo(
-    () => backgroundTerminalLocations(tabs, selectedSessionId, terminalSessionLocators),
-    [selectedSessionId, tabs, terminalSessionLocators]
+    () => (reconciled ? backgroundTerminalLocations(tabs, selectedSessionId, terminalSessionLocators) : []),
+    [reconciled, selectedSessionId, tabs, terminalSessionLocators]
   )
 
   const selectBackgroundTerminal = useCallback(
