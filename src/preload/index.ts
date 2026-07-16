@@ -251,6 +251,7 @@ const api = {
       ipcRenderer.send('terminal:resize', terminalId, cols, rows)
     },
     close: (terminalId: string): void => ipcRenderer.send('terminal:close', terminalId),
+    list: (): Promise<string[]> => ipcRenderer.invoke('terminal:list'),
     onData: (callback: (event: TerminalDataEvent) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, payload: TerminalDataEvent): void => callback(payload)
       ipcRenderer.on('terminal:data', listener)

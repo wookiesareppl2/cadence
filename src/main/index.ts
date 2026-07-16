@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import {
   closeAllTerminals,
   closeTerminal,
+  listTerminals,
   resizeTerminal,
   restartTerminal,
   startTerminal,
@@ -848,6 +849,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     resizeTerminal(terminalId, cols, rows)
   })
   ipcMain.on('terminal:close', (_event, terminalId: string) => closeTerminal(terminalId))
+  ipcMain.handle('terminal:list', () => listTerminals())
 
   createMainWindow()
   if (companionPreferences().enabled) openOpenCodeCompanionWindow()

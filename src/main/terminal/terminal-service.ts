@@ -11,7 +11,7 @@ import { getOpenCodeTerminalRuntime, windowsPathToWsl } from '../opencode/openco
 
 type WorkerRequest = {
   requestId?: number
-  type: 'start' | 'restart' | 'input' | 'resize' | 'close' | 'closeAll'
+  type: 'start' | 'restart' | 'input' | 'resize' | 'close' | 'closeAll' | 'list'
   terminalId?: string
   platform?: TerminalPlatform
   cwd?: string
@@ -26,6 +26,7 @@ type WorkerMessage =
   | { type: 'started'; requestId: number; result: TerminalStartResult }
   | { type: 'error'; requestId?: number; message: string }
   | { type: 'data'; terminalId: string; platform: TerminalPlatform; data: string }
+  | { type: 'list'; requestId: number; terminalIds: string[] }
 
 type PendingRequest = {
   resolve: (value: TerminalStartResult) => void
@@ -37,6 +38,8 @@ const VALID_PLATFORMS = new Set<PlatformId>(PLATFORM_IDS)
 let worker: ChildProcess | null = null
 let nextRequestId = 1
 const pendingRequests = new Map<number, PendingRequest>()
+// Live-terminal-list probes resolve independently of start/restart requests.
+const pendingLists = new Map<number, (terminalIds: string[]) => void>()
 const subscribers = new Set<WebContents>()
 const subscribersWithCleanup = new WeakSet<WebContents>()
 
@@ -87,11 +90,22 @@ function rejectAllPending(error: Error): void {
     request.reject(error)
   }
   pendingRequests.clear()
+  // A dead worker owns no live terminals; resolve empty so startup reconciliation
+  // proceeds (and prunes stale tabs) rather than hanging on a lost probe.
+  for (const resolve of pendingLists.values()) resolve([])
+  pendingLists.clear()
 }
 
 function handleWorkerMessage(message: WorkerMessage): void {
   if (message.type === 'data') {
     relayData(message.terminalId, message.platform, message.data)
+    return
+  }
+
+  if (message.type === 'list') {
+    const resolve = pendingLists.get(message.requestId)
+    pendingLists.delete(message.requestId)
+    resolve?.(message.terminalIds)
     return
   }
 
@@ -221,6 +235,22 @@ export async function restartTerminal(terminalId: string, webContents: WebConten
 export function closeTerminal(terminalId: string): void {
   assertTerminalId(terminalId)
   ensureWorker().send?.({ type: 'close', terminalId } satisfies WorkerRequest)
+}
+
+// The ids of terminals whose pty is alive in the worker right now. The renderer
+// reconciles its persisted tabs against this so a full app restart (which kills the
+// worker and every pty) doesn't leave stale tab records showing as running.
+export function listTerminals(): Promise<string[]> {
+  const requestId = nextRequestId++
+  const child = ensureWorker()
+  return new Promise((resolve) => {
+    pendingLists.set(requestId, resolve)
+    child.send?.({ type: 'list', requestId } satisfies WorkerRequest, (error) => {
+      if (!error) return
+      pendingLists.delete(requestId)
+      resolve([])
+    })
+  })
 }
 
 export function closeAllTerminals(): void {

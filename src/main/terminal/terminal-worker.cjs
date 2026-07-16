@@ -292,6 +292,15 @@ function close(terminalId) {
   session.pty.kill()
 }
 
+// Report the terminal ids with a live pty right now. The renderer persists tab
+// records but the ptys die with this worker (and its parent), so on startup the
+// renderer reconciles its restored tabs against this set — keeping only terminals
+// that truly still exist and dropping stale records that would otherwise show as
+// phantom "running" background terminals.
+function list(requestId) {
+  send({ type: 'list', requestId, terminalIds: [...sessions.keys()] })
+}
+
 function closeAll() {
   if (closeAllInProgress) return
   closeAllInProgress = true
@@ -339,6 +348,7 @@ process.on('message', (message) => {
     if (message.type === 'resize') resize(message.terminalId, message.cols, message.rows)
     if (message.type === 'close') close(message.terminalId)
     if (message.type === 'closeAll') closeAll()
+    if (message.type === 'list') list(message.requestId)
   } catch (error) {
     send({
       type: 'error',

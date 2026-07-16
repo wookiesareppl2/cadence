@@ -13,6 +13,10 @@ export type { TerminalTab } from '@shared/terminal'
 
 export type TerminalDeckState = {
   tabs: TerminalTab[]
+  // False until the deck has reconciled its restored tabs against the worker's live
+  // ptys. Panes must not render before this, or a restored tab whose pty is dead
+  // would spawn a fresh shell instead of being pruned.
+  reconciled: boolean
   addTerminal: (
     sessionKey: string,
     cwd?: string | null,
@@ -131,24 +135,59 @@ function nextDefaultTitle(tabs: TerminalTab[]): string {
   return `Terminal ${max + 1}`
 }
 
-// Tracks which platform decks have already mounted in this app run. The first mount
-// of a run drops pending-keyed tabs (an unadopted pending session is transient and
-// is not re-adopted after a restart); a later remount within the same run — e.g. a
-// platform switch, which unmounts the inactive workspace — keeps them so a brand-new
-// session's live terminal survives the switch and can still be adopted. A renderer
-// reload starts a fresh run and clears this, restoring restart semantics.
-const deckMountedPlatforms = new Set<TerminalPlatform>()
+// Tracks which platform decks have already reconciled their restored tabs against
+// the worker's live ptys in this app run. Reconciliation runs on the first mount of
+// a run; a later remount within the same run — e.g. a platform switch — reads the
+// already-pruned storage, so it starts reconciled. A renderer reload starts a fresh
+// run and clears this, so reconciliation runs again (and the still-alive worker's
+// ptys are kept).
+const reconciledPlatforms = new Set<TerminalPlatform>()
 
 // Terminal tabs are persisted so a renderer reload restores the same ids — the
 // worker keeps each pty alive across reloads, so restoring the id reconnects to
-// the live shell (with its scrollback) instead of orphaning it.
+// the live shell (with its scrollback) instead of orphaning it. A full app restart,
+// by contrast, kills the worker and every pty, so restored tabs are reconciled
+// against the worker's live set below and any dead record is dropped.
 export function useTerminalDeck(platform: TerminalPlatform): TerminalDeckState {
-  const [tabs, setTabs] = useState<TerminalTab[]>(() => loadTabs(platform, deckMountedPlatforms.has(platform)))
+  const [tabs, setTabs] = useState<TerminalTab[]>(() => loadTabs(platform, true))
+  const [reconciled, setReconciled] = useState<boolean>(() => reconciledPlatforms.has(platform))
+  // The ids present at load are the only tabs reconciliation may prune; a terminal
+  // opened during the brief probe window is genuinely new and must never be dropped.
+  const restoredIdsRef = useRef<Set<string> | null>(null)
+  if (restoredIdsRef.current === null) restoredIdsRef.current = new Set(tabs.map((tab) => tab.id))
 
-  // Recorded after commit (never during render) so it is robust to double-invoked
-  // initializers; left set on unmount so the next remount is treated as a remount.
+  // Prune restored tabs down to the ptys the worker actually still owns. On a full
+  // restart the worker is empty, so every stale tab is dropped (no phantom "running"
+  // background terminals); on a renderer reload the live ptys are kept and reconnect.
+  // A failed probe leaves tabs untouched so a transient IPC error never wipes live
+  // terminals. Runs once per platform per run.
   useEffect(() => {
-    deckMountedPlatforms.add(platform)
+    if (reconciledPlatforms.has(platform)) {
+      setReconciled(true)
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      let live: string[] | null = null
+      try {
+        live = (await window.dashboard?.terminal?.list?.()) ?? null
+      } catch {
+        live = null
+      }
+      if (cancelled) return
+      if (live) {
+        const alive = new Set(live)
+        const restored = restoredIdsRef.current ?? new Set<string>()
+        // Keep a tab if its pty is alive, or if it was opened after load (not a
+        // restored record and so not this pass's concern).
+        setTabs((prev) => prev.filter((tab) => alive.has(tab.id) || !restored.has(tab.id)))
+      }
+      reconciledPlatforms.add(platform)
+      setReconciled(true)
+    })()
+    return () => {
+      cancelled = true
+    }
   }, [platform])
 
   useEffect(() => {
@@ -212,7 +251,7 @@ export function useTerminalDeck(platform: TerminalPlatform): TerminalDeckState {
     )
   }, [])
 
-  return { tabs, addTerminal, closeTerminal, retagSession }
+  return { tabs, reconciled, addTerminal, closeTerminal, retagSession }
 }
 
 // xterm hands a link provider one buffer row at a time, but a long path wider
@@ -392,18 +431,17 @@ export const TerminalDeck = memo(function TerminalDeck({
           {backgroundSessions.length > 0 ? (
             backgroundSessions.map((session) => {
               const location = session.cwd ?? session.projectPath ?? 'No working directory'
+              const selectable = Boolean(session.projectId)
               const countLabel = `${session.terminalCount} ${session.terminalCount === 1 ? 'terminal' : 'terminals'}`
               return (
-                // Every background session jumps by its session key, which is always
-                // present — even a session Cadence can no longer resolve to a project
-                // (an "Unknown project" orphan) stays reachable so its live terminal
-                // can be opened and closed rather than stranded here forever.
                 <button
                   key={session.sessionKey}
                   type="button"
                   role="menuitem"
                   className="terminal-bg-row"
+                  disabled={!selectable}
                   onClick={() => {
+                    if (!selectable) return
                     onSelectBackgroundTerminal?.(session.terminals[0])
                     setBackgroundMenuOpen(false)
                   }}
