@@ -1,6 +1,12 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, JSX, PointerEvent as ReactPointerEvent } from 'react'
-import type { ProjectTask } from '@shared/project-workspace'
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import type {
+  CSSProperties,
+  DragEvent as ReactDragEvent,
+  JSX,
+  KeyboardEvent as ReactKeyboardEvent,
+  PointerEvent as ReactPointerEvent
+} from 'react'
+import { reorderProjectTasks, type ProjectTask, type TaskDropEdge } from '@shared/project-workspace'
 // Lazy-loaded so TipTap/ProseMirror (~900 kB) is only fetched when the user opens
 // the Notes dock, instead of being parsed at every startup. The dock is collapsed
 // by default, so most sessions never load it.
@@ -99,10 +105,44 @@ function TasksPanel({ workspace, openCount }: { workspace: ProjectWorkspaceState
   const { tasks } = workspace.workspace
   const [draft, setDraft] = useState('')
   const [tab, setTab] = useState<'open' | 'done'>('open')
+  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null)
+  const [dropTarget, setDropTarget] = useState<{ taskId: string; edge: TaskDropEdge } | null>(null)
+  const [reorderAnnouncement, setReorderAnnouncement] = useState('')
+  const reorderHelpId = useId()
   const doneCount = tasks.length - openCount
 
-  // Tabs split open from done; each keeps insertion order (new open tasks at bottom).
+  // Tabs split open from done; each preserves its order from the persisted task array.
   const visible = useMemo(() => tasks.filter((task) => (tab === 'open' ? !task.done : task.done)), [tasks, tab])
+
+  const reorderTask = useCallback(
+    (sourceId: string, targetId: string, edge: TaskDropEdge) => {
+      const reordered = reorderProjectTasks(tasks, sourceId, targetId, edge)
+      if (reordered === tasks) return
+
+      workspace.reorderTask(sourceId, targetId, edge)
+      const moved = reordered.find((task) => task.id === sourceId)
+      if (!moved) return
+      const reorderedVisible = reordered.filter((task) => task.done === moved.done)
+      const position = reorderedVisible.findIndex((task) => task.id === sourceId) + 1
+      setReorderAnnouncement(`${moved.text} moved to position ${position} of ${reorderedVisible.length}.`)
+    },
+    [tasks, workspace]
+  )
+
+  const moveTaskBy = useCallback(
+    (taskId: string, offset: -1 | 1) => {
+      const index = visible.findIndex((task) => task.id === taskId)
+      const target = visible[index + offset]
+      if (!target) return
+      reorderTask(taskId, target.id, offset < 0 ? 'before' : 'after')
+    },
+    [reorderTask, visible]
+  )
+
+  const clearDragState = useCallback(() => {
+    setDraggedTaskId(null)
+    setDropTarget(null)
+  }, [])
 
   const submit = (): void => {
     workspace.addTask(draft)
@@ -152,7 +192,10 @@ function TasksPanel({ workspace, openCount }: { workspace: ProjectWorkspaceState
         </button>
       </div>
 
-      <div className="workspace-task-list">
+      <p id={reorderHelpId} className="workspace-task-reorder-help">
+        Drag the reorder handle, or focus it and press the Up or Down arrow key.
+      </p>
+      <div className="workspace-task-list" role="list">
         {visible.length === 0 ? (
           <div className="workspace-task-empty">{tab === 'open' ? 'No open tasks.' : 'No completed tasks.'}</div>
         ) : (
@@ -160,13 +203,44 @@ function TasksPanel({ workspace, openCount }: { workspace: ProjectWorkspaceState
             <TaskRow
               key={task.id}
               task={task}
+              reorderHelpId={reorderHelpId}
+              dragActive={draggedTaskId !== null}
+              dragging={draggedTaskId === task.id}
+              dropEdge={dropTarget?.taskId === task.id ? dropTarget.edge : null}
               onToggle={() => workspace.toggleTask(task.id)}
               onEdit={(text) => workspace.editTask(task.id, text)}
+              onMove={(offset) => moveTaskBy(task.id, offset)}
+              onDragStart={(event) => {
+                event.dataTransfer.effectAllowed = 'move'
+                event.dataTransfer.setData('text/plain', task.id)
+                const row = event.currentTarget.closest('.workspace-task')
+                if (row instanceof HTMLElement) event.dataTransfer.setDragImage(row, 12, 12)
+                setDraggedTaskId(task.id)
+                setDropTarget(null)
+              }}
+              onDragOver={(edge) => {
+                if (!draggedTaskId || draggedTaskId === task.id) {
+                  setDropTarget(null)
+                  return
+                }
+                setDropTarget({ taskId: task.id, edge })
+              }}
+              onDragLeave={() => {
+                setDropTarget((current) => (current?.taskId === task.id ? null : current))
+              }}
+              onDrop={(edge) => {
+                if (draggedTaskId) reorderTask(draggedTaskId, task.id, edge)
+                clearDragState()
+              }}
+              onDragEnd={clearDragState}
               onRemove={() => workspace.removeTask(task.id)}
             />
           ))
         )}
       </div>
+      <p className="workspace-task-reorder-help" aria-live="polite" aria-atomic="true">
+        {reorderAnnouncement}
+      </p>
 
       {tab === 'done' && doneCount > 0 ? (
         <div className="workspace-task-footer">
@@ -181,13 +255,33 @@ function TasksPanel({ workspace, openCount }: { workspace: ProjectWorkspaceState
 
 function TaskRow({
   task,
+  reorderHelpId,
+  dragActive,
+  dragging,
+  dropEdge,
   onToggle,
   onEdit,
+  onMove,
+  onDragStart,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onDragEnd,
   onRemove
 }: {
   task: ProjectTask
+  reorderHelpId: string
+  dragActive: boolean
+  dragging: boolean
+  dropEdge: TaskDropEdge | null
   onToggle: () => void
   onEdit: (text: string) => void
+  onMove: (offset: -1 | 1) => void
+  onDragStart: (event: ReactDragEvent<HTMLButtonElement>) => void
+  onDragOver: (edge: TaskDropEdge) => void
+  onDragLeave: () => void
+  onDrop: (edge: TaskDropEdge) => void
+  onDragEnd: () => void
   onRemove: () => void
 }): JSX.Element {
   const [editing, setEditing] = useState(false)
@@ -219,8 +313,52 @@ function TaskRow({
     setEditing(false)
   }
 
+  const dropEdgeFromEvent = (event: ReactDragEvent<HTMLDivElement>): TaskDropEdge => {
+    const bounds = event.currentTarget.getBoundingClientRect()
+    return event.clientY < bounds.top + bounds.height / 2 ? 'before' : 'after'
+  }
+
+  const moveWithKeyboard = (event: ReactKeyboardEvent<HTMLButtonElement>): void => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+    event.preventDefault()
+    onMove(event.key === 'ArrowUp' ? -1 : 1)
+  }
+
   return (
-    <div className={`workspace-task ${task.done ? 'done' : ''}`}>
+    <div
+      className={`workspace-task ${task.done ? 'done' : ''} ${dragging ? 'dragging' : ''} ${dropEdge ? `drop-${dropEdge}` : ''}`}
+      role="listitem"
+      onDragOver={(event) => {
+        if (!dragActive || dragging) return
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'move'
+        onDragOver(dropEdgeFromEvent(event))
+      }}
+      onDragLeave={(event) => {
+        const nextTarget = event.relatedTarget
+        if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return
+        onDragLeave()
+      }}
+      onDrop={(event) => {
+        if (!dragActive) return
+        event.preventDefault()
+        onDrop(dropEdgeFromEvent(event))
+      }}
+    >
+      <button
+        type="button"
+        className="workspace-task-reorder"
+        draggable
+        aria-label={`Reorder task: ${task.text}`}
+        aria-describedby={reorderHelpId}
+        aria-keyshortcuts="ArrowUp ArrowDown"
+        title="Drag to reorder; use Up or Down when focused"
+        onKeyDown={moveWithKeyboard}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+      >
+        <TaskReorderIcon />
+      </button>
       <button
         type="button"
         className="workspace-task-check"
@@ -291,6 +429,14 @@ function TaskRow({
         </button>
       )}
     </div>
+  )
+}
+
+function TaskReorderIcon(): JSX.Element {
+  return (
+    <svg className="workspace-task-reorder-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M5 4h.01M11 4h.01M5 8h.01M11 8h.01M5 12h.01M11 12h.01" />
+    </svg>
   )
 }
 

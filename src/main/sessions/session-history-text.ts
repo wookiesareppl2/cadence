@@ -22,9 +22,15 @@ export function isCodexSyntheticUserText(text: string | null): boolean {
 
   if (/^<skill\b[^>]*>[\s\S]*<\/skill>$/i.test(value)) return true
 
+  // Codex appends its generated environment_context block to the standalone
+  // AGENTS.md instruction row. Remove known synthetic envelopes before checking
+  // where the instruction payload ends, while leaving any real trailing request
+  // intact so it is not mistaken for startup scaffolding.
+  const withoutSyntheticBlocks = stripDropBlocks(value).trim()
+
   return (
-    /^#\s+AGENTS\.md instructions for [^\n]+/i.test(value) &&
-    /<INSTRUCTIONS>[\s\S]*<\/INSTRUCTIONS>\s*$/i.test(value)
+    /^#\s+AGENTS\.md instructions for [^\n]+/i.test(withoutSyntheticBlocks) &&
+    /<INSTRUCTIONS>[\s\S]*<\/INSTRUCTIONS>\s*$/i.test(withoutSyntheticBlocks)
   )
 }
 
@@ -39,6 +45,8 @@ export function cleanHistoryText(text: string | null, options: HistoryTextOption
 
   const commandNames = extractCommandNames(value)
   const skillNames = extractSkillNames(value)
+
+  if (commandPrefix === '/') value = stripCodexAgentInstructions(value)
 
   value = stripDropBlocks(value)
     .replace(/<skill\b[^>]*>[\s\S]*?<\/skill>/gi, ' ')
@@ -73,6 +81,13 @@ function stripDropBlocks(text: string): string {
     const block = new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}>`, 'gi')
     return value.replace(block, ' ')
   }, text)
+}
+
+function stripCodexAgentInstructions(text: string): string {
+  return text.replace(
+    /^\s*#\s+AGENTS\.md instructions for [^\n]+\s*\n\s*<INSTRUCTIONS>[\s\S]*?<\/INSTRUCTIONS>/i,
+    ' '
+  )
 }
 
 function commandFallback(names: string[], prefix: '$' | '/'): string | null {

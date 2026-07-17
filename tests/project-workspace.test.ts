@@ -5,6 +5,7 @@ import {
   MAX_TASKS,
   MAX_TASK_TEXT_LENGTH,
   projectWorkspaceKey,
+  reorderProjectTasks,
   sanitizeProjectWorkspace
 } from '../src/shared/project-workspace'
 
@@ -84,5 +85,44 @@ describe('isProjectWorkspaceEmpty', () => {
     expect(isProjectWorkspaceEmpty({ notes: '   \n ', tasks: [] })).toBe(true)
     expect(isProjectWorkspaceEmpty({ notes: 'hi', tasks: [] })).toBe(false)
     expect(isProjectWorkspaceEmpty({ notes: '', tasks: [{ id: 'a', text: 'x', done: false, createdAt: 1 }] })).toBe(false)
+  })
+})
+
+describe('reorderProjectTasks', () => {
+  const tasks = [
+    { id: 'open-a', text: 'First open', done: false, createdAt: 1 },
+    { id: 'done-a', text: 'First done', done: true, createdAt: 2 },
+    { id: 'open-b', text: 'Second open', done: false, createdAt: 3 },
+    { id: 'done-b', text: 'Second done', done: true, createdAt: 4 },
+    { id: 'open-c', text: 'Third open', done: false, createdAt: 5 }
+  ]
+
+  it('moves a task before another task while preserving the other status order', () => {
+    const reordered = reorderProjectTasks(tasks, 'open-c', 'open-a', 'before')
+    expect(reordered.map((task) => task.id)).toEqual(['open-c', 'done-a', 'open-a', 'done-b', 'open-b'])
+    expect(reordered.filter((task) => task.done).map((task) => task.id)).toEqual(['done-a', 'done-b'])
+  })
+
+  it('moves a task after another task while preserving the other status order', () => {
+    const reordered = reorderProjectTasks(tasks, 'open-a', 'open-c', 'after')
+    expect(reordered.map((task) => task.id)).toEqual(['open-b', 'done-a', 'open-c', 'done-b', 'open-a'])
+    expect(reordered.filter((task) => task.done).map((task) => task.id)).toEqual(['done-a', 'done-b'])
+  })
+
+  it('reorders completed tasks without changing any open-task slots', () => {
+    const reordered = reorderProjectTasks(tasks, 'done-b', 'done-a', 'before')
+    expect(reordered.map((task) => task.id)).toEqual(['open-a', 'done-b', 'open-b', 'done-a', 'open-c'])
+    expect(reordered.filter((task) => !task.done).map((task) => task.id)).toEqual([
+      'open-a',
+      'open-b',
+      'open-c'
+    ])
+  })
+
+  it('returns the original array for cross-status, missing, self, and already-ordered moves', () => {
+    expect(reorderProjectTasks(tasks, 'open-a', 'done-a', 'before')).toBe(tasks)
+    expect(reorderProjectTasks(tasks, 'missing', 'open-a', 'before')).toBe(tasks)
+    expect(reorderProjectTasks(tasks, 'open-a', 'open-a', 'after')).toBe(tasks)
+    expect(reorderProjectTasks(tasks, 'open-a', 'open-b', 'before')).toBe(tasks)
   })
 })

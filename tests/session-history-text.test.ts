@@ -8,7 +8,11 @@ describe('session history text cleanup', () => {
         '# AGENTS.md instructions for C:\\Project',
         '<INSTRUCTIONS>',
         '# Project instructions',
-        '</INSTRUCTIONS>'
+        '</INSTRUCTIONS>',
+        '<environment_context>',
+        '  <cwd>C:\\Project</cwd>',
+        '  <shell>powershell</shell>',
+        '</environment_context>'
       ].join('\n'),
       '$start',
       [
@@ -30,6 +34,22 @@ describe('session history text cleanup', () => {
     const text = ['Please review this skill.', '<skill>', '<name>start</name>', '</skill>'].join('\n')
 
     expect(isCodexSyntheticUserText(text)).toBe(false)
+  })
+
+  it('does not drop a real request after injected startup context', () => {
+    const text = [
+      '# AGENTS.md instructions for C:\\Project',
+      '<INSTRUCTIONS>',
+      '# Project instructions',
+      '</INSTRUCTIONS>',
+      '<environment_context>',
+      '  <cwd>C:\\Project</cwd>',
+      '</environment_context>',
+      'Please fix the History sidebar.'
+    ].join('\n')
+
+    expect(isCodexSyntheticUserText(text)).toBe(false)
+    expect(cleanHistoryText(text, { commandPrefix: '/' })).toBe('Please fix the History sidebar.')
   })
 
   it('extracts the Codex IDE request body without environment context', () => {

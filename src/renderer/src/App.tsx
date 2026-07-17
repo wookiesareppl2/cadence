@@ -45,7 +45,7 @@ import type {
 import type { SearchResultItem } from '@shared/search'
 import type { SetupStatus } from '@shared/setup'
 
-const PLAN_POLL_INTERVAL_MS = 60_000
+const PLAN_POLL_INTERVAL_MS = 120_000
 const SETUP_STATUS_CACHE_KEY = 'setup:last-status:v1'
 // Splash: keep it on screen long enough to read (no jarring flash on a warm cache),
 // fade out once the active platform's first project scan resolves, and never trap

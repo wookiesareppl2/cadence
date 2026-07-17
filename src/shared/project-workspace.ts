@@ -15,6 +15,8 @@ export type ProjectWorkspace = {
   tasks: ProjectTask[]
 }
 
+export type TaskDropEdge = 'before' | 'after'
+
 export const MAX_NOTES_LENGTH = 100_000
 export const MAX_TASKS = 500
 export const MAX_TASK_TEXT_LENGTH = 2_000
@@ -34,6 +36,40 @@ export function projectWorkspaceKey(projectId: string): string {
 
 export function isProjectWorkspaceEmpty(workspace: ProjectWorkspace): boolean {
   return workspace.notes.trim().length === 0 && workspace.tasks.length === 0
+}
+
+// Reorder one task relative to another task in the same status list. Open and
+// completed tasks share one persisted array, so the status guard prevents a drag
+// from silently moving a task across the Open / Done boundary.
+export function reorderProjectTasks(
+  tasks: ProjectTask[],
+  sourceId: string,
+  targetId: string,
+  edge: TaskDropEdge
+): ProjectTask[] {
+  const sourceIndex = tasks.findIndex((task) => task.id === sourceId)
+  const targetIndex = tasks.findIndex((task) => task.id === targetId)
+  if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return tasks
+
+  const source = tasks[sourceIndex]
+  const target = tasks[targetIndex]
+  if (!source || !target || source.done !== target.done) return tasks
+
+  const sameStatusTasks = tasks.filter((task) => task.done === source.done)
+  const sameStatusSourceIndex = sameStatusTasks.findIndex((task) => task.id === sourceId)
+  const [moved] = sameStatusTasks.splice(sameStatusSourceIndex, 1)
+  if (!moved) return tasks
+
+  const adjustedTargetIndex = sameStatusTasks.findIndex((task) => task.id === targetId)
+  const insertionIndex = adjustedTargetIndex + (edge === 'after' ? 1 : 0)
+  sameStatusTasks.splice(insertionIndex, 0, moved)
+
+  let statusIndex = 0
+  const reordered = tasks.map((task) =>
+    task.done === source.done ? (sameStatusTasks[statusIndex++] ?? task) : task
+  )
+
+  return reordered.every((task, index) => task.id === tasks[index]?.id) ? tasks : reordered
 }
 
 // Trust boundary: clamp and coerce anything coming off disk or over IPC before it

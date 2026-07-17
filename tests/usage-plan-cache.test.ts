@@ -35,7 +35,7 @@ describe('createCachedPlanUsage', () => {
     expect(cached.refresh?.state).toBe('cached')
     expect(cached.fiveHour?.utilization).toBe(20)
 
-    vi.advanceTimersByTime(59_000)
+    vi.advanceTimersByTime(119_000)
     const stillCached = await getUsage()
 
     expect(fetcher).toHaveBeenCalledTimes(1)
