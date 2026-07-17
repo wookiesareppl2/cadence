@@ -46,6 +46,8 @@ export function cleanHistoryText(text: string | null, options: HistoryTextOption
   const commandNames = extractCommandNames(value)
   const skillNames = extractSkillNames(value)
 
+  if (commandPrefix === '/') value = stripCodexAgentInstructions(value)
+
   value = stripDropBlocks(value)
     .replace(/<skill\b[^>]*>[\s\S]*?<\/skill>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
@@ -79,6 +81,13 @@ function stripDropBlocks(text: string): string {
     const block = new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}>`, 'gi')
     return value.replace(block, ' ')
   }, text)
+}
+
+function stripCodexAgentInstructions(text: string): string {
+  return text.replace(
+    /^\s*#\s+AGENTS\.md instructions for [^\n]+\s*\n\s*<INSTRUCTIONS>[\s\S]*?<\/INSTRUCTIONS>/i,
+    ' '
+  )
 }
 
 function commandFallback(names: string[], prefix: '$' | '/'): string | null {

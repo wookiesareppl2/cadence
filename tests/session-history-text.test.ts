@@ -49,6 +49,7 @@ describe('session history text cleanup', () => {
     ].join('\n')
 
     expect(isCodexSyntheticUserText(text)).toBe(false)
+    expect(cleanHistoryText(text, { commandPrefix: '/' })).toBe('Please fix the History sidebar.')
   })
 
   it('extracts the Codex IDE request body without environment context', () => {
