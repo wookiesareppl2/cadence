@@ -12,6 +12,22 @@ const DROP_BLOCK_TAGS = [
   'system-reminder'
 ]
 
+// Codex records startup instructions and expanded skills as `user` messages in
+// the rollout even though the user never typed them. Keep this check separate
+// from cleanHistoryText: Claude can use the same envelopes as useful `Context`
+// rows, while Codex must drop the standalone synthetic rows entirely.
+export function isCodexSyntheticUserText(text: string | null): boolean {
+  const value = (text ?? '').replace(/\r/g, '').trim()
+  if (!value) return false
+
+  if (/^<skill\b[^>]*>[\s\S]*<\/skill>$/i.test(value)) return true
+
+  return (
+    /^#\s+AGENTS\.md instructions for [^\n]+/i.test(value) &&
+    /<INSTRUCTIONS>[\s\S]*<\/INSTRUCTIONS>\s*$/i.test(value)
+  )
+}
+
 export function cleanHistoryText(text: string | null, options: HistoryTextOptions = {}): string | null {
   if (!text) return null
 

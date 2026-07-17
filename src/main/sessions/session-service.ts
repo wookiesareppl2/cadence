@@ -4,7 +4,7 @@ import type { AssistantSession, AssistantSessionHistory, AssistantSessionHistory
 import type { PlatformId } from '@shared/platform'
 import { contentText, resolveSessionTitle, titleCandidate, type TitleMessage } from './session-title'
 import { isCodexSubagentSessionMeta, rankRolloutFiles } from './codex-rollout'
-import { cleanHistoryText } from './session-history-text'
+import { cleanHistoryText, isCodexSyntheticUserText } from './session-history-text'
 import {
   isClaudeFinalAssistantMessage,
   isCodexFinalAssistantMessage
@@ -374,13 +374,15 @@ function codexHistoryEntry(row: any, index: number): HistoryDraft | null {
   if (payload?.type === 'message') {
     const role = payload.role === 'assistant' ? 'assistant' : payload.role === 'user' ? 'user' : null
     if (!role) return null
+    const text = contentText(payload.content)
+    if (role === 'user' && isCodexSyntheticUserText(text)) return null
     if (role === 'assistant' && !isCodexFinalAssistantMessage(payload)) return null
     return historyEntry({
       row,
       index,
       role,
       label: role === 'assistant' ? 'Assistant' : 'User',
-      text: contentText(payload.content),
+      text,
       commandPrefix: '/'
     })
   }

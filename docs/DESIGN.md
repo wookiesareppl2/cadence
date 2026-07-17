@@ -30,7 +30,7 @@ These MUST look and behave identically regardless of dock edge.
 
 - **Toggle glyph:** a single filled-triangle family pointing toward the dock edge when open, inward when collapsed: top `▴`/`▾`, bottom `▾`/`▴`, left `◂`/`▸`, right `▸`/`◂`. No other chevron families.
 - **Toggle icon style:** `--font-mono`, **15px**, colour `--text-2`, **no box** (no border/background). Use the shared `.panel-collapse-toggle` class for header toggles.
-- **Global panel controls:** `Collapse all` / `Expand all` live in the titlebar as compact text actions. They apply only to the active platform and set Projects & Sessions, Files, History, and Notes & Tasks together.
+- **Global panel controls:** `Collapse all` / `Expand all` live in the titlebar's **View** menu. They apply only to the active platform and set Projects & Sessions, Files, History, and Notes & Tasks together.
 - **Hover model (matches the History panel):**
   - *Expanded* → only the triangle/chevron whitens to `--text-1`. No section/background highlight.
   - *Collapsed bar or rail* → the clickable region gets the **accent border**: `background: var(--surface-2); border-color: var(--accent);`. Use the element's real 1px border or the collapsed parent panel's border, not an inset box-shadow, so rounded corners render cleanly.
@@ -89,6 +89,16 @@ Use a **two-step inline confirm**, not a blocking dialog: the `🗑` swaps to `D
 
 - **Modals** (`*-modal-backdrop` + dialog): `position: fixed; inset: 46px 0 0 0` (below the titlebar), centered, `rgba(0,0,0,0.5)` backdrop, dialog on `--surface-1` with a soft shadow; close on backdrop click + Esc.
 - **Tooltips/menus/context menus**: `position: fixed`, positioned in JS from a rect (so they escape scroll clipping); dismiss on Esc / outside-click / scroll.
+
+### Settings surface
+
+Application-wide preferences live in the Settings modal opened from **Tools → Settings**.
+Use a compact category rail on the left and bordered preference groups on the right;
+the first category is General. Settings copy must state its scope and when it takes
+effect. Binary preferences use the shared switch treatment: muted `--surface-3` track,
+accent track when enabled, and a high-contrast circular thumb. The whole control must
+be a keyboard-focusable `role="switch"` with `aria-checked`; do not hide a checkbox
+behind an unlabelled decorative track.
 
 ### Repository import / account modals
 
@@ -345,39 +355,34 @@ For non-sidebar show/hide (vertical reveal), use the shared `.collapsible-conten
 
 ## Titlebar (responsive)
 
-The 46px titlebar **flows** — it is `display: flex` with three regions: `.titlebar-brand`
-(left), `.platform-switcher` (center), `.titlebar-right` (the action group). The brand
-and right regions are `flex: 1 1 0; min-width: 0`, which keeps the switcher centered when
-there's room. **Never pin titlebar regions with `position: absolute`** — that was the old
-approach and it let the right group slide under the centered switcher. The only absolute
-child is `.window-controls` (the OS min/max/close strip, pinned `right: 0`); the titlebar
-reserves it with `padding-right: 146px` (3 × 46px strip + an 8px gap, matching the
-inter-action gap, so the search bar doesn't butt against the minimize button's hover fill).
+The 46px titlebar **flows** with three regions: `.titlebar-brand` (brand lockup plus
+application menus), `.platform-switcher` (center), and `.titlebar-right` (search only).
+The brand and right regions are `flex: 1 1 0; min-width: 0`, which keeps the switcher
+centered when there is room. **Never pin these regions with `position: absolute`.** The
+only absolute child is `.window-controls` (the OS min/max/close strip, pinned `right: 0`);
+the titlebar reserves it with `padding-right: 146px`.
 
-**Overlap is NOT automatic — it is prevented by keeping the right group narrow.** With the
-equal-flex centering, if the right group's content is wider than its half of the bar it
-overflows *leftward over the switcher* (justify-content is flex-end). Buttons don't shrink,
-so the only way to keep it narrow is to collapse action labels to icons early enough. The
-tiers below (media queries in `styles.css`, tracking the 1180px minimum window width) do
-that:
-- **≤1560px** — hide `.app-version`, and collapse **every** action to its icon at once:
-  Connections / Memory / Commands (`.titlebar-action-label` hides) **and** Collapse all /
-  Expand all (`.panel-layout-action-label` → `.panel-layout-action-icon`). Shrink the
-  switcher `min-width`. Early + all-together so the group stays compact on common laptop
-  widths (≈1366–1536) no matter how many actions exist.
-- **≤1340px** — the search collapses to its glyph (see below); switcher `min-width` shrinks again.
-- **≤1200px** — `.titlebar-brand-name` hides, leaving the logo only.
+Secondary actions use two low-chrome desktop-style menus immediately after the Cadence
+lockup:
 
-> **Rule when adding/removing a titlebar action (this is mandatory, not optional):** give
-> it an SVG icon **and** a label in a `*-action-label` span so it collapses in the ≤1560
-> tier; never add a label-only action. After adding one, re-check that the ≤1560 icon-mode
-> group still clears the centered switcher at the 1180px minimum width. Adding an action
-> without doing this is exactly what re-introduces the "Collapse all overlaps the switcher"
-> bug.
+- **View:** Collapse all, Expand all.
+- **Tools:** Connections, Memory, Commands, Settings.
 
-**Collapsible label pattern:** an action carries both an SVG icon (per the line-icon recipe
-above, reusing `.titlebar-action-icon`) and a `.titlebar-action-label` / `.panel-layout-action-label`
-span; the tier toggles which shows. Use this instead of duplicating buttons.
+Menu triggers are concise text labels because they establish application navigation,
+not isolated toolbar actions. Menu rows carry the canonical 14px SVG line icon, a label,
+and optional short helper copy. Active toggle-like surfaces (Memory and Commands) show a
+small accent state marker. Menus are fixed-position overlays measured from their trigger;
+only one opens at a time, and they close on selection, Esc, outside-click, or scroll.
+
+Responsive tiers track the 1180px minimum window width:
+
+- **≤1560px** — hide `.app-version` and reduce platform-tab width.
+- **≤1340px** — compact search to its glyph (see below) and reduce platform tabs again.
+- **≤1200px** — hide the brand wordmark/version lockup, retaining the logo and menus.
+
+When adding a titlebar destination, place it in the most specific existing menu and give
+its row a canonical SVG icon. Add a new top-level menu only when several related actions
+justify a stable category; do not restore individual framed titlebar buttons.
 
 **Compact search:** below 1340px the `.titlebar-search` collapses to just its glyph (the
 input stays present at zero width; the container's `onClick` focuses it so the glyph is

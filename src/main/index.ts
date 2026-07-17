@@ -82,6 +82,9 @@ import { DEFAULT_WINDOW_BOUNDS } from './window-state-utils'
 import { readWindowState, registerWindowStatePersistence } from './window-state'
 import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
 import { APP_NAME } from '@shared/brand'
+import type { AppSettingsUpdate } from '@shared/app-settings'
+import { readAppSettings, updateAppSettings } from './settings/app-settings-service'
+import { installManagedMergeReviewWorkflow } from './merge-review/merge-review-workflow'
 import {
   TERMINAL_DETACHED_CLOSED_CHANNEL,
   type TerminalDetachedEvent
@@ -659,6 +662,12 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   })
 
   ipcMain.handle('app:version', () => app.getVersion())
+  ipcMain.handle('settings:get', () => readAppSettings())
+  ipcMain.handle('settings:update', async (_event, update: AppSettingsUpdate) => {
+    if (update?.mergeReviewEnabled === true) await installManagedMergeReviewWorkflow()
+    const settings = await updateAppSettings(update)
+    return settings
+  })
   // Clipboard moved to the main process so the renderer can run under sandbox:true
   // (the sandboxed preload can't import electron's clipboard module directly).
   ipcMain.handle('clipboard:read', () => clipboard.readText())
@@ -836,7 +845,17 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     wslDistro?: string,
     managed?: boolean
   ) =>
-    startTerminal(terminalId, platform, event.sender, cwd, wslDistro, managed)
+    readAppSettings().then((settings) =>
+      startTerminal(
+        terminalId,
+        platform,
+        event.sender,
+        cwd,
+        wslDistro,
+        managed,
+        settings.mergeReviewEnabled
+      )
+    )
   )
   ipcMain.handle('terminal:open-detached', (_event, platform: PlatformId) => {
     if (!PLATFORM_CONFIG[platform]) return false
@@ -846,7 +865,11 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     if (!PLATFORM_CONFIG[platform]) return false
     return attachDetachedTerminalWindow(platform)
   })
-  ipcMain.handle('terminal:restart', (event, terminalId: string) => restartTerminal(terminalId, event.sender))
+  ipcMain.handle('terminal:restart', (event, terminalId: string) =>
+    readAppSettings().then((settings) =>
+      restartTerminal(terminalId, event.sender, settings.mergeReviewEnabled)
+    )
+  )
   ipcMain.on('terminal:input', (_event, terminalId: string, data: string) => writeTerminal(terminalId, data))
   ipcMain.on('terminal:resize', (_event, terminalId: string, cols: number, rows: number) => {
     resizeTerminal(terminalId, cols, rows)
@@ -855,6 +878,12 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   ipcMain.handle('terminal:list', () => listTerminals())
 
   createMainWindow()
+  void readAppSettings()
+    .then((settings) => {
+      if (settings.mergeReviewEnabled) return installManagedMergeReviewWorkflow()
+      return undefined
+    })
+    .catch((error) => console.error('Could not install the managed merge-review workflow', error))
   if (companionPreferences().enabled) openOpenCodeCompanionWindow()
   unsubscribeOpenCodeSlimUpdates = subscribeOpenCodeSlimUpdates(broadcastOpenCodeSlimUpdateStatus)
   stopOpenCodeSlimUpdateChecks = initOpenCodeSlimUpdateChecks(() => focusExistingWindow())
