@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   emptyProjectWorkspace,
   MAX_TASK_TEXT_LENGTH,
+  reorderProjectTasks,
   type ProjectTask,
-  type ProjectWorkspace
+  type ProjectWorkspace,
+  type TaskDropEdge
 } from '@shared/project-workspace'
 
 // Tasks update state instantly (responsive UI) but disk writes are debounced so a
@@ -18,6 +20,7 @@ export type ProjectWorkspaceState = {
   addTask: (text: string) => void
   toggleTask: (id: string) => void
   editTask: (id: string, text: string) => void
+  reorderTask: (sourceId: string, targetId: string, edge: TaskDropEdge) => void
   removeTask: (id: string) => void
   clearCompleted: () => void
 }
@@ -163,9 +166,29 @@ export function useProjectWorkspace(projectId: string | null): ProjectWorkspaceS
     [apply]
   )
 
+  const reorderTask = useCallback(
+    (sourceId: string, targetId: string, edge: TaskDropEdge) => {
+      const tasks = reorderProjectTasks(workspaceRef.current.tasks, sourceId, targetId, edge)
+      if (tasks === workspaceRef.current.tasks) return
+      apply({ ...workspaceRef.current, tasks })
+    },
+    [apply]
+  )
+
   const clearCompleted = useCallback(() => {
     apply({ ...workspaceRef.current, tasks: workspaceRef.current.tasks.filter((task) => !task.done) })
   }, [apply])
 
-  return { workspace, loading, ready, setNotes, addTask, toggleTask, editTask, removeTask, clearCompleted }
+  return {
+    workspace,
+    loading,
+    ready,
+    setNotes,
+    addTask,
+    toggleTask,
+    editTask,
+    reorderTask,
+    removeTask,
+    clearCompleted
+  }
 }

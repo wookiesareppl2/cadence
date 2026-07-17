@@ -209,15 +209,111 @@
 }
 
 .workspace-task {
+  position: relative;
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: 6px;
   padding: 5px 6px;
   border-radius: 6px;
+  transition:
+    background-color var(--motion-sidebar) ease,
+    opacity var(--motion-sidebar) ease;
 }
 
 .workspace-task:hover {
   background: var(--surface-2);
+}
+
+.workspace-task.dragging {
+  background: var(--surface-2);
+  opacity: 0.52;
+}
+
+.workspace-task.dragging,
+.workspace-task.dragging * {
+  cursor: grabbing;
+}
+
+/* Reorder destinations use the same restrained hairline language as panel resize
+   handles. The line sits between rows instead of washing the target row in accent. */
+.workspace-task.drop-before::before,
+.workspace-task.drop-after::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.workspace-task.drop-before::before {
+  top: -3px;
+}
+
+.workspace-task.drop-after::after {
+  bottom: -3px;
+}
+
+.workspace-task-reorder {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  margin-top: 1px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: grab;
+}
+
+.workspace-task-reorder:hover {
+  border-color: var(--surface-4);
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.workspace-task-reorder:active {
+  cursor: grabbing;
+}
+
+.workspace-task-reorder:focus-visible,
+.workspace-task-check:focus-visible,
+.workspace-task-text:focus-visible,
+.workspace-task-remove:focus-visible,
+.workspace-task-confirm-yes:focus-visible,
+.workspace-task-confirm-no:focus-visible,
+.workspace-task-clear:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.workspace-task-reorder-icon {
+  width: 13px;
+  height: 13px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+}
+
+.workspace-task-reorder-help {
+  width: 1px;
+  height: 1px;
+  position: absolute;
+  overflow: hidden;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .workspace-task-check {

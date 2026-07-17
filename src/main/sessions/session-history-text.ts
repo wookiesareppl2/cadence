@@ -22,9 +22,15 @@ export function isCodexSyntheticUserText(text: string | null): boolean {
 
   if (/^<skill\b[^>]*>[\s\S]*<\/skill>$/i.test(value)) return true
 
+  // Codex appends its generated environment_context block to the standalone
+  // AGENTS.md instruction row. Remove known synthetic envelopes before checking
+  // where the instruction payload ends, while leaving any real trailing request
+  // intact so it is not mistaken for startup scaffolding.
+  const withoutSyntheticBlocks = stripDropBlocks(value).trim()
+
   return (
-    /^#\s+AGENTS\.md instructions for [^\n]+/i.test(value) &&
-    /<INSTRUCTIONS>[\s\S]*<\/INSTRUCTIONS>\s*$/i.test(value)
+    /^#\s+AGENTS\.md instructions for [^\n]+/i.test(withoutSyntheticBlocks) &&
+    /<INSTRUCTIONS>[\s\S]*<\/INSTRUCTIONS>\s*$/i.test(withoutSyntheticBlocks)
   )
 }
 

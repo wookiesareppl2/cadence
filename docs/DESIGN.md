@@ -39,6 +39,17 @@ These MUST look and behave identically regardless of dock edge.
 - **Open panel resize:** Projects & Sessions, Files, and History expose an invisible 8px vertical drag handle on their inner edge; Notes & Tasks exposes the same 8px handle on its top edge. Handles use the shared `.panel-resize-handle` classes and persist size per active platform without changing the 32px collapsed rail. **The visible cue is a hairline, never a fill:** the 8px hit area stays invisible, and on hover/drag a **2px accent line** (a `::before`) appears along the handle's active edge — inset from its ends by `--radius-panel` so it never pokes past a rounded `.panel` corner. Keep it **easy on the eyes**: the line is soft on hover (`opacity: 0.4`, since incidental mouse passes shouldn't flash a bright line) and only brightens while actually dragging (`.resizing`, `opacity: 0.85`) — never a solid full-opacity accent. Do not reintroduce the old full-width accent *wash* — a thin line is the house style for every resize affordance.
 - **Split resize (within a sidebar):** the Projects list and Sessions list inside the Projects & Sessions sidebar are split by a draggable horizontal divider (`.project-session-divider`). Same hairline treatment, but **in normal flow** rather than an absolute edge handle: a generous 8px grab zone straddling the line via negative margins (`cursor: row-resize`, `bottom` resize edge — drag down grows Projects); at rest the Projects list's 1px `border-bottom` is the only cue, and on hover/drag a centered 2px accent line (`::before`) sharpens in over it. The Projects list height is driven by `--project-list-height` and persisted per platform under the `projectList` size key (default 260px, so several projects are always visible); a `max-height: calc(100% - …)` always reserves room for Sessions. Use this in-flow divider pattern whenever splitting two stacked lists inside one panel.
 
+### Task reordering
+
+Tasks in Notes & Tasks reorder within their current status tab; Open and Done each
+retain an independent visible order backed by the shared persisted task array. Every
+row starts with an 18px drag handle using the canonical line-icon treatment. Dragging
+shows the moved row with reduced opacity and marks the destination with a **2px accent
+hairline between rows**, never an accent wash over the target. The handle remains a
+keyboard control: when focused, Up / Down moves the task one visible position and an
+`aria-live` region announces its new position. Reordering uses the existing debounced
+workspace save and must never cross the Open / Done boundary or mutate task content.
+
 ## Buttons
 
 - **Icon/action buttons** (rename, refresh, +file): ~24px, transparent border at rest, hover = `background: var(--surface-3); border-color: var(--surface-4); color: var(--text-1)`.
