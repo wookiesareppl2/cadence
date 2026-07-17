@@ -61,6 +61,7 @@ import {
   type OpenCodePlanUsage
 } from '@shared/opencode'
 import type { ExternalLinkOpenResult } from '@shared/external-links'
+import type { AppSettings, AppSettingsUpdate } from '@shared/app-settings'
 import {
   OPENCODE_SLIM_UPDATE_STATUS_CHANNEL,
   type OpenCodeSlimUpdateStatus
@@ -83,6 +84,10 @@ const api = {
     // preload has no direct access to electron's clipboard module).
     readText: (): Promise<string> => ipcRenderer.invoke('clipboard:read'),
     writeText: (text: string): void => ipcRenderer.send('clipboard:write', text)
+  },
+  settings: {
+    get: (): Promise<AppSettings> => ipcRenderer.invoke('settings:get'),
+    update: (update: AppSettingsUpdate): Promise<AppSettings> => ipcRenderer.invoke('settings:update', update)
   },
   externalLinks: {
     open: (url: string): Promise<ExternalLinkOpenResult> => ipcRenderer.invoke('external-links:open', url)

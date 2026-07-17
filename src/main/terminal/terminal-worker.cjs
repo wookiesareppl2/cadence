@@ -81,15 +81,20 @@ function guardTarget(platform) {
 // PowerShell guard: a global function shadowing the foreign CLI (functions take
 // precedence over external commands). Passed as a base64 UTF-16LE -EncodedCommand
 // so no quoting survives node-pty; -NoExit keeps the shell interactive afterwards.
-function powershellGuard(platform) {
+function powershellGuard(platform, mergeReviewEnabled) {
   const target = guardTarget(platform)
   if (target.length === 0) return null
-  const script = target
+  const commands = target
     .map(
       (entry) =>
         `function global:${entry.blocked} { Write-Host "Blocked: ${entry.blockedLabel} cannot be run in the ${entry.thisLabel} tab.\`nSwitch to the ${entry.blockedLabel} tab." -ForegroundColor Red }`
     )
-    .join('; ')
+  commands.push(
+    `$env:CADENCE_SESSION = "1"`,
+    `$env:CADENCE_PLATFORM = "${platform}"`,
+    `$env:CADENCE_MERGE_REVIEW_ENABLED = "${mergeReviewEnabled ? '1' : '0'}"`
+  )
+  const script = commands.join('; ')
   return Buffer.from(script, 'utf16le').toString('base64')
 }
 
@@ -100,7 +105,7 @@ function shellSingleQuote(value) {
   return `'${String(value).replace(/'/g, `'"'"'`)}'`
 }
 
-function bashGuard(platform, openCodeRuntime) {
+function bashGuard(platform, openCodeRuntime, mergeReviewEnabled) {
   const commands = []
   for (const target of guardTarget(platform)) {
     const line1 = `Blocked: ${target.blockedLabel} cannot be run in the ${target.thisLabel} tab.`
@@ -110,6 +115,11 @@ function bashGuard(platform, openCodeRuntime) {
       `export -f ${target.blocked}`
     )
   }
+  commands.push(
+    `export CADENCE_SESSION=1`,
+    `export CADENCE_PLATFORM=${shellSingleQuote(platform)}`,
+    `export CADENCE_MERGE_REVIEW_ENABLED=${mergeReviewEnabled ? '1' : '0'}`
+  )
   if (platform === 'opencode' && openCodeRuntime) {
     commands.push(
       `export OPENCODE_CONFIG_DIR="$HOME/.config/cadence/opencode"`,
@@ -124,9 +134,9 @@ function bashGuard(platform, openCodeRuntime) {
   return commands.join('; ')
 }
 
-function shellCommand(platform) {
+function shellCommand(platform, mergeReviewEnabled) {
   if (process.platform === 'win32') {
-    const guard = powershellGuard(platform)
+    const guard = powershellGuard(platform, mergeReviewEnabled)
     const args = guard ? ['-NoLogo', '-NoExit', '-EncodedCommand', guard] : ['-NoLogo']
     return { file: 'powershell.exe', args }
   }
@@ -146,10 +156,10 @@ function shellCommand(platform) {
 // it was still empty during that premature pass, baking `attach ""` (no server
 // URL) into the function and making every `opencode` invocation print help.
 // `--exec` bypasses the default shell and hands the guard to bash verbatim.
-function wslCommand(distro, posixCwd, platform, openCodeRuntime) {
+function wslCommand(distro, posixCwd, platform, openCodeRuntime, mergeReviewEnabled) {
   const args = ['-d', distro]
   if (posixCwd) args.push('--cd', posixCwd)
-  const guard = bashGuard(platform, openCodeRuntime)
+  const guard = bashGuard(platform, openCodeRuntime, mergeReviewEnabled)
   if (guard) args.push('--exec', 'bash', '-c', guard)
   return { file: 'wsl.exe', args, label: `wsl:${distro}` }
 }
@@ -168,17 +178,24 @@ function rememberOutput(session, data) {
   }
 }
 
-function createSession(terminalId, platform, requestedCwd, wslDistro, openCodeRuntime) {
+function createSession(terminalId, platform, requestedCwd, wslDistro, openCodeRuntime, mergeReviewEnabled) {
   // For WSL, wsl.exe runs from a valid Windows cwd and `--cd` handles the Linux
   // dir; otherwise the native shell starts directly in the requested folder.
-  const shell = wslDistro ? wslCommand(wslDistro, requestedCwd, platform, openCodeRuntime) : shellCommand(platform)
+  const shell = wslDistro
+    ? wslCommand(wslDistro, requestedCwd, platform, openCodeRuntime, mergeReviewEnabled)
+    : shellCommand(platform, mergeReviewEnabled)
   const spawnCwd = wslDistro ? terminalCwd() : requestedCwd || terminalCwd()
   const terminal = pty.spawn(shell.file, shell.args, {
     name: 'xterm-256color',
     cols: 120,
     rows: 32,
     cwd: spawnCwd,
-    env: process.env
+    env: {
+      ...process.env,
+      CADENCE_SESSION: '1',
+      CADENCE_PLATFORM: platform,
+      CADENCE_MERGE_REVIEW_ENABLED: mergeReviewEnabled ? '1' : '0'
+    }
   })
 
   const session = {
@@ -188,6 +205,7 @@ function createSession(terminalId, platform, requestedCwd, wslDistro, openCodeRu
     cwd: wslDistro ? requestedCwd || null : spawnCwd,
     wslDistro: wslDistro || null,
     openCodeRuntime: openCodeRuntime || null,
+    mergeReviewEnabled: mergeReviewEnabled === true,
     shell: shell.label || basename(shell.file),
     buffer: [],
     // Paced-write state: pending input pieces, whether a piece is mid-flight, and
@@ -218,7 +236,7 @@ function createSession(terminalId, platform, requestedCwd, wslDistro, openCodeRu
   return session
 }
 
-function start(requestId, terminalId, platform, requestedCwd, wslDistro, openCodeRuntime) {
+function start(requestId, terminalId, platform, requestedCwd, wslDistro, openCodeRuntime, mergeReviewEnabled) {
   if (typeof terminalId !== 'string' || !terminalId) {
     send({ type: 'error', requestId, message: 'Missing terminal id' })
     return
@@ -229,7 +247,14 @@ function start(requestId, terminalId, platform, requestedCwd, wslDistro, openCod
   // a duplicate. cwd only matters when creating the session for the first time.
   let session = sessions.get(terminalId)
   if (!session) {
-    session = createSession(terminalId, platform, requestedCwd, wslDistro, openCodeRuntime)
+    session = createSession(
+      terminalId,
+      platform,
+      requestedCwd,
+      wslDistro,
+      openCodeRuntime,
+      mergeReviewEnabled === true
+    )
   }
 
   send({
@@ -246,7 +271,7 @@ function start(requestId, terminalId, platform, requestedCwd, wslDistro, openCod
   })
 }
 
-function restart(requestId, terminalId) {
+function restart(requestId, terminalId, mergeReviewEnabled) {
   const existing = sessions.get(terminalId)
   const platform = existing ? existing.platform : undefined
   const cwd = existing ? existing.cwd : undefined
@@ -257,7 +282,7 @@ function restart(requestId, terminalId) {
     existing.pty.kill()
     sessions.delete(terminalId)
   }
-  start(requestId, terminalId, platform, cwd, wslDistro, openCodeRuntime)
+  start(requestId, terminalId, platform, cwd, wslDistro, openCodeRuntime, mergeReviewEnabled === true)
 }
 
 function write(terminalId, data) {
@@ -341,9 +366,10 @@ process.on('message', (message) => {
         message.platform,
         message.cwd,
         message.wslDistro,
-        message.openCodeRuntime
+        message.openCodeRuntime,
+        message.mergeReviewEnabled
       )
-    if (message.type === 'restart') restart(message.requestId, message.terminalId)
+    if (message.type === 'restart') restart(message.requestId, message.terminalId, message.mergeReviewEnabled)
     if (message.type === 'input') write(message.terminalId, message.data)
     if (message.type === 'resize') resize(message.terminalId, message.cols, message.rows)
     if (message.type === 'close') close(message.terminalId)

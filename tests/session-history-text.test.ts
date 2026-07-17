@@ -1,7 +1,37 @@
 import { describe, expect, it } from 'vitest'
-import { cleanHistoryText } from '../src/main/sessions/session-history-text'
+import { cleanHistoryText, isCodexSyntheticUserText } from '../src/main/sessions/session-history-text'
 
 describe('session history text cleanup', () => {
+  it('keeps only the typed command from Codex startup and skill rows', () => {
+    const rows = [
+      [
+        '# AGENTS.md instructions for C:\\Project',
+        '<INSTRUCTIONS>',
+        '# Project instructions',
+        '</INSTRUCTIONS>'
+      ].join('\n'),
+      '$start',
+      [
+        '<skill>',
+        '<name>start</name>',
+        '<description>Resume a project session.</description>',
+        '</skill>'
+      ].join('\n')
+    ]
+
+    const visible = rows
+      .filter((text) => !isCodexSyntheticUserText(text))
+      .map((text) => cleanHistoryText(text, { commandPrefix: '/' }))
+
+    expect(visible).toEqual(['$start'])
+  })
+
+  it('does not classify a real request with an embedded skill as synthetic', () => {
+    const text = ['Please review this skill.', '<skill>', '<name>start</name>', '</skill>'].join('\n')
+
+    expect(isCodexSyntheticUserText(text)).toBe(false)
+  })
+
   it('extracts the Codex IDE request body without environment context', () => {
     const text = [
       '# Context from my IDE setup:',

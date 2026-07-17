@@ -17,6 +17,7 @@ type WorkerRequest = {
   cwd?: string
   wslDistro?: string
   openCodeRuntime?: { baseUrl: string; password: string }
+  mergeReviewEnabled?: boolean
   data?: string
   cols?: number
   rows?: number
@@ -174,7 +175,8 @@ export async function startTerminal(
   webContents: WebContents,
   cwd?: string,
   wslDistro?: string,
-  managed = true
+  managed = true,
+  mergeReviewEnabled = false
 ): Promise<TerminalStartResult> {
   assertTerminalId(terminalId)
   assertPlatform(platform)
@@ -203,7 +205,8 @@ export async function startTerminal(
     platform,
     cwd: workspaceCwd,
     wslDistro: distro,
-    openCodeRuntime
+    openCodeRuntime,
+    mergeReviewEnabled
   })
 }
 
@@ -226,10 +229,14 @@ export function resizeTerminal(terminalId: string, cols: number, rows: number): 
   ensureWorker().send?.({ type: 'resize', terminalId, cols: safeCols, rows: safeRows } satisfies WorkerRequest)
 }
 
-export async function restartTerminal(terminalId: string, webContents: WebContents): Promise<TerminalStartResult> {
+export async function restartTerminal(
+  terminalId: string,
+  webContents: WebContents,
+  mergeReviewEnabled = false
+): Promise<TerminalStartResult> {
   assertTerminalId(terminalId)
   subscribe(webContents)
-  return sendWorkerRequest({ type: 'restart', terminalId })
+  return sendWorkerRequest({ type: 'restart', terminalId, mergeReviewEnabled })
 }
 
 export function closeTerminal(terminalId: string): void {

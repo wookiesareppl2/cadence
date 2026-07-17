@@ -19,6 +19,8 @@ import { FileTreePanel, FilePreviewModal, FilePreviewPane } from '@renderer/comp
 import { TitlebarSearch } from '@renderer/components/search/TitlebarSearch'
 import { MemoryView } from '@renderer/components/memory/MemoryView'
 import { SetupGate } from '@renderer/components/setup/SetupGate'
+import { SettingsModal } from '@renderer/components/settings/SettingsModal'
+import { TitlebarMenus, type TitlebarMenuItem } from '@renderer/components/titlebar/TitlebarMenus'
 import { OpenCodeActivityPanel } from '@renderer/components/opencode/OpenCodeActivityPanel'
 import { OpenCodeCompanionWindow } from '@renderer/components/opencode/OpenCodeCompanionWindow'
 import { OpenCodeSlimUpdateBanner } from '@renderer/components/opencode/OpenCodeSlimUpdateBanner'
@@ -719,6 +721,7 @@ function DashboardApp(): JSX.Element {
   // A fresh main-process scan runs in the background and replaces this cached snapshot.
   const [connectionStatus, setConnectionStatus] = useState<SetupStatus | null>(readCachedSetupStatus)
   const [connectionsOpen, setConnectionsOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   const updateConnectionStatus = useCallback((next: SetupStatus) => {
     cacheSetupStatus(next)
@@ -761,6 +764,34 @@ function DashboardApp(): JSX.Element {
   const [memoryOpen, setMemoryOpen] = useState(false)
   const memorySelectionSequenceRef = useRef(0)
   const [memorySelectionRequest, setMemorySelectionRequest] = useState<MemorySelectionRequest | null>(null)
+
+  const openConnections = useCallback(() => {
+    setConnectionsOpen(true)
+    setSettingsOpen(false)
+    setMemoryOpen(false)
+    setCheatSheetOpen(false)
+  }, [])
+
+  const openSettings = useCallback(() => {
+    setSettingsOpen(true)
+    setMemoryOpen(false)
+    setCheatSheetOpen(false)
+  }, [])
+
+  const closeSettings = useCallback(() => setSettingsOpen(false), [])
+
+  const toggleCheatSheet = useCallback(() => {
+    setSettingsOpen(false)
+    setCheatSheetOpen((open) => !open)
+    setMemoryOpen(false)
+  }, [])
+
+  const toggleMemory = useCallback(() => {
+    setSettingsOpen(false)
+    setMemorySelectionRequest(null)
+    setMemoryOpen((open) => !open)
+    setCheatSheetOpen(false)
+  }, [])
   const planUsageStates = usePlanUsagePolling(connectedPlatforms)
   const [selectedSessionIds, setSelectedSessionIds] = usePersistentState<Record<PlatformId, string | null>>(
     'selection:sessions:v1',
@@ -1087,6 +1118,8 @@ function DashboardApp(): JSX.Element {
     },
     [platform, setFilesPanelOpen, setHistorySidebarOpen, setProjectSidebarOpen, setWorkspaceDockOpen]
   )
+  const collapseAllPanels = useCallback(() => setActivePlatformPanelsOpen(false), [setActivePlatformPanelsOpen])
+  const expandAllPanels = useCallback(() => setActivePlatformPanelsOpen(true), [setActivePlatformPanelsOpen])
 
   const cssVars = useMemo(
     () =>
@@ -1117,25 +1150,20 @@ function DashboardApp(): JSX.Element {
         platform={platform}
         platforms={activePlatforms}
         onPlatformChange={setPlatform}
-        onOpenConnections={() => setConnectionsOpen(true)}
+        onOpenConnections={openConnections}
+        onOpenSettings={openSettings}
         cheatSheetOpen={cheatSheetOpen}
-        onToggleCheatSheet={() => {
-          setCheatSheetOpen((open) => !open)
-          setMemoryOpen(false)
-        }}
+        onToggleCheatSheet={toggleCheatSheet}
         memoryOpen={memoryOpen}
-        onToggleMemory={() => {
-          setMemorySelectionRequest(null)
-          setMemoryOpen((open) => !open)
-          setCheatSheetOpen(false)
-        }}
+        onToggleMemory={toggleMemory}
         panelsAllCollapsed={activePanelsAllCollapsed}
         panelsAllExpanded={activePanelsAllExpanded}
-        onCollapseAllPanels={() => setActivePlatformPanelsOpen(false)}
-        onExpandAllPanels={() => setActivePlatformPanelsOpen(true)}
+        onCollapseAllPanels={collapseAllPanels}
+        onExpandAllPanels={expandAllPanels}
         selectedProjectId={selectedProjectIds[platform]}
         onSearchActivate={handleSearchActivate}
       />
+      <SettingsModal open={settingsOpen} onClose={closeSettings} />
       <OpenCodeSlimUpdateBanner />
       {memoryOpen ? (
         <MemoryView
@@ -1352,6 +1380,7 @@ function Titlebar({
   platforms,
   onPlatformChange,
   onOpenConnections,
+  onOpenSettings,
   cheatSheetOpen,
   onToggleCheatSheet,
   memoryOpen,
@@ -1369,6 +1398,7 @@ function Titlebar({
   platforms: PlatformId[]
   onPlatformChange: (platform: PlatformId) => void
   onOpenConnections: () => void
+  onOpenSettings: () => void
   cheatSheetOpen: boolean
   onToggleCheatSheet: () => void
   memoryOpen: boolean
@@ -1385,16 +1415,82 @@ function Titlebar({
   useEffect(() => {
     window.dashboard?.app?.getVersion?.().then(setVersion).catch(() => undefined)
   }, [])
+  const viewItems = useMemo<TitlebarMenuItem[]>(
+    () => [
+      {
+        id: 'collapse-all',
+        label: 'Collapse all',
+        description: `Collapse all ${platformLabel} panels`,
+        icon: <CollapseAllIcon />,
+        disabled: panelsAllCollapsed,
+        onSelect: onCollapseAllPanels
+      },
+      {
+        id: 'expand-all',
+        label: 'Expand all',
+        description: `Expand all ${platformLabel} panels`,
+        icon: <ExpandAllIcon />,
+        disabled: panelsAllExpanded,
+        onSelect: onExpandAllPanels
+      }
+    ],
+    [onCollapseAllPanels, onExpandAllPanels, panelsAllCollapsed, panelsAllExpanded, platformLabel]
+  )
+  const toolItems = useMemo<TitlebarMenuItem[]>(
+    () => [
+      {
+        id: 'connections',
+        label: 'Connections',
+        description: 'Manage connected AI tools',
+        icon: <ConnectionsIcon />,
+        onSelect: onOpenConnections
+      },
+      {
+        id: 'memory',
+        label: 'Memory',
+        description: 'Project memory and context',
+        icon: <MemoryIcon />,
+        checked: memoryOpen,
+        onSelect: onToggleMemory
+      },
+      {
+        id: 'commands',
+        label: 'Commands',
+        description: 'Terminal commands cheat sheet',
+        icon: <CommandsIcon />,
+        checked: cheatSheetOpen,
+        onSelect: onToggleCheatSheet
+      },
+      {
+        id: 'settings',
+        label: 'Settings',
+        description: 'Cadence application preferences',
+        icon: <SettingsIcon />,
+        onSelect: onOpenSettings
+      }
+    ],
+    [
+      cheatSheetOpen,
+      memoryOpen,
+      onOpenConnections,
+      onOpenSettings,
+      onToggleCheatSheet,
+      onToggleMemory
+    ]
+  )
   return (
     <header className="titlebar">
       <div className="titlebar-brand">
         <CadenceMark className="titlebar-logo" />
-        <span className="titlebar-brand-name">{APP_NAME}</span>
-        {version ? (
-          <span className="app-version" title={`${APP_NAME} v${version}`}>
-            v{version}
-          </span>
-        ) : null}
+        <div className="titlebar-brand-lockup">
+          <span className="titlebar-brand-name">{APP_NAME}</span>
+          {version ? (
+            <span className="app-version" title={`${APP_NAME} v${version}`}>
+              v{version}
+            </span>
+          ) : null}
+        </div>
+        <TitlebarMenus viewItems={viewItems} toolItems={toolItems} />
       </div>
       {platforms.length > 1 ? (
         <div className="platform-switcher" role="tablist" aria-label="Platform">
@@ -1417,61 +1513,19 @@ function Titlebar({
         </div>
       )}
       <div className="titlebar-right">
-        <div className="panel-layout-actions" role="group" aria-label={`${platformLabel} panel layout`}>
-          <button
-            type="button"
-            className="panel-layout-action"
-            onClick={onCollapseAllPanels}
-            disabled={panelsAllCollapsed}
-            title={`Collapse all ${platformLabel} panels`}
-          >
-            <CollapseAllIcon />
-            <span className="panel-layout-action-label">Collapse all</span>
-          </button>
-          <button
-            type="button"
-            className="panel-layout-action"
-            onClick={onExpandAllPanels}
-            disabled={panelsAllExpanded}
-            title={`Expand all ${platformLabel} panels`}
-          >
-            <ExpandAllIcon />
-            <span className="panel-layout-action-label">Expand all</span>
-          </button>
-        </div>
-        <button
-          type="button"
-          className="titlebar-action"
-          onClick={onOpenConnections}
-          title="Manage connected AI tools"
-        >
-          <ConnectionsIcon />
-          <span className="titlebar-action-label">Connections</span>
-        </button>
-        <button
-          type="button"
-          className={`titlebar-action ${memoryOpen ? 'active' : ''}`}
-          aria-pressed={memoryOpen}
-          onClick={onToggleMemory}
-          title="Project memory & context"
-        >
-          <MemoryIcon />
-          <span className="titlebar-action-label">Memory</span>
-        </button>
-        <button
-          type="button"
-          className={`titlebar-action ${cheatSheetOpen ? 'active' : ''}`}
-          aria-pressed={cheatSheetOpen}
-          onClick={onToggleCheatSheet}
-          title="Terminal commands cheat sheet"
-        >
-          <CommandsIcon />
-          <span className="titlebar-action-label">Commands</span>
-        </button>
         <TitlebarSearch platform={platform} projectId={selectedProjectId} onActivate={onSearchActivate} />
       </div>
       <WindowControls />
     </header>
+  )
+}
+
+function SettingsIcon(): JSX.Element {
+  return (
+    <svg className="titlebar-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <circle cx="8" cy="8" r="2.25" />
+      <path d="M6.9 2.4 7.3 1h1.4l.4 1.4 1.2.5 1.3-.7 1 1-0.7 1.3.5 1.2 1.4.4v1.4l-1.4.4-.5 1.2.7 1.3-1 1-1.3-.7-1.2.5-.4 1.4H7.3l-.4-1.4-1.2-.5-1.3.7-1-1 .7-1.3L3.6 9l-1.4-.4V7.2l1.4-.4.5-1.2-.7-1.3 1-1 1.3.7 1.2-.5Z" />
+    </svg>
   )
 }
 
@@ -1501,13 +1555,14 @@ function CommandsIcon(): JSX.Element {
   )
 }
 
-// Connections / setup: a gear, the universal "settings" affordance. Opens the
-// connect-and-disconnect screen for the Claude/Codex tools.
+// Connections / setup: three linked endpoints, distinct from the Settings gear.
 function ConnectionsIcon(): JSX.Element {
   return (
     <svg className="titlebar-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-      <circle cx="8" cy="8" r="2.25" />
-      <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4" />
+      <circle cx="4" cy="4" r="1.75" />
+      <circle cx="12" cy="5" r="1.75" />
+      <circle cx="7.5" cy="12" r="1.75" />
+      <path d="m5.7 4.2 4.55.55M5 5.55l1.65 4.8M10.85 6.55 8.6 10.4" />
     </svg>
   )
 }

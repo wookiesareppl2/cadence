@@ -379,6 +379,13 @@ button {
   height: 100%;
 }
 
+.titlebar-brand-lockup {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
 .titlebar-logo {
   width: 18px;
   height: 18px;
@@ -402,42 +409,120 @@ button {
   letter-spacing: 0.02em;
 }
 
-/* Opens the terminal-commands cheat sheet. Lives in the right-aligned titlebar
-   group, to the right of the centered platform switcher. */
-.titlebar-action {
-  height: 28px;
+/* Desktop-style application menus keep secondary actions discoverable without
+   turning the titlebar into a toolbar. */
+.titlebar-menus {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 6px;
-  background: var(--surface-0);
+  gap: 2px;
+  margin-left: 4px;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-menu-trigger {
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
   color: var(--text-2);
   cursor: pointer;
   font-size: 11px;
   font-weight: 600;
-  -webkit-app-region: no-drag;
   transition:
     background-color 160ms ease,
     color 160ms ease,
     border-color 160ms ease;
 }
 
-.titlebar-action:hover {
-  color: var(--text-1);
+.titlebar-menu-trigger:hover,
+.titlebar-menu-trigger.active {
   border-color: var(--surface-4);
+  background: var(--surface-3);
+  color: var(--text-1);
 }
 
-.titlebar-action.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--surface-0);
-}
-
-.titlebar-action:focus-visible {
+.titlebar-menu-trigger:focus-visible,
+.titlebar-menu-item:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 2px;
+}
+
+.titlebar-menu-popover {
+  width: 236px;
+  position: fixed;
+  z-index: 140;
+  padding: 5px;
+  border: 1px solid var(--surface-4);
+  border-radius: 8px;
+  background: var(--surface-2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-menu-item {
+  width: 100%;
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) 8px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  text-align: left;
+}
+
+.titlebar-menu-item:hover:not(:disabled),
+.titlebar-menu-item:focus-visible {
+  border-color: var(--surface-4);
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.titlebar-menu-item:disabled {
+  color: var(--text-3);
+  cursor: default;
+  opacity: 0.58;
+}
+
+.titlebar-menu-item-icon {
+  display: grid;
+  place-items: center;
+}
+
+.titlebar-menu-item-icon .panel-layout-action-icon {
+  display: block;
+}
+
+.titlebar-menu-item-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.titlebar-menu-item-label {
+  color: inherit;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.titlebar-menu-item-description {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.titlebar-menu-item-state {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
 }
 
 /* Stroked line icon for titlebar actions — same method as .files-action-icon
@@ -453,14 +538,12 @@ button {
   stroke-linejoin: round;
 }
 
-/* Right-aligned group holding every titlebar action (panel layout, Connections,
-   Memory, Commands, search). Flows in the titlebar (never absolute) so it can't
+/* Right-aligned group holding search. Flows in the titlebar (never absolute) so it can't
    overlap the centered switcher; flex:1 mirrors the brand so the switcher stays
    centered when space allows, and the group shrinks/swaps to icons when it doesn't.
    NOTE: this container is intentionally NOT `-webkit-app-region: no-drag` — that
    would make the group's empty space undraggable (half the titlebar). Drag flows
-   from `.titlebar`; each interactive child opts out individually (`.titlebar-action`,
-   `.panel-layout-actions`, `.titlebar-search`). */
+   from `.titlebar`; each interactive child opts out individually. */
 .titlebar-right {
   display: flex;
   align-items: center;
@@ -469,56 +552,6 @@ button {
   min-width: 0;
   height: 100%;
   gap: 8px;
-}
-
-.panel-layout-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  -webkit-app-region: no-drag;
-}
-
-/* Action labels that collapse to their icon on narrow windows. */
-.titlebar-action-label,
-.panel-layout-action-label {
-  white-space: nowrap;
-}
-
-.panel-layout-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 9px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-2);
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 600;
-  transition:
-    background-color 160ms ease,
-    color 160ms ease,
-    border-color 160ms ease,
-    opacity 160ms ease;
-}
-
-.panel-layout-action:hover:not(:disabled) {
-  background: var(--surface-3);
-  border-color: var(--surface-4);
-  color: var(--text-1);
-}
-
-.panel-layout-action:disabled {
-  color: var(--text-3);
-  cursor: default;
-  opacity: 0.52;
-}
-
-.panel-layout-action:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: 2px;
 }
 
 .platform-switcher {
@@ -596,48 +629,10 @@ button {
   display: none;
 }
 
-/* --- Responsive titlebar --------------------------------------------------
-   The titlebar flows (brand | switcher | actions), so groups push each other and
-   nothing overlaps at any width. These tiers progressively declutter the right
-   group as space tightens — hide the version, swap action labels for icons, then
-   collapse the search to a glyph that expands on focus (see search.css). Widths
-   track the 1180px minimum window width. */
-
-/* Tier 1 — declutter early (covers common laptop widths ≈1366–1536) so the right
-   action group can never grow into the centered switcher. Hide the version and
-   collapse EVERY action — panel layout (Collapse all / Expand all), Connections,
-   Memory, Commands — to its icon at once. Doing them together (rather than in
-   separate sub-tiers) keeps the group compact regardless of how many actions exist.
-   IMPORTANT: any new titlebar action must carry an icon + a `*-action-label` span so
-   it collapses here too — otherwise it can re-introduce the overlap. */
+/* --- Responsive titlebar -------------------------------------------------- */
 @media (max-width: 1560px) {
   .app-version {
     display: none;
-  }
-
-  .titlebar-action .titlebar-action-label {
-    display: none;
-  }
-
-  .titlebar-action {
-    padding: 0 8px;
-  }
-
-  .panel-layout-action-label {
-    display: none;
-  }
-
-  .panel-layout-action-icon {
-    display: block;
-  }
-
-  .panel-layout-action {
-    padding: 0 7px;
-    gap: 0;
-  }
-
-  .titlebar-right {
-    gap: 6px;
   }
 
   .platform-switcher button {
@@ -654,7 +649,7 @@ button {
 
 /* Tier 3 — logo-only brand at the smallest sizes. */
 @media (max-width: 1200px) {
-  .titlebar-brand-name {
+  .titlebar-brand-lockup {
     display: none;
   }
 }

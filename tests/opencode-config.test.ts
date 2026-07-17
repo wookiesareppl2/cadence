@@ -22,7 +22,7 @@ describe('Cadence OpenCode configuration', () => {
       profile: OPENCODE_ROUTING_PROFILE,
       routingRevision: OPENCODE_ROUTING_REVISION,
       memoryBankWorkflowRevision: OPENCODE_MEMORY_BANK_WORKFLOW_REVISION,
-      managedSkills: ['start', 'save'],
+      managedSkills: ['start', 'save', 'cadence-merge-review'],
       managedCommands: ['start', 'save'],
       slimVersion: OPENCODE_SLIM_VERSION,
       managedBy: 'Cadence'

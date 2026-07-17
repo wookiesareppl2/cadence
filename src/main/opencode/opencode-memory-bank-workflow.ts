@@ -5,6 +5,7 @@ import startSkill from './managed-workflow/skills/start/SKILL.md?raw'
 import saveSkill from './managed-workflow/skills/save/SKILL.md?raw'
 import startCommand from './managed-workflow/commands/start.md?raw'
 import saveCommand from './managed-workflow/commands/save.md?raw'
+import mergeReviewSkill from '../merge-review/managed-workflow/SKILL.md?raw'
 
 export type ManagedOpenCodeWorkflowFile = {
   relativePath: string
@@ -19,7 +20,8 @@ export const MANAGED_OPENCODE_WORKFLOW_FILES: readonly ManagedOpenCodeWorkflowFi
   { relativePath: join('skills', 'start', 'SKILL.md'), content: normalizedContent(startSkill) },
   { relativePath: join('skills', 'save', 'SKILL.md'), content: normalizedContent(saveSkill) },
   { relativePath: join('commands', 'start.md'), content: normalizedContent(startCommand) },
-  { relativePath: join('commands', 'save.md'), content: normalizedContent(saveCommand) }
+  { relativePath: join('commands', 'save.md'), content: normalizedContent(saveCommand) },
+  { relativePath: join('skills', 'cadence-merge-review', 'SKILL.md'), content: normalizedContent(mergeReviewSkill) }
 ]
 
 async function writeManagedFile(path: string, content: string): Promise<boolean> {

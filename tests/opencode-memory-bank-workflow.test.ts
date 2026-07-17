@@ -33,13 +33,14 @@ afterEach(async () => {
   )
 })
 
-describe('Cadence-managed OpenCode Memory Bank workflow', () => {
-  it('bundles one canonical start/save skill and slash command pair', () => {
+describe('Cadence-managed OpenCode workflow', () => {
+  it('bundles the canonical memory commands and merge-review gate', () => {
     expect(MANAGED_OPENCODE_WORKFLOW_FILES.map((file) => portable(file.relativePath))).toEqual([
       'skills/start/SKILL.md',
       'skills/save/SKILL.md',
       'commands/start.md',
-      'commands/save.md'
+      'commands/save.md',
+      'skills/cadence-merge-review/SKILL.md'
     ])
 
     const startSkill = managedContent('skills/start/SKILL.md')
@@ -61,6 +62,9 @@ describe('Cadence-managed OpenCode Memory Bank workflow', () => {
     expect(managedContent('commands/save.md')).toContain('`save` skill')
     expect(managedContent('commands/start.md')).toContain('$ARGUMENTS')
     expect(managedContent('commands/save.md')).toContain('$ARGUMENTS')
+    expect(managedContent('skills/cadence-merge-review/SKILL.md')).toContain(
+      'CADENCE_MERGE_REVIEW_ENABLED'
+    )
   })
 
   it('installs, leaves current resources untouched, and repairs stale resources', async () => {
@@ -70,7 +74,8 @@ describe('Cadence-managed OpenCode Memory Bank workflow', () => {
       'skills/start/SKILL.md',
       'skills/save/SKILL.md',
       'commands/start.md',
-      'commands/save.md'
+      'commands/save.md',
+      'skills/cadence-merge-review/SKILL.md'
     ])
 
     const second = await installManagedOpenCodeMemoryBankWorkflow(configDir)
