@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import startSkill from './managed-workflow/skills/start/SKILL.md?raw'
 import saveSkill from './managed-workflow/skills/save/SKILL.md?raw'
+import saveCollector from './managed-workflow/scripts/collect-vault-save.mjs?raw'
 import startCommand from './managed-workflow/commands/start.md?raw'
 import saveCommand from './managed-workflow/commands/save.md?raw'
 import mergeReviewSkill from '../merge-review/managed-workflow/SKILL.md?raw'
@@ -21,7 +22,12 @@ export const MANAGED_OPENCODE_WORKFLOW_FILES: readonly ManagedOpenCodeWorkflowFi
   { relativePath: join('skills', 'save', 'SKILL.md'), content: normalizedContent(saveSkill) },
   { relativePath: join('commands', 'start.md'), content: normalizedContent(startCommand) },
   { relativePath: join('commands', 'save.md'), content: normalizedContent(saveCommand) },
-  { relativePath: join('skills', 'cadence-merge-review', 'SKILL.md'), content: normalizedContent(mergeReviewSkill) }
+  { relativePath: join('skills', 'cadence-merge-review', 'SKILL.md'), content: normalizedContent(mergeReviewSkill) },
+  // The canonical vault save engine, shared byte-identically with the Claude and
+  // Codex skills. OpenCode's save drives this same collector so all three
+  // platforms cannot diverge in write behaviour. Keep it in sync with
+  // ~/.claude/skills/save/scripts/ and ~/.codex/skills/save/scripts/.
+  { relativePath: join('scripts', 'collect-vault-save.mjs'), content: normalizedContent(saveCollector) }
 ]
 
 async function writeManagedFile(path: string, content: string): Promise<boolean> {
