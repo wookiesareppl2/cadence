@@ -1,5 +1,5 @@
 ---
-description: Resume this project from its Cadence Memory Bank
+description: Resume this project from its Felix vault memory home or legacy Memory Bank
 ---
 
 Load the `start` skill with OpenCode's native skill tool and follow it exactly. Treat the command
