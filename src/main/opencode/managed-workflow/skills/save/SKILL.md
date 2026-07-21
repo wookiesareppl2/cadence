@@ -23,13 +23,41 @@ command, file read, glob, grep, task call, or write. In particular, do **not** t
 that test is part of this command, and running it early is what produces a wrong route.
 
 ```bash
-ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-MARKER="$(grep -h -m1 'Felix memory home' "$ROOT/CLAUDE.md" "$ROOT/.claude/CLAUDE.md" 2>/dev/null | head -1)"
-MEMORY_HOME="$(printf '%s' "$MARKER" | grep -o '`[^`]*`' | tr -d '`' | grep '^/' | head -1)"
-if [ -n "$MARKER" ] && [ -n "$MEMORY_HOME" ] && [ -d "$MEMORY_HOME" ]; then
+# Anchor on the NEAREST project baseline at or above the working directory.
+# Never use the git toplevel: a project nested below a git root would resolve to
+# the outer repo and miss both its own marker and its own bank.
+ROOT="$(pwd -P)"
+while [ "$ROOT" != "/" ] && [ ! -f "$ROOT/CLAUDE.md" ] && [ ! -f "$ROOT/.claude/CLAUDE.md" ]; do
+  ROOT="$(dirname "$ROOT")"
+done
+if [ "$ROOT" = "/" ] && [ ! -f "/CLAUDE.md" ]; then ROOT="$(pwd -P)"; fi
+
+# Read baselines with fenced code blocks stripped, so a documented example
+# marker cannot be mistaken for the live one.
+unfenced() { if [ -f "$1" ]; then awk 'BEGIN{f=0} /^[[:space:]]*```/{f=!f; next} !f{print}' "$1"; fi; return 0; }
+BASELINES="$(unfenced "$ROOT/CLAUDE.md"; unfenced "$ROOT/.claude/CLAUDE.md")"
+CANDIDATES="$(printf '%s\n' "$BASELINES" | grep 'Felix memory home' || true)"
+
+# Take the path after the WSL: label — never merely the first backticked
+# segment starting with "/", which an earlier segment could hijack. Try every
+# candidate line in order; the first that resolves to a real directory wins.
+MEMORY_HOME=""
+while IFS= read -r line; do
+  [ -z "$line" ] && continue
+  cand="$(printf '%s' "$line" | grep -o 'WSL:[[:space:]]*`[^`]*`' | head -1 | sed 's/^WSL:[[:space:]]*`//; s/`$//')"
+  if [ -n "$cand" ] && [ -d "$cand" ]; then MEMORY_HOME="$cand"; break; fi
+done <<CANDIDATES_EOF
+$CANDIDATES
+CANDIDATES_EOF
+
+NEARMISS="$(printf '%s\n' "$BASELINES" | grep -i 'felix memory home' || true)"
+
+if [ -n "$MEMORY_HOME" ]; then
   echo "MEMORY_ROUTE=vault"; echo "MEMORY_HOME=$MEMORY_HOME"
-elif [ -n "$MARKER" ]; then
-  echo "MEMORY_ROUTE=abort"; echo "REASON=vault marker present but memory home unreadable: ${MEMORY_HOME:-<unparsed>}"
+elif [ -n "$CANDIDATES" ]; then
+  echo "MEMORY_ROUTE=abort"; echo "REASON=vault marker present but no memory home resolved"
+elif [ -n "$NEARMISS" ]; then
+  echo "MEMORY_ROUTE=abort"; echo "REASON=marker-like text present but unparsed; refusing to fall back to a frozen bank"
 elif [ -f "$ROOT/.claude/HANDOFF.md" ]; then
   echo "MEMORY_ROUTE=legacy-bank"; echo "MEMORY_HOME=$ROOT/.claude"
 else
