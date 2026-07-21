@@ -19,7 +19,7 @@
 //   REASON=<text>                 (only when MEMORY_ROUTE=abort)
 
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 
 export const MARKER_PHRASE = 'Felix memory home'
 
@@ -100,6 +100,18 @@ export function extractWslPath(line) {
 }
 
 /**
+ * A marker declares the same memory home twice, once per platform. Return both,
+ * WSL first: OpenCode runs under WSL, but the resolver must also work when run
+ * on Windows, and picking a form that does not resolve on the current platform
+ * would abort on a perfectly valid marker.
+ */
+export function extractMarkerPaths(line) {
+  const wsl = extractWslPath(line)
+  const windows = line.match(/Windows:\s*`([^`]+)`/)
+  return [wsl, windows ? windows[1] : null].filter(Boolean)
+}
+
+/**
  * Walk upward for the project's own root.
  *
  * A directory carrying any identity file is a project and the walk stops there
@@ -149,9 +161,14 @@ export function resolveRoute({ root, readFileSafe, isDirectory, fileExists }) {
   const candidates = findMarkerLines(stripped)
   const unresolved = []
   for (const line of candidates) {
-    const path = extractWslPath(line)
-    if (path && isDirectory(path)) return { route: 'vault', home: path }
-    unresolved.push(path ?? '<no WSL: path on marker line>')
+    const paths = extractMarkerPaths(line)
+    if (!paths.length) {
+      unresolved.push('<no WSL: or Windows: path on marker line>')
+      continue
+    }
+    const found = paths.find((candidate) => isDirectory(candidate))
+    if (found) return { route: 'vault', home: found }
+    unresolved.push(paths.join(' | '))
   }
 
   if (candidates.length > 0) {
@@ -187,6 +204,42 @@ export function resolveRoute({ root, readFileSafe, isDirectory, fileExists }) {
     return { route: 'legacy-bank', home: join(root, '.claude') }
   }
   return { route: 'legacy-root', home: root }
+}
+
+/**
+ * Locate the vault root by reading the global agent adapter, which declares it.
+ * Used only to PROPOSE where an unmigrated project's memory should live; it is
+ * never used to pick an existing memory home, so it cannot cause a project to
+ * adopt another project's vault.
+ */
+export function findBrainRoot({ candidates, readFileSafe: read, isDirectory: isDir, fileExists: isFile }) {
+  for (const candidate of candidates) {
+    const text = read(candidate)
+    if (!text) continue
+    const match = text.match(/canonical Brain is:?\s*\n+\s*`([^`]+)`/i)
+    if (!match) continue
+    // Accept the declared path in whichever form resolves on this platform, and
+    // require VAULT-INDEX.md as proof it really is the vault root rather than a
+    // stale or partially-synced directory.
+    for (const form of [match[1], toWslPath(match[1])]) {
+      if (isDir(form) && isFile(join(form, 'VAULT-INDEX.md'))) return form
+    }
+  }
+  return null
+}
+
+export function toWslPath(p) {
+  const match = /^([A-Za-z]):[\\/](.*)$/.exec(p)
+  if (!match) return p
+  return `/mnt/${match[1].toLowerCase()}/${match[2].split('\\').join('/')}`
+}
+
+export const DEFAULT_VAULT_CATEGORY = '04 - Personal Projects'
+
+/** Where an unmigrated project's memory home should be created. */
+export function proposeMemoryHome(brainRoot, projectName, category = DEFAULT_VAULT_CATEGORY) {
+  if (!brainRoot || !projectName) return null
+  return join(brainRoot, category, projectName, 'memory')
 }
 
 function readFileSafe(path) {
@@ -239,6 +292,31 @@ export function main(cwd = process.cwd()) {
   if (result.home) lines.push(`MEMORY_HOME=${result.home}`)
   lines.push(`WORKSPACE_ROOT=${root}`)
   if (result.reason) lines.push(`REASON=${result.reason}`)
+
+  // A project without a vault memory home is not an error and never a reason to
+  // write into a legacy bank — it just has not been set up yet. Propose where it
+  // should live so a first save can create it, exactly as a first save on a new
+  // project has always created the memory system.
+  if (result.route === 'legacy-bank' || result.route === 'legacy-root') {
+    const home = process.env.HOME || process.env.USERPROFILE || ''
+    const brain = findBrainRoot({
+      candidates: [
+        join(home, '.claude', 'CLAUDE.md'),
+        join(home, '.codex', 'AGENTS.md'),
+        '/mnt/c/Users/sheld/.claude/CLAUDE.md'
+      ],
+      readFileSafe,
+      isDirectory,
+      fileExists
+    })
+    const proposed = proposeMemoryHome(brain, basename(root))
+    lines.push('BOOTSTRAP=required')
+    if (proposed) lines.push(`PROPOSED_MEMORY_HOME=${proposed}`)
+    else lines.push('PROPOSED_MEMORY_HOME=unknown (vault root not found; ask before creating one)')
+    if (result.route === 'legacy-bank') {
+      lines.push('LEGACY_BANK_PRESENT=true (archive it during bootstrap; never write to it)')
+    }
+  }
   return lines.join('\n')
 }
 
