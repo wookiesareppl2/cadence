@@ -4,26 +4,56 @@ description: Save session state to its declared Felix vault memory home, a legac
 compatibility: opencode
 metadata:
   managed-by: Cadence
-  workflow-revision: "2"
+  workflow-revision: "3"
 ---
 
 # Save Session State
 
 Resolve the project's memory home first, then delegate the entire save workflow to exactly one worker.
 
-## Resolve the memory home first
+## Resolve the memory home first — MANDATORY FIRST TOOL CALL
 
-The parent may read only the project baseline needed for routing (`CLAUDE.md` at the workspace/repo root and `.claude/CLAUDE.md` if distinct) and test file existence. It must not read memory content, run git checks, or write anything itself.
+**Do not decide the memory route yourself. The route is computed, not inferred.**
+A wrong route here writes this session's memory into a frozen bank and loses it. This is
+the highest-risk step in the skill.
 
-Choose the first matching mode:
+Your first tool call in this skill MUST be the command below, before any other bash
+command, file read, glob, grep, task call, or write. In particular, do **not** test for
+`.claude/HANDOFF.md`, `.Codex/HANDOFF.md`, or any other memory file before running it —
+that test is part of this command, and running it early is what produces a wrong route.
 
-1. **Vault Mode** — a project baseline contains this machine-readable marker:
-   `Felix memory home — Windows: ` `` `<win path>` `` ` · WSL: ` `` `<wsl path>` ``
-   Extract both backtick-quoted paths. OpenCode runs under WSL, so **select the WSL path**. Call it `<MEMORY_HOME>`.
-2. **Legacy Bank Mode** — no marker, but `<WORKSPACE_ROOT>/.claude/HANDOFF.md` exists.
-3. **Legacy Root Mode** — neither condition matches; use root `HANDOFF.md`.
+```bash
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+MARKER="$(grep -h -m1 'Felix memory home' "$ROOT/CLAUDE.md" "$ROOT/.claude/CLAUDE.md" 2>/dev/null | head -1)"
+MEMORY_HOME="$(printf '%s' "$MARKER" | grep -o '`[^`]*`' | tr -d '`' | grep '^/' | head -1)"
+if [ -n "$MARKER" ] && [ -n "$MEMORY_HOME" ] && [ -d "$MEMORY_HOME" ]; then
+  echo "MEMORY_ROUTE=vault"; echo "MEMORY_HOME=$MEMORY_HOME"
+elif [ -n "$MARKER" ]; then
+  echo "MEMORY_ROUTE=abort"; echo "REASON=vault marker present but memory home unreadable: ${MEMORY_HOME:-<unparsed>}"
+elif [ -f "$ROOT/.claude/HANDOFF.md" ]; then
+  echo "MEMORY_ROUTE=legacy-bank"; echo "MEMORY_HOME=$ROOT/.claude"
+else
+  echo "MEMORY_ROUTE=legacy-root"; echo "MEMORY_HOME=$ROOT"
+fi
+echo "WORKSPACE_ROOT=$ROOT"
+```
 
-The Obsidian vault is the permanent single source of truth for Sheldon's AI work. Legacy modes are transition scaffolding for projects not yet migrated, never the preferred endpoint. **Never write to a project's `.claude/` bank when the vault marker is present** — that bank is frozen.
+Use the printed `MEMORY_ROUTE` verbatim. It is the only valid source of the route:
+
+- `MEMORY_ROUTE=vault` → **Vault Mode**, with `<MEMORY_HOME>` as printed. The project's
+  `.claude/` bank is FROZEN: **never write to it**, never read it as memory, and never
+  let its contents influence the save. Legacy Bank Mode is **forbidden** in this case
+  even though `.claude/HANDOFF.md` exists — its existence is not evidence of anything.
+- `MEMORY_ROUTE=legacy-bank` → **Legacy Bank Mode** using the printed `<MEMORY_HOME>`.
+- `MEMORY_ROUTE=legacy-root` → **Legacy Root Mode** using root `HANDOFF.md`.
+- `MEMORY_ROUTE=abort` → stop immediately and report exactly:
+  `SAVE_ABORTED_BAD_ROUTE: <REASON>`. Do not fall back to any legacy mode, and do not
+  write anything.
+
+If you did not run the command, you do not know the route. Run it. Writing memory on an
+inferred route is the one failure this skill exists to prevent.
+
+The Obsidian vault is the permanent single source of truth for Sheldon's AI work. Legacy modes are transition scaffolding for projects not yet migrated, never the preferred endpoint.
 
 ## Non-negotiable delegation boundary
 
@@ -41,6 +71,10 @@ task(
 
 The session delta must include only facts already known to the parent: current task, completed work, validation performed, unresolved risks, important user decisions, touched files, and next actions. The worker verifies those facts against the workspace.
 
+- **Transmit the worker contract below verbatim.** Copy it as written; do not paraphrase
+  it, summarize it, shorten it, or substitute instructions you remember from an earlier
+  version of this skill. Only substitute the placeholder values (resolved mode, paths,
+  resolved fidelity, session delta). Rewriting the contract silently drops its guards.
 - Do not launch the task in the background.
 - Do not call another worker, council, or nested task, including for pin review.
 - Do not repeat worker reads, checks, or writes in the parent session.

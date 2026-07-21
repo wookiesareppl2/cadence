@@ -4,26 +4,52 @@ description: Resume a project session from its declared Felix vault memory home,
 compatibility: opencode
 metadata:
   managed-by: Cadence
-  workflow-revision: "2"
+  workflow-revision: "3"
 ---
 
 # Start Session Briefing
 
 Resolve the project's memory home first, then delegate the entire read/check workflow to exactly one worker.
 
-## Resolve the memory home first
+## Resolve the memory home first — MANDATORY FIRST TOOL CALL
 
-The parent may read only the project baseline needed for routing (`CLAUDE.md` at the workspace/repo root and `.claude/CLAUDE.md` if distinct) and test file existence. It must not read memory content, run git checks, or check ports itself.
+**Do not decide the memory route yourself. The route is computed, not inferred.**
 
-Choose the first matching mode:
+Your first tool call in this skill MUST be the command below, before any other bash
+command, file read, glob, grep, or task call. In particular, do **not** test for
+`.claude/HANDOFF.md`, `.Codex/HANDOFF.md`, or any other memory file before running it —
+that test is part of this command, and running it early is what produces a wrong route.
 
-1. **Vault Mode** — a project baseline contains this machine-readable marker:
-   `Felix memory home — Windows: ` `` `<win path>` `` ` · WSL: ` `` `<wsl path>` ``
-   Extract both backtick-quoted paths. OpenCode runs under WSL, so **select the WSL path**. Call it `<MEMORY_HOME>`.
-2. **Legacy Bank Mode** — no marker, but `<WORKSPACE_ROOT>/.claude/HANDOFF.md` exists.
-3. **Legacy Root Mode** — neither condition matches; use root `HANDOFF.md`.
+```bash
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+MARKER="$(grep -h -m1 'Felix memory home' "$ROOT/CLAUDE.md" "$ROOT/.claude/CLAUDE.md" 2>/dev/null | head -1)"
+MEMORY_HOME="$(printf '%s' "$MARKER" | grep -o '`[^`]*`' | tr -d '`' | grep '^/' | head -1)"
+if [ -n "$MARKER" ] && [ -n "$MEMORY_HOME" ] && [ -d "$MEMORY_HOME" ]; then
+  echo "MEMORY_ROUTE=vault"; echo "MEMORY_HOME=$MEMORY_HOME"
+elif [ -n "$MARKER" ]; then
+  echo "MEMORY_ROUTE=abort"; echo "REASON=vault marker present but memory home unreadable: ${MEMORY_HOME:-<unparsed>}"
+elif [ -f "$ROOT/.claude/HANDOFF.md" ]; then
+  echo "MEMORY_ROUTE=legacy-bank"; echo "MEMORY_HOME=$ROOT/.claude"
+else
+  echo "MEMORY_ROUTE=legacy-root"; echo "MEMORY_HOME=$ROOT"
+fi
+echo "WORKSPACE_ROOT=$ROOT"
+```
 
-The Obsidian vault is the permanent single source of truth for Sheldon's AI work. Legacy modes are transition scaffolding for projects not yet migrated, never the preferred endpoint. When the vault marker is present, do not read the project's `.claude/` bank as memory — it is frozen.
+Use the printed `MEMORY_ROUTE` verbatim. It is the only valid source of the route:
+
+- `MEMORY_ROUTE=vault` → **Vault Mode**, with `<MEMORY_HOME>` as printed. The project's
+  `.claude/` bank is FROZEN: never read it as memory, never cite it, and never let its
+  contents influence the briefing. Legacy Bank Mode is **forbidden** in this case even
+  though `.claude/HANDOFF.md` exists — its existence is not evidence of anything.
+- `MEMORY_ROUTE=legacy-bank` → **Legacy Bank Mode** using the printed `<MEMORY_HOME>`.
+- `MEMORY_ROUTE=legacy-root` → **Legacy Root Mode** using root `HANDOFF.md`.
+- `MEMORY_ROUTE=abort` → stop immediately and report exactly:
+  `START_ABORTED_BAD_ROUTE: <REASON>`. Do not fall back to any legacy mode.
+
+If you did not run the command, you do not know the route. Run it.
+
+The Obsidian vault is the permanent single source of truth for Sheldon's AI work. Legacy modes are transition scaffolding for projects not yet migrated, never the preferred endpoint.
 
 ## Non-negotiable delegation boundary
 
@@ -39,6 +65,11 @@ task(
 )
 ```
 
+- **Transmit the worker contract below verbatim.** Copy it as written; do not paraphrase
+  it, summarize it, shorten it, or substitute instructions you remember from an earlier
+  version of this skill. Only substitute the placeholder values (resolved mode, paths,
+  resolved fidelity, current user request). Rewriting the contract silently drops its
+  guards — notably the port rule, which forbids falling back to `3000`.
 - Do not launch the task in the background.
 - Do not call another worker, council, or nested task.
 - Do not repeat any worker checks in the parent session.
@@ -48,13 +79,23 @@ task(
 
 ## Fidelity
 
-Pass the command argument to the worker:
+Resolve the fidelity before delegating, then pass the **resolved** value to the worker:
 
-- `/start` or `/start lean` (default): lean resume. Read the personal layer and operational project state in full, then retrieve only task-relevant on-demand entries.
-- `/start high`: deprecated compatibility alias for `lean`; it does not authorize broader reads.
-- `/start max`: full audit resume, and the only mode that authorizes all live memory files to be read in full.
+| Command argument | Resolved fidelity |
+| --- | --- |
+| *(blank / no argument)* | `lean` |
+| `lean` | `lean` |
+| `high` | `lean` (deprecated alias; authorizes no broader reads) |
+| `max` | `max` |
+| anything else | `lean` |
 
-Any blank or unsupported argument means `lean`.
+- `lean` — lean resume. Read the personal layer and operational project state in full, then retrieve only task-relevant on-demand entries.
+- `max` — full audit resume, and the only mode that authorizes all live memory files to be read in full.
+
+`lean` and `max` are the only two resolved values that exist. **Never announce, pass, or
+report the fidelity as `high`** — `high` is an input alias only, and reporting it
+misstates what was read. When no argument is supplied the resolved fidelity is `lean`;
+say `lean`.
 
 ## Vault Mode worker contract
 

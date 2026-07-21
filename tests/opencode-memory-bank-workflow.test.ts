@@ -72,22 +72,42 @@ describe('Cadence-managed OpenCode workflow', () => {
     const startSkill = managedContent('skills/start/SKILL.md')
     const saveSkill = managedContent('skills/save/SKILL.md')
 
-    // Vault Mode must be the first-choice route in both skills, selecting the WSL
-    // path form (OpenCode runs under WSL). Without this, a save would silently
-    // target the project's frozen .claude/ bank instead of the vault.
+    // Routing must be COMPUTED, not inferred. A model running these skills once
+    // skipped the marker check, tested `.claude/HANDOFF.md` first, and routed to
+    // Legacy Bank Mode on a vault project — which on a save would write this
+    // session's memory into the frozen bank. The route is therefore emitted by a
+    // mandatory first command whose output the worker must use verbatim.
     for (const skill of [startSkill, saveSkill]) {
+      expect(skill).toContain('MANDATORY FIRST TOOL CALL')
       expect(skill).toContain('Felix memory home')
       expect(skill).toContain('<MEMORY_HOME>')
-      expect(skill).toContain('select the WSL path')
+      expect(skill).toContain('MEMORY_ROUTE=vault')
+      expect(skill).toContain('MEMORY_ROUTE=legacy-bank')
+      expect(skill).toContain('MEMORY_ROUTE=legacy-root')
+      expect(skill).toContain('MEMORY_ROUTE=abort')
       expect(skill).toContain('Legacy Bank Mode')
       expect(skill).toContain('Legacy Root Mode')
+      // The regression guard: a vault route must win even though the frozen
+      // bank's HANDOFF.md exists alongside it.
+      expect(skill).toContain('is **forbidden** in this case')
+      // The contract must be copied, not remembered. Paraphrasing it is how the
+      // forbidden port-3000 fallback reappeared in a delegated worker prompt.
+      expect(skill).toContain('verbatim')
+      expect(skill).toContain('do not paraphrase')
     }
 
-    // Fidelity naming must match the Claude/Codex skills: lean default, high is a
-    // deprecated alias, max is the only full-read authorisation.
-    expect(startSkill).toContain('/start lean')
-    expect(startSkill).toContain('deprecated compatibility alias')
-    expect(startSkill).toContain('/start max')
+    expect(startSkill).toContain('START_ABORTED_BAD_ROUTE')
+    expect(saveSkill).toContain('SAVE_ABORTED_BAD_ROUTE')
+    // The save skill carries the stronger no-write wording, since it is the one
+    // that can destroy memory by routing wrong.
+    expect(saveSkill).toContain('never write to it')
+
+    // Fidelity resolves to exactly two values. `high` is an input alias only and
+    // must never be reported back, which a shipped build did on every run.
+    expect(startSkill).toContain('Resolved fidelity')
+    expect(startSkill).toContain('deprecated alias')
+    expect(startSkill).toContain('report the fidelity as `high`')
+    expect(startSkill).toContain('`lean` and `max` are the only two resolved values')
 
     // Save must drive the shared collector engine end to end and never hand-edit.
     expect(saveSkill).toContain('scripts/collect-vault-save.mjs')
