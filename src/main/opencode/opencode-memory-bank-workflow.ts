@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import startSkill from './managed-workflow/skills/start/SKILL.md?raw'
 import saveSkill from './managed-workflow/skills/save/SKILL.md?raw'
 import saveCollector from './managed-workflow/scripts/collect-vault-save.mjs?raw'
+import routeResolver from './managed-workflow/scripts/resolve-memory-route.mjs?raw'
 import startCommand from './managed-workflow/commands/start.md?raw'
 import saveCommand from './managed-workflow/commands/save.md?raw'
 import mergeReviewSkill from '../merge-review/managed-workflow/SKILL.md?raw'
@@ -27,7 +28,12 @@ export const MANAGED_OPENCODE_WORKFLOW_FILES: readonly ManagedOpenCodeWorkflowFi
   // Codex skills. OpenCode's save drives this same collector so all three
   // platforms cannot diverge in write behaviour. Keep it in sync with
   // ~/.claude/skills/save/scripts/ and ~/.codex/skills/save/scripts/.
-  { relativePath: join('scripts', 'collect-vault-save.mjs'), content: normalizedContent(saveCollector) }
+  { relativePath: join('scripts', 'collect-vault-save.mjs'), content: normalizedContent(saveCollector) },
+  // Memory-home routing for both skills. Kept as a script rather than inline in
+  // the skills because two prose-embedded shell versions each misrouted on
+  // well-formed input; here it is unit-tested directly and cannot drift between
+  // the start and save copies.
+  { relativePath: join('scripts', 'resolve-memory-route.mjs'), content: normalizedContent(routeResolver) }
 ]
 
 async function writeManagedFile(path: string, content: string): Promise<boolean> {

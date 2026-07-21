@@ -21,48 +21,20 @@ command, file read, glob, grep, or task call. In particular, do **not** test for
 that test is part of this command, and running it early is what produces a wrong route.
 
 ```bash
-# Anchor on the NEAREST project baseline at or above the working directory.
-# Never use the git toplevel: a project nested below a git root would resolve to
-# the outer repo and miss both its own marker and its own bank.
-ROOT="$(pwd -P)"
-while [ "$ROOT" != "/" ] && [ ! -f "$ROOT/CLAUDE.md" ] && [ ! -f "$ROOT/.claude/CLAUDE.md" ]; do
-  ROOT="$(dirname "$ROOT")"
-done
-if [ "$ROOT" = "/" ] && [ ! -f "/CLAUDE.md" ]; then ROOT="$(pwd -P)"; fi
-
-# Read baselines with fenced code blocks stripped, so a documented example
-# marker cannot be mistaken for the live one.
-unfenced() { if [ -f "$1" ]; then awk 'BEGIN{f=0} /^[[:space:]]*```/{f=!f; next} !f{print}' "$1"; fi; return 0; }
-BASELINES="$(unfenced "$ROOT/CLAUDE.md"; unfenced "$ROOT/.claude/CLAUDE.md")"
-CANDIDATES="$(printf '%s\n' "$BASELINES" | grep 'Felix memory home' || true)"
-
-# Take the path after the WSL: label — never merely the first backticked
-# segment starting with "/", which an earlier segment could hijack. Try every
-# candidate line in order; the first that resolves to a real directory wins.
-MEMORY_HOME=""
-while IFS= read -r line; do
-  [ -z "$line" ] && continue
-  cand="$(printf '%s' "$line" | grep -o 'WSL:[[:space:]]*`[^`]*`' | head -1 | sed 's/^WSL:[[:space:]]*`//; s/`$//')"
-  if [ -n "$cand" ] && [ -d "$cand" ]; then MEMORY_HOME="$cand"; break; fi
-done <<CANDIDATES_EOF
-$CANDIDATES
-CANDIDATES_EOF
-
-NEARMISS="$(printf '%s\n' "$BASELINES" | grep -i 'felix memory home' || true)"
-
-if [ -n "$MEMORY_HOME" ]; then
-  echo "MEMORY_ROUTE=vault"; echo "MEMORY_HOME=$MEMORY_HOME"
-elif [ -n "$CANDIDATES" ]; then
-  echo "MEMORY_ROUTE=abort"; echo "REASON=vault marker present but no memory home resolved"
-elif [ -n "$NEARMISS" ]; then
-  echo "MEMORY_ROUTE=abort"; echo "REASON=marker-like text present but unparsed; refusing to fall back to a frozen bank"
-elif [ -f "$ROOT/.claude/HANDOFF.md" ]; then
-  echo "MEMORY_ROUTE=legacy-bank"; echo "MEMORY_HOME=$ROOT/.claude"
+CFG="${OPENCODE_CONFIG_DIR:-$HOME/.config/cadence/opencode}"
+NODE="$(command -v node 2>/dev/null || true)"
+if [ -z "$NODE" ] && [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1; NODE="$(command -v node 2>/dev/null || true)"; fi
+[ -z "$NODE" ] && NODE="$(ls -d "$HOME"/.nvm/versions/node/*/bin/node 2>/dev/null | tail -1)"
+if [ -z "$NODE" ]; then
+  echo "MEMORY_ROUTE=abort"
+  echo "REASON=node not found, so the memory route cannot be resolved. Refusing to guess."
 else
-  echo "MEMORY_ROUTE=legacy-root"; echo "MEMORY_HOME=$ROOT"
+  "$NODE" "$CFG/scripts/resolve-memory-route.mjs"
 fi
-echo "WORKSPACE_ROOT=$ROOT"
 ```
+
+The resolver is a shipped script, not logic for you to reproduce. Do not
+reimplement it, inline it, or work around it — if it does not run, abort.
 
 Use the printed `MEMORY_ROUTE` verbatim. It is the only valid source of the route:
 

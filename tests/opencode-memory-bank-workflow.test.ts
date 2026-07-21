@@ -1,12 +1,18 @@
-import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { delimiter, dirname, join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   installManagedOpenCodeMemoryBankWorkflow,
   MANAGED_OPENCODE_WORKFLOW_FILES
 } from '../src/main/opencode/opencode-memory-bank-workflow'
+import {
+  findProjectRoot,
+  PROJECT_IDENTITY_FILES,
+  resolveRoute,
+  stripFences
+} from '../src/main/opencode/managed-workflow/scripts/resolve-memory-route.mjs'
 
 const temporaryDirectories: string[] = []
 
@@ -34,68 +40,81 @@ afterEach(async () => {
   )
 })
 
-// The routing block is the load-bearing part of both skills: it decides whether a
-// save writes to the live vault or to a project's frozen .claude/ bank. String
-// assertions cannot catch a behavioural regression in it (swapping the branch
-// order, or mis-extracting the path, reads just as well), so extract the real
-// block and execute it.
-function routingBlock(skill: string): string {
-  const match = skill.match(/```bash\n([\s\S]*?)\n```/)
-  if (!match) throw new Error('No bash routing block found in skill')
-  return match[1]
-}
-
-// Resolve a POSIX shell explicitly. A bare 'bash' on Windows can resolve to the
-// WSL launcher (C:\Windows\System32\bash.exe), which blocks indefinitely under
-// execFileSync. Every call is also given a timeout so this suite can never hang.
-function resolveBash(): string | undefined {
-  const candidates =
-    process.platform === 'win32'
-      ? ['C:\\Program Files\\Git\\usr\\bin\\bash.exe', 'C:\\Program Files\\Git\\bin\\bash.exe']
-      : ['/bin/bash', '/usr/bin/bash', 'bash']
-  for (const candidate of candidates) {
-    try {
-      execFileSync(candidate, ['-c', 'exit 0'], { stdio: 'pipe', timeout: 10_000 })
-      return candidate
-    } catch {
-      continue
-    }
-  }
-  return undefined
-}
-
-const BASH = resolveBash()
-const HAS_BASH = BASH !== undefined
-
-function sh(args: string[], cwd: string): string {
-  // Git Bash invoked non-interactively inherits Node's Windows PATH, which omits
-  // Git's usr/bin — awk, grep and sed would all be "command not found". Put the
-  // shell's own bin directory on PATH rather than using a login shell, which
-  // could change the working directory out from under the fixture.
-  const binDir = dirname(BASH as string)
-  return execFileSync(BASH as string, args, {
-    cwd,
-    encoding: 'utf-8',
-    timeout: 20_000,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, PATH: `${binDir}${delimiter}${process.env.PATH ?? ''}` }
-  })
-}
-
-function posixPath(directory: string): string {
-  return sh(['-c', 'pwd -P'], directory).trim()
-}
-
-function route(block: string, cwd: string): { route: string; home: string } {
-  const out = sh(['-c', block], cwd)
-  return {
-    route: out.match(/MEMORY_ROUTE=([a-z-]+)/)?.[1] ?? '',
-    home: out.match(/MEMORY_HOME=(.*)/)?.[1]?.trim() ?? ''
-  }
-}
-
 function marker(wslPath: string): string {
   return `Felix memory home — Windows: \`C:\\x\` · WSL: \`${wslPath}\`\n`
+}
+
+// Routing decides whether a save writes to the live vault or to a project's
+// frozen .claude/ bank, or into a DIFFERENT project's vault. It is exercised
+// directly here — against the real filesystem, no shell involved — because two
+// prose-embedded shell versions each passed string assertions while misrouting
+// on well-formed input.
+function fsHelpers() {
+  return {
+    readFileSafe: (path: string) => {
+      try {
+        return readFileSync(path, 'utf-8')
+      } catch {
+        return null
+      }
+    },
+    isDirectory: (path: string) => {
+      try {
+        return statSync(path).isDirectory()
+      } catch {
+        return false
+      }
+    },
+    fileExists: (path: string) => {
+      try {
+        return statSync(path).isFile()
+      } catch {
+        return false
+      }
+    }
+  }
+}
+
+function routeFrom(
+  cwd: string,
+  homeDir?: string
+): { route: string; home?: string; workspaceRoot: string } {
+  const helpers = fsHelpers()
+  const root = findProjectRoot(cwd, {
+    gitTopLevel: gitTopLevelOf(cwd),
+    homeDir: homeDir ?? null,
+    hasIdentity: (dir: string) =>
+      PROJECT_IDENTITY_FILES.some((f: string) => helpers.fileExists(join(dir, f)))
+  })
+  const result = resolveRoute({ root, ...helpers })
+  return { route: result.route, home: result.home, workspaceRoot: root }
+}
+
+function gitTopLevelOf(cwd: string): string | null {
+  let current = cwd
+  for (;;) {
+    if (existsSync(join(current, '.git'))) return current
+    const parent = dirname(current)
+    if (parent === current) return null
+    current = parent
+  }
+}
+
+async function tree(
+  root: string,
+  name: string,
+  files: Record<string, string>,
+  dirs: string[] = []
+): Promise<string> {
+  const dir = join(root, name)
+  await mkdir(dir, { recursive: true })
+  for (const d of dirs) await mkdir(join(dir, d), { recursive: true })
+  for (const [rel, body] of Object.entries(files)) {
+    const target = join(dir, rel)
+    await mkdir(dirname(target), { recursive: true })
+    await writeFile(target, body, 'utf-8')
+  }
+  return dir
 }
 
 describe('Cadence-managed OpenCode workflow', () => {
@@ -106,7 +125,8 @@ describe('Cadence-managed OpenCode workflow', () => {
       'commands/start.md',
       'commands/save.md',
       'skills/cadence-merge-review/SKILL.md',
-      'scripts/collect-vault-save.mjs'
+      'scripts/collect-vault-save.mjs',
+      'scripts/resolve-memory-route.mjs'
     ])
 
     const startSkill = managedContent('skills/start/SKILL.md')
@@ -144,7 +164,6 @@ describe('Cadence-managed OpenCode workflow', () => {
     // mandatory first command whose output the worker must use verbatim.
     for (const skill of [startSkill, saveSkill]) {
       expect(skill).toContain('MANDATORY FIRST TOOL CALL')
-      expect(skill).toContain('Felix memory home')
       expect(skill).toContain('<MEMORY_HOME>')
       expect(skill).toContain('MEMORY_ROUTE=vault')
       expect(skill).toContain('MEMORY_ROUTE=legacy-bank')
@@ -159,6 +178,11 @@ describe('Cadence-managed OpenCode workflow', () => {
       // forbidden port-3000 fallback reappeared in a delegated worker prompt.
       expect(skill).toContain('verbatim')
       expect(skill).toContain('do not paraphrase')
+      // Routing is delegated to the shipped resolver, never reimplemented. Both
+      // skills must invoke it and must abort rather than guess without it.
+      expect(skill).toContain('scripts/resolve-memory-route.mjs')
+      expect(skill).toContain('not logic for you to reproduce')
+      expect(skill).toContain('node not found')
     }
 
     expect(startSkill).toContain('START_ABORTED_BAD_ROUTE')
@@ -183,115 +207,177 @@ describe('Cadence-managed OpenCode workflow', () => {
     expect(saveSkill).toContain('NEVER hand-edits')
   })
 
-  it('keeps the start and save routing blocks byte-identical', () => {
-    // Divergence here is a defect: save is the copy that can destroy memory, so a
-    // one-sided edit to start would leave the dangerous path unprotected.
-    expect(routingBlock(managedContent('skills/save/SKILL.md'))).toBe(
-      routingBlock(managedContent('skills/start/SKILL.md'))
+  it('never adopts an ancestor project as its memory home', async () => {
+    const root = await temporaryDirectory()
+
+    // A project whose ONLY identity is a legacy bank, sitting under an ancestor
+    // that declares a vault marker. Routing to the ancestor would write this
+    // project's memory into a DIFFERENT project's vault — the cross-contamination
+    // failure this system already hit once and pinned as must-not-recur.
+    await writeFile(join(root, 'CLAUDE.md'), marker(join(root, 'ancestor-vault')), 'utf-8')
+    await mkdir(join(root, 'ancestor-vault'), { recursive: true })
+    const legacyChild = await tree(root, 'child-legacy', { '.claude/HANDOFF.md': 'x\n' })
+    const childResult = routeFrom(legacyChild)
+    expect(childResult.route).toBe('legacy-bank')
+    expect(childResult.workspaceRoot).toBe(legacyChild)
+
+    // A directory with NO identity file is a subdirectory of the enclosing
+    // project, and correctly resolves to it — it is indistinguishable from
+    // src/deep below. Identity files, not the walk bound, are what stop a real
+    // project climbing out of itself.
+    const bare = await tree(root, 'child-bare', { 'notes.txt': 'x\n' })
+    expect(routeFrom(bare).workspaceRoot).toBe(root)
+
+    // HOME is never a project root, even though ~/.claude/CLAUDE.md exists as the
+    // global agent adapter. Treating it as one would route every unmarked
+    // directory beneath it at the home directory.
+    const underHome = await tree(root, 'under-home', { 'notes.txt': 'x\n' })
+    const homeResult = routeFrom(underHome, root)
+    expect(homeResult.workspaceRoot).toBe(underHome)
+    expect(homeResult.route).toBe('legacy-root')
+
+    // But a subdirectory of a real project must still find that project.
+    const project = await tree(
+      root,
+      'proper',
+      { 'CLAUDE.md': marker(join(root, 'proper', 'mem')) },
+      ['mem', join('src', 'deep')]
     )
+    expect(routeFrom(join(project, 'src', 'deep')).workspaceRoot).toBe(project)
   })
 
-  it.runIf(HAS_BASH)('resolves the memory route correctly when executed', async () => {
-    const block = routingBlock(managedContent('skills/start/SKILL.md'))
+  it('resolves every memory route correctly', async () => {
     const root = await temporaryDirectory()
-    const base = posixPath(root)
+    const home = (name: string) => join(root, name, 'mem')
 
-    const fixture = async (
-      name: string,
-      files: Record<string, string>,
-      dirs: string[] = []
-    ): Promise<string> => {
-      const dir = join(root, name)
-      await mkdir(dir, { recursive: true })
-      for (const d of dirs) await mkdir(join(dir, d), { recursive: true })
-      for (const [rel, body] of Object.entries(files)) {
-        const target = join(dir, rel)
-        await mkdir(join(target, '..'), { recursive: true })
-        await writeFile(target, body, 'utf-8')
-      }
-      return dir
-    }
-
-    // The production regression: a vault marker and the frozen bank's HANDOFF.md
+    // The production regression: vault marker and the frozen bank's HANDOFF.md
     // both present. A shipped build routed this to legacy-bank, which on a save
     // would have written the session's memory into the frozen bank.
-    const both = await fixture(
+    const both = await tree(
+      root,
       'both',
-      { 'CLAUDE.md': marker(`${base}/both/mem`), '.claude/HANDOFF.md': 'x\n' },
+      { 'CLAUDE.md': marker(home('both')), '.claude/HANDOFF.md': 'x\n' },
       ['mem']
     )
-    expect(route(block, both).route).toBe('vault')
+    expect(routeFrom(both)).toMatchObject({ route: 'vault', home: home('both') })
 
-    // A project nested below an outer directory must use its OWN baseline.
-    const nested = await fixture(
-      'outer/inner',
-      { 'CLAUDE.md': marker(`${base}/outer/inner/mem`), '.claude/HANDOFF.md': 'x\n' },
-      ['mem']
-    )
-    expect(route(block, nested).route).toBe('vault')
-
-    // Running from a subdirectory must still find the project baseline above it.
-    await mkdir(join(both, 'src', 'deep'), { recursive: true })
-    expect(route(block, join(both, 'src', 'deep')).route).toBe('vault')
-
-    // An earlier backticked absolute path must not hijack the extraction — the
-    // path after the WSL: label is the only valid one.
-    const hijack = await fixture(
+    // An earlier quoted absolute path must not hijack extraction; only the path
+    // after the WSL: label counts.
+    const hijack = await tree(
+      root,
       'hijack',
       {
-        'CLAUDE.md': `Felix memory home — see \`/etc\` first · Windows: \`C:\\x\` · WSL: \`${base}/hijack/mem\`\n`
+        'CLAUDE.md': `Felix memory home — see \`/etc\` first · Windows: \`C:\\x\` · WSL: \`${home('hijack')}\`\n`
       },
       ['mem']
     )
-    const hijackResult = route(block, hijack)
-    expect(hijackResult.route).toBe('vault')
-    expect(hijackResult.home).toBe(`${base}/hijack/mem`)
+    expect(routeFrom(hijack)).toMatchObject({ route: 'vault', home: home('hijack') })
 
-    // A marker inside a fenced code block is documentation, not configuration.
-    const fenced = await fixture(
+    // A backtick-fenced example marker is documentation, not configuration.
+    const fenced = await tree(
+      root,
       'fenced',
+      { 'CLAUDE.md': `\`\`\`\n${marker(home('fenced'))}\`\`\`\n`, '.claude/HANDOFF.md': 'x\n' },
+      ['mem']
+    )
+    expect(routeFrom(fenced).route).toBe('legacy-bank')
+
+    // Tilde fences are valid CommonMark and must be stripped too.
+    const tilde = await tree(
+      root,
+      'tilde',
+      { 'CLAUDE.md': `~~~\n${marker(home('tilde'))}~~~\n`, '.claude/HANDOFF.md': 'x\n' },
+      ['mem']
+    )
+    expect(routeFrom(tilde).route).toBe('legacy-bank')
+
+    // An UNCLOSED fence swallows everything below it, including a real marker.
+    // Falling through to the frozen bank here is the original data-loss bug, so
+    // this must abort instead.
+    const desync = await tree(
+      root,
+      'desync',
       {
-        'CLAUDE.md': `\`\`\`\n${marker(`${base}/fenced/mem`)}\`\`\`\n`,
+        'CLAUDE.md': `# Project\n\`\`\`\nunclosed example\n\n${marker(home('desync'))}`,
         '.claude/HANDOFF.md': 'x\n'
       },
       ['mem']
     )
-    expect(route(block, fenced).route).toBe('legacy-bank')
+    expect(routeFrom(desync).route).toBe('abort')
 
-    // Marker-like text that fails to parse must abort, never silently fall back
-    // to the frozen bank — that fallback is the original failure mode.
-    const reworded = await fixture('reworded', {
+    // Marker-shaped but unparseable text aborts rather than silently falling back.
+    const reworded = await tree(root, 'reworded', {
       'CLAUDE.md': 'FELIX MEMORY HOME - Windows: `C:\\x` WSL: `/nope`\n',
       '.claude/HANDOFF.md': 'x\n'
     })
-    expect(route(block, reworded).route).toBe('abort')
+    expect(routeFrom(reworded).route).toBe('abort')
 
-    // A marker pointing at a nonexistent home aborts rather than guessing.
-    const missing = await fixture('missing', {
-      'CLAUDE.md': marker(`${base}/missing/not-there`),
+    // ...but prose merely MENTIONING the phrase must not brick a legacy project.
+    const mentions = await tree(root, 'mentions', {
+      'CLAUDE.md': 'We have not yet set up a Felix memory home for this project.\n',
       '.claude/HANDOFF.md': 'x\n'
     })
-    expect(route(block, missing).route).toBe('abort')
+    expect(routeFrom(mentions).route).toBe('legacy-bank')
+
+    // A marker pointing nowhere aborts rather than guessing.
+    const missing = await tree(root, 'missing', {
+      'CLAUDE.md': marker(join(root, 'missing', 'not-there')),
+      '.claude/HANDOFF.md': 'x\n'
+    })
+    expect(routeFrom(missing).route).toBe('abort')
+
+    // A marker with no WSL path at all aborts.
+    const winOnly = await tree(root, 'winonly', {
+      'CLAUDE.md': 'Felix memory home — Windows: `C:\\only`\n',
+      '.claude/HANDOFF.md': 'x\n'
+    })
+    expect(routeFrom(winOnly).route).toBe('abort')
 
     // Legacy routes still work.
-    const bank = await fixture('bank', {
+    const bank = await tree(root, 'bank', {
       'CLAUDE.md': '# no marker\n',
       '.claude/HANDOFF.md': 'x\n'
     })
-    expect(route(block, bank).route).toBe('legacy-bank')
-
-    const rootOnly = await fixture('rootonly', { 'CLAUDE.md': '# no marker\n' })
-    expect(route(block, rootOnly).route).toBe('legacy-root')
-
-    // Paths containing spaces are real: the live memory home has them.
-    const spaced = await fixture(
-      'spaced',
-      { 'CLAUDE.md': marker(`${base}/spaced/04 - Personal Projects/mem`) },
-      ['04 - Personal Projects/mem']
+    expect(routeFrom(bank).route).toBe('legacy-bank')
+    expect(routeFrom(await tree(root, 'rootonly', { 'CLAUDE.md': '# no marker\n' })).route).toBe(
+      'legacy-root'
     )
-    const spacedResult = route(block, spaced)
-    expect(spacedResult.route).toBe('vault')
-    expect(spacedResult.home).toBe(`${base}/spaced/04 - Personal Projects/mem`)
+
+    // The live memory home has spaces in it.
+    const spaced = await tree(
+      root,
+      'spaced',
+      { 'CLAUDE.md': marker(join(root, 'spaced', '04 - Personal Projects', 'mem')) },
+      [join('04 - Personal Projects', 'mem')]
+    )
+    expect(routeFrom(spaced)).toMatchObject({
+      route: 'vault',
+      home: join(root, 'spaced', '04 - Personal Projects', 'mem')
+    })
+
+    // A marker in .claude/CLAUDE.md is equally valid.
+    const nested = await tree(
+      root,
+      'nestedbaseline',
+      { '.claude/CLAUDE.md': marker(home('nestedbaseline')) },
+      ['mem']
+    )
+    expect(routeFrom(nested).route).toBe('vault')
+  })
+
+  it('strips fences and reports desync', () => {
+    expect(stripFences('a\n```\nhidden\n```\nb').stripped.split('\n')).toEqual(['a', 'b'])
+    expect(stripFences('a\n~~~\nhidden\n~~~\nb').stripped.split('\n')).toEqual(['a', 'b'])
+    // A 4-backtick fence containing 3-backtick fences: the inner ones are too
+    // short to close it, so the whole span is stripped and nothing is left open.
+    const nested = stripFences('a\n````\n```\ninner\n```\n````\nb')
+    expect(nested.stripped.split('\n')).toEqual(['a', 'b'])
+    expect(nested.unbalanced).toBe(false)
+    // An unclosed fence must be reported — it silently swallows everything below.
+    expect(stripFences('a\n```\nnever closed').unbalanced).toBe(true)
+    expect(stripFences('a\nb').unbalanced).toBe(false)
+    // A tilde fence is not closed by backticks.
+    expect(stripFences('a\n~~~\nx\n```\ny').unbalanced).toBe(true)
   })
 
   it('ships the canonical vault save collector as pure LF, content intact', async () => {
@@ -321,7 +407,8 @@ describe('Cadence-managed OpenCode workflow', () => {
       'commands/start.md',
       'commands/save.md',
       'skills/cadence-merge-review/SKILL.md',
-      'scripts/collect-vault-save.mjs'
+      'scripts/collect-vault-save.mjs',
+      'scripts/resolve-memory-route.mjs'
     ])
 
     const second = await installManagedOpenCodeMemoryBankWorkflow(configDir)
