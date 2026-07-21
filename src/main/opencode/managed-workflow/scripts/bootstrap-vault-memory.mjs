@@ -20,7 +20,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { findMarkerLines, stripFences } from './resolve-memory-route.mjs'
 
 export function toWindowsPath(p) {
   const match = /^\/mnt\/([a-z])\/(.*)$/i.exec(p)
@@ -124,17 +124,57 @@ export function skeletonFiles(project, today) {
   }
 }
 
-/** Refuse to touch a memory home that already holds someone's memory. */
-export function targetIsOccupied(memoryDir, readdir = fs.readdirSync, exists = fs.existsSync) {
+/**
+ * Refuse to touch a memory home that already holds someone's memory.
+ *
+ * Recurses: a home whose live files were moved but whose Archive/ still holds
+ * content is NOT empty, and re-skeletoning it would overwrite that archive.
+ * Anything at all under the directory counts — an unreadable directory counts
+ * too, because failure to read is not evidence of absence.
+ */
+export function targetIsOccupied(memoryDir, readdirSync = fs.readdirSync, exists = fs.existsSync) {
   if (!exists(memoryDir)) return false
-  let entries = []
-  try {
-    entries = readdir(memoryDir)
-  } catch {
-    return true
+  const queue = [memoryDir]
+  while (queue.length) {
+    let entries
+    try {
+      entries = readdirSync(queue.shift(), { withFileTypes: true })
+    } catch {
+      return true
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) queue.push(path.join(entry.parentPath ?? memoryDir, entry.name))
+      else return true
+    }
   }
-  return entries.some((name) => name.toLowerCase().endsWith('.md'))
+  return false
 }
+
+/** The date the collector would use, so the two never disagree in one file. */
+export function todayInNz() {
+  const parts = new Intl.DateTimeFormat('en-NZ', {
+    timeZone: 'Pacific/Auckland',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(new Date())
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]))
+  return `${values.year}-${values.month}-${values.day}`
+}
+
+// The archive is stored with a `.md.txt` suffix, NOT `.md`. Content is copied
+// byte for byte; only the name differs.
+//
+// This matters more than it looks. The collector scans every `*.md` under the
+// memory home, and it treats each one as a CITER for dangling-reference checks,
+// not merely as a source of IDs. Real legacy banks cite superseded or deleted
+// entries, so an archived `.md` would fail validation — and because apply writes
+// before validate, that leaves a written-but-invalid vault whose every
+// subsequent save fails identically, with no repair path that does not either
+// hand-edit the "verbatim" archive or delete it. Renaming keeps the content
+// intact and honest while keeping it out of the scanner.
+// Appended to the original name, which already ends in `.md`, giving `<name>.md.txt`.
+export const ARCHIVE_SUFFIX = '.txt'
 
 function copyLegacyBank(workspace, memoryDir, log) {
   const bank = path.join(workspace, '.claude')
@@ -146,9 +186,19 @@ function copyLegacyBank(workspace, memoryDir, log) {
   const target = path.join(memoryDir, 'Archive', 'legacy-bank')
   fs.mkdirSync(target, { recursive: true })
   for (const name of names) {
-    fs.copyFileSync(path.join(bank, name), path.join(target, name))
-    log.push(`  archived ${name}`)
+    fs.copyFileSync(path.join(bank, name), path.join(target, `${name}${ARCHIVE_SUFFIX}`))
+    log.push(`  archived ${name} as ${name}${ARCHIVE_SUFFIX}`)
   }
+  fs.writeFileSync(
+    path.join(target, 'README.txt'),
+    'Verbatim copy of this project\'s legacy .claude/ memorybank, taken at vault bootstrap.\n\n' +
+      'Files carry a .md.txt suffix so the save collector does not scan them as live memory:\n' +
+      'it treats every *.md under the memory home as a citer for dangling-reference checks, and\n' +
+      'legacy banks routinely cite entries that no longer exist. Content is byte-identical to the\n' +
+      'originals; only the file names differ.\n\n' +
+      'Promote entries from here into the live memory files as tasks touch them.\n',
+    'utf-8'
+  )
   return names.length
 }
 
@@ -161,8 +211,14 @@ function writeMarker(workspace, memoryDir, log) {
   } catch {
     text = ''
   }
-  if (text.includes('Felix memory home')) {
-    log.push('  CLAUDE.md already declares a memory home; left unchanged')
+  // Use the RESOLVER's matcher, not a second one. Testing raw text here while
+  // the resolver tests fence-stripped text meant a CLAUDE.md that merely
+  // documented the marker inside a code fence convinced bootstrap a live marker
+  // existed. No marker got written, the memory home was created anyway, the
+  // route never became vault, and re-running refused because the target was now
+  // occupied — leaving the project unsaveable by any supported path.
+  if (findMarkerLines(stripFences(text).stripped).length > 0) {
+    log.push('  CLAUDE.md already declares a live memory home; left unchanged')
     return false
   }
   const block =
@@ -178,6 +234,15 @@ function writeMarker(workspace, memoryDir, log) {
 export function bootstrap({ workspace, memory, project, today, dryRun = false }) {
   const log = []
   if (!fs.existsSync(workspace)) throw new Error(`Workspace does not exist: ${workspace}`)
+  // A backtick would terminate the marker's quoted path early, so the resolver
+  // would extract a truncated path, find no directory there, and abort forever.
+  // Refuse up front rather than write a marker we know cannot be read back.
+  if (memory.includes('`')) {
+    throw new Error(
+      `Refusing to bootstrap: the memory path contains a backtick, which cannot be written into ` +
+        `the memory-home marker. Choose a path without one: ${memory}`
+    )
+  }
   if (targetIsOccupied(memory)) {
     throw new Error(
       `Refusing to bootstrap: ${memory} already contains memory files. ` +
@@ -229,7 +294,7 @@ if (invokedDirectly) {
   const parsed = parseArgs(process.argv.slice(2))
   const workspace = path.resolve(required(parsed, 'workspace'))
   const memory = path.resolve(required(parsed, 'memory'))
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayInNz()
   try {
     const result = bootstrap({
       workspace,

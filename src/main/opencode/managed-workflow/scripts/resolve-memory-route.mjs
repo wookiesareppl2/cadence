@@ -298,17 +298,16 @@ export function main(cwd = process.cwd()) {
   // should live so a first save can create it, exactly as a first save on a new
   // project has always created the memory system.
   if (result.route === 'legacy-bank' || result.route === 'legacy-root') {
-    const home = process.env.HOME || process.env.USERPROFILE || ''
-    const brain = findBrainRoot({
-      candidates: [
-        join(home, '.claude', 'CLAUDE.md'),
-        join(home, '.codex', 'AGENTS.md'),
-        '/mnt/c/Users/sheld/.claude/CLAUDE.md'
-      ],
-      readFileSafe,
-      isDirectory,
-      fileExists
-    })
+    // Discover the adapter from the environment only. No machine-specific path
+    // is hardcoded: this script ships to every install, and a path naming one
+    // developer's account would be dead weight everywhere else. If no adapter is
+    // found the proposal degrades to "unknown", which asks rather than guesses.
+    const candidates = []
+    for (const base of [process.env.HOME, process.env.USERPROFILE]) {
+      if (!base) continue
+      candidates.push(join(base, '.claude', 'CLAUDE.md'), join(base, '.codex', 'AGENTS.md'))
+    }
+    const brain = findBrainRoot({ candidates, readFileSafe, isDirectory, fileExists })
     const proposed = proposeMemoryHome(brain, basename(root))
     lines.push('BOOTSTRAP=required')
     if (proposed) lines.push(`PROPOSED_MEMORY_HOME=${proposed}`)
