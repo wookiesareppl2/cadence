@@ -6,7 +6,7 @@ export const OPENCODE_MINIMUM_VERSION = '1.17.18'
 export const OPENCODE_SLIM_VERSION = '2.1.1'
 export const OPENCODE_ROUTING_PROFILE = 'cadence-go-capability-v1'
 export const OPENCODE_ROUTING_REVISION = 2
-export const OPENCODE_MEMORY_BANK_WORKFLOW_REVISION = 2
+export const OPENCODE_MEMORY_BANK_WORKFLOW_REVISION = 3
 
 type ModelEntry = string | { id: string; variant?: string }
 
