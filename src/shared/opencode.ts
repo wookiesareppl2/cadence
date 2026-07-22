@@ -5,7 +5,10 @@ export const OPENCODE_CONFIG_DIR = '$HOME/.config/cadence/opencode'
 export const OPENCODE_MINIMUM_VERSION = '1.17.18'
 export const OPENCODE_SLIM_VERSION = '2.1.1'
 export const OPENCODE_ROUTING_PROFILE = 'cadence-go-capability-v1'
-export const OPENCODE_ROUTING_REVISION = 2
+// Bump whenever the routing preset changes. The runtime treats a profile as
+// already configured when the manifest carries this exact revision, so a preset
+// change that does not bump it is silently never delivered.
+export const OPENCODE_ROUTING_REVISION = 3
 export const OPENCODE_MEMORY_BANK_WORKFLOW_REVISION = 3
 
 type ModelEntry = string | { id: string; variant?: string }
@@ -86,7 +89,16 @@ export function createSlimConfig({
 
   const preset: Record<string, OpenCodeAgentConfig> = {
     orchestrator: {
-      model: [models.glm52, models.kimi27, models.mimoPro]
+      // The orchestrator runs the managed /start and /save skills, so its
+      // instruction-following decides whether the memory-route resolver is
+      // actually invoked. glm-5.2 led this list through v0.1.30-v0.1.32 and
+      // skipped the resolver's mandatory first tool call in every observed
+      // session across all three builds, hand-rolling its own route check
+      // instead — once reaching the wrong route outright, and once reaching it
+      // first before self-correcting from prose. Lead with the same
+      // high-judgment model the oracle and council roles already use; the
+      // previous chain stays below it as fallback.
+      model: [{ id: models.qwen37Max, variant: 'max' }, models.glm52, models.kimi27, models.mimoPro]
     },
     oracle: {
       model: [{ id: models.qwen37Max, variant: 'max' }, models.glm52, models.mimoPro]
