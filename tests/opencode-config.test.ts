@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
   createOpenCodeConfig,
@@ -29,6 +30,30 @@ describe('Cadence OpenCode configuration', () => {
     })
   })
 
+  it('bumps the routing revision whenever the routing preset changes', () => {
+    // The runtime treats a profile as already configured when the manifest
+    // carries this exact revision, so it only rewrites the slim config when the
+    // revision differs. A preset change that does not bump the revision is
+    // therefore silently NEVER delivered — the app keeps serving the old models
+    // while the source says otherwise. This test pins the revision to the
+    // preset's shape: change the preset, and it fails until the revision moves.
+    const preset = (
+      createSlimConfig() as {
+        presets: Record<string, Record<string, { model: Array<string | { id: string; variant?: string }> }>>
+      }
+    ).presets[OPENCODE_ROUTING_PROFILE]
+    const shape = JSON.stringify(
+      Object.fromEntries(Object.entries(preset).map(([role, cfg]) => [role, cfg.model]))
+    )
+    const shapeFingerprint = createHash('sha256').update(shape).digest('hex').slice(0, 12)
+
+    // Update BOTH values together, in the same change, or not at all.
+    expect({ revision: OPENCODE_ROUTING_REVISION, shapeFingerprint }).toEqual({
+      revision: 3,
+      shapeFingerprint: '4fb551f42509'
+    })
+  })
+
   it('can pin an isolated candidate for transactional major validation', () => {
     expect(createOpenCodeConfig({ slimVersion: '3.0.0', pinSlimPlugin: true })).toMatchObject({
       plugin: ['oh-my-opencode-slim@3.0.0']
@@ -53,7 +78,16 @@ describe('Cadence OpenCode configuration', () => {
 
     expect(config.preset).toBe(OPENCODE_ROUTING_PROFILE)
     expect(config.disabled_agents).toEqual([])
-    expect(preset.orchestrator.model).toEqual([m.glm52, m.kimi27, m.mimoPro])
+    // The orchestrator runs the managed /start and /save skills, so its
+    // instruction-following decides whether the memory-route resolver is
+    // invoked at all. glm-5.2 led this list through v0.1.30-v0.1.32 and skipped
+    // the resolver in every observed session; the high-judgment model leads now.
+    expect(preset.orchestrator.model).toEqual([
+      { id: m.qwen37Max, variant: 'max' },
+      m.glm52,
+      m.kimi27,
+      m.mimoPro
+    ])
     expect(preset.oracle.model).toEqual([{ id: m.qwen37Max, variant: 'max' }, m.glm52, m.mimoPro])
     expect(preset.explorer.model).toEqual([m.deepSeekFlash, m.mimo, m.minimaxM3])
     expect(preset.librarian.model).toEqual([m.deepSeekFlash, m.mimo, m.minimaxM3])
