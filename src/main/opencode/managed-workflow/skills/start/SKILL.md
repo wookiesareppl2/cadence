@@ -1,6 +1,6 @@
 ---
 name: start
-description: Resume a project session from its declared Felix vault memory home, a legacy Memory Bank, or a root handoff, with targeted context retrieval and readiness gates. Use only for /start or an explicit request to resume saved project context.
+description: Resume a project session from the memory home its resolver reports, with targeted context retrieval and readiness gates. Use only for /start or an explicit request to resume saved project context.
 compatibility: opencode
 metadata:
   managed-by: Cadence
@@ -154,4 +154,4 @@ Return only this structure:
 > Context loaded from the Felix vault memory home and shared project baseline. Deeper entries are retrieved on demand or via `/start max`.
 
 **Footer (legacy modes)**
-> Context loaded from `.claude/` Memory Bank and shared project baseline files. Refer to those files for detail.
+> Context loaded from the resolved memory home and shared project baseline files. Refer to those files for detail.

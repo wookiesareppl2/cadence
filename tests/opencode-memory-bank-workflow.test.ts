@@ -209,10 +209,24 @@ describe('Cadence-managed OpenCode workflow', () => {
       // So the routing section states only what to do. If a future edit
       // reintroduces a forbidden-path list here, this fails.
       const routingSection = skill.slice(0, skill.indexOf('## ', skill.indexOf('Step 1')))
+      // Self-check the slice: if a heading rename ever collapsed this to nothing,
+      // the three guards below would silently pass against an empty string.
+      expect(routingSection.length).toBeGreaterThan(500)
+      expect(routingSection).toContain('route.sh')
       expect(routingSection).not.toMatch(/\.Codex/)
       expect(routingSection).not.toMatch(/do \*\*not\*\* test for/i)
       expect(routingSection).not.toMatch(/claude\/HANDOFF\.md/)
     }
+
+    // The same priming, one layer earlier: a command description and the skill's
+    // own frontmatter reach the model BEFORE the skill body. They named "legacy
+    // Memory Bank", and the v0.1.30 model's own words were "Memory Bank Mode
+    // with .claude". No path to echo, but the same expectation-setting — and
+    // leaving it would muddy attribution on the next test.
+    expect(managedContent('commands/start.md')).not.toMatch(/Memory Bank/)
+    expect(managedContent('commands/save.md')).not.toMatch(/Memory Bank/)
+    expect(startSkill.slice(0, startSkill.indexOf('---', 4))).not.toMatch(/Memory Bank/)
+    expect(saveSkill.slice(0, saveSkill.indexOf('---', 4))).not.toMatch(/Memory Bank/)
 
     expect(startSkill).toContain('START_ABORTED_BAD_ROUTE')
     expect(saveSkill).toContain('SAVE_ABORTED_BAD_ROUTE')
