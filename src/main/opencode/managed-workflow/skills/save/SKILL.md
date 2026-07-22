@@ -1,6 +1,6 @@
 ---
 name: save
-description: Save session state to its declared Felix vault memory home, a legacy Memory Bank, or a root handoff, including tiered memory writes, hot-pin curation, drift checks, and the daily note. Use only for /save or an explicit checkpoint request.
+description: Save session state to the project's Felix vault memory home, creating that memory home first if the project has not been set up yet, including tiered memory writes, hot-pin curation, drift checks, and the daily note. Use only for /save or an explicit checkpoint request.
 compatibility: opencode
 metadata:
   managed-by: Cadence
@@ -45,16 +45,43 @@ Use the printed `MEMORY_ROUTE` verbatim. It is the only valid source of the rout
   `.claude/` bank is FROZEN: **never write to it**, never read it as memory, and never
   let its contents influence the save. Legacy Bank Mode is **forbidden** in this case
   even though `.claude/HANDOFF.md` exists — its existence is not evidence of anything.
-- `MEMORY_ROUTE=legacy-bank` → **Legacy Bank Mode** using the printed `<MEMORY_HOME>`.
-- `MEMORY_ROUTE=legacy-root` → **Legacy Root Mode** using root `HANDOFF.md`.
+- `BOOTSTRAP=required` (printed with `legacy-bank` or `legacy-root`) → this project has
+  no vault memory home **yet**. That is not an error and never a reason to write into a
+  legacy bank. Run **Bootstrap** below to create the memory home, then save to it in
+  Vault Mode.
 - `MEMORY_ROUTE=abort` → stop immediately and report exactly:
-  `SAVE_ABORTED_BAD_ROUTE: <REASON>`. Do not fall back to any legacy mode, and do not
-  write anything.
+  `SAVE_ABORTED_BAD_ROUTE: <REASON>`. Do not fall back, and do not write anything.
+
+**This skill has exactly one write destination: a vault memory home.** A project's
+`.claude/` bank is only ever a source to read and archive. There is no mode in which this
+skill writes to it — if you find yourself about to, you have mis-routed; stop.
 
 If you did not run the command, you do not know the route. Run it. Writing memory on an
 inferred route is the one failure this skill exists to prevent.
 
-The Obsidian vault is the permanent single source of truth for Sheldon's AI work. Legacy modes are transition scaffolding for projects not yet migrated, never the preferred endpoint.
+The Obsidian vault is the permanent single source of truth for Sheldon's AI work.
+
+## Bootstrap — when the project has no vault memory home
+
+A first save on an unmigrated project sets the memory system up, exactly as a first save
+on a new project always has. Run the shipped script; do not create the files by hand — the
+skeleton must satisfy the collector's validator, and hand-built ones do not.
+
+```bash
+"$NODE" "$CFG/scripts/bootstrap-vault-memory.mjs" \
+  --workspace "<WORKSPACE_ROOT>" \
+  --memory "<PROPOSED_MEMORY_HOME>"
+```
+
+- It creates the memory home, copies any legacy `.claude/` bank **verbatim** into
+  `Archive/legacy-bank/`, and writes the memory-home marker into the project's `CLAUDE.md`.
+- It refuses if the target already holds memory files. If it refuses, **stop and report** —
+  never point it somewhere else to get past the refusal. That guard is what stops one
+  project's save landing in another project's vault.
+- If `PROPOSED_MEMORY_HOME=unknown`, stop and ask where the memory home should live.
+- On `BOOTSTRAP=ok`, continue with the Vault Mode contract using the new `<MEMORY_HOME>`.
+  Treat the archived legacy bank as source material: promote entries it justifies as part
+  of this save, rather than bulk-converting it.
 
 ## Non-negotiable delegation boundary
 
@@ -170,105 +197,15 @@ Require `SAVE_VALIDATION=PASS`. On FAIL, read the `ERROR=` lines, build ONE corr
 
 Return only a 5-10 line summary: files updated and the material change; fidelity and any escalation; pin-review result; **hot-layer promotions/demotions explicitly**; anything archived; drift result; validation result; next manual and assistant actions.
 
-## Legacy Bank Mode (no vault marker; `.claude/HANDOFF.md` exists)
+## There is no legacy write mode
 
-The single worker owns every read, check, analysis step, and write. It must not delegate.
+Earlier revisions of this skill could write directly into a project's `.claude/` bank. That
+mode is gone. It existed only for projects that had not migrated, and Bootstrap above now
+covers them by creating a proper vault memory home instead.
 
-### 1. Locate and inspect
+This matters because a mis-resolved route used to be able to write a session's memory into a
+frozen bank, losing it. Removing the mode removes the destination: there is nothing to
+mis-route *to*. If the resolver does not print `MEMORY_ROUTE=vault`, either Bootstrap runs
+first, or the save aborts. Those are the only two outcomes.
 
-1. Treat the current OpenCode working directory as `<WORKSPACE_ROOT>`. Locate a git repository at
-   the root or up to two levels below it, then run git commands from that repository.
-2. Gather:
-   - `git log --oneline -20`
-   - `git status --short`
-   - `git diff --stat`
-   - `git branch --show-current`
-   - in incremental mode, a bounded name/status log since the last reliable save date or commit;
-   - in max mode, also a name/status log for the last three days.
-
-### 2. Load Memory Bank safely
-
-- Read `.claude/HANDOFF.md` in full.
-- Read `.claude/context-pins.md` in full when reasonably sized. If large, read every DNO/PIN
-  heading, status, source reference, recent review entry, and full entries intersecting current
-  changes, workflow gates, prior warnings, or the session delta.
-- In incremental mode, inspect headings and recent tails of `.claude/patterns.md`,
-  `.claude/decisions.md`, and `.claude/troubleshooting.md`; use `rg` with changed paths, symbols,
-  distinctive phrases, ADR/PIN titles, and task terms before reading matching sections.
-- In max mode, read all Memory Bank files fully.
-- Escalate to max when targeted reads cannot establish whether a durable entry is new.
-
-Cross-reference HANDOFF status and the supplied session delta with git history and current files.
-Correct stale or unsupported claims instead of preserving them.
-
-### 3. Extract only durable knowledge
-
-Identify new, reusable information from current changes:
-
-- patterns: naming, imports, structures, components, and repeatable workflows;
-- decisions: dependencies, architecture, integration boundaries, and deliberate trade-offs;
-- troubleshooting: root causes, fixed regressions, environmental constraints, and workarounds.
-
-Search before appending. Never duplicate an existing entry. Append only facts that will matter in
-a later session, and escalate to max when duplicate detection remains ambiguous.
-
-### 4. Review pins in the same worker
-
-Evaluate every DNO plus all pins touched by changed files, source references, current gates,
-HANDOFF, the session delta, or prior drift warnings. In max mode, evaluate every DNO and PIN.
-
-Use these lifecycle rules:
-
-- IDs are `DNO-###` and `PIN-###`.
-- Status is `Active`, `Superseded`, or `Deprecated`.
-- Never delete a pin. On replacement, keep it and add `superseded_by: <NEW_ID>`.
-- Add a pin only when forgetting the rule would cause regression, rework, or production risk.
-
-If `context-pins.md` is absent, bootstrap the established sections: title, last-updated date, usage
-rules, do-not-overwrite invariants, pin lifecycle, active pins, and pin review log. Continue with
-the review and use result `INITIAL_BOOTSTRAP`.
-
-### 5. Check drift and dev-server state
-
-- Spot-check all DNOs and relevant pins against current state; check every active pin in max mode
-  where feasible. Report `pass` or `warn`, and record any conflicts in HANDOFF and the review log.
-- Resolve the expected dev port from Vite `server.port`, an explicit Next dev port, or fallback
-  `3000`; record `LISTENING` or `NOT RUNNING`.
-
-### 6. Write the checkpoint
-
-Write Memory Bank files under `<WORKSPACE_ROOT>/.claude/`, even when the git repo is a child.
-
-- `HANDOFF.md`: full replace while preserving its established headings and format. Refresh date,
-  workflow state and gates, branch, server, safety checkpoint, quality checks, current task,
-  progress, recent changes, stretch focus, blockers, next manual/assistant actions, and important
-  versions or risks.
-- `patterns.md`, `decisions.md`, `troubleshooting.md`: append-only. Do not touch a file when no new
-  durable entry exists, and preserve existing numbering/format.
-- `context-pins.md`: targeted edits only. Never rewrite or delete prior entries. Append one review
-  log entry on every save:
-  `- <DATE> | branch=<BRANCH> | mode=<incremental|max> | result=<RESULT> | drift=<pass|warn> | notes=<SUMMARY>`
-- `<RESULT>` must be `PINS_UPDATED`, `NO_PIN_CHANGES`, `INITIAL_BOOTSTRAP`, or
-  `MANUAL_BASELINE_UPDATE`. Include a short reason for no-change runs.
-
-### 7. Verify and report
-
-Re-read the changed portions, confirm append-only files were not rewritten, confirm the review log
-was appended, and ensure no project source file was modified by the save. Return the same 5-10 line
-summary shape as Vault Mode.
-
-## Legacy Root Mode (no vault marker and no `.claude/HANDOFF.md`)
-
-Validate git state and fully refresh root `HANDOFF.md` with task, completed work, next steps,
-decisions, risks, branch, dirty state, server state, validation, and the supplied session delta. Do
-not create `.claude/` implicitly. Return a brief save summary.
-
-## Context preservation rules (legacy modes only)
-
-These do not override Vault Mode, where Step 3 authorizes archiving only entries proven genuinely
-superseded or retired.
-
-- Prefer additive updates over replacement in long-term memory files.
-- Do not archive, prune, or compress Memory Bank content unless explicitly requested.
-- When uncertain about long-term importance, keep the detail.
-- When uncertain whether targeted reads are sufficient, escalate to `max` before writing.
+A project's `.claude/` bank may be read and archived. It is never written.

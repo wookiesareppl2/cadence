@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -13,6 +13,18 @@ import {
   resolveRoute,
   stripFences
 } from '../src/main/opencode/managed-workflow/scripts/resolve-memory-route.mjs'
+import { bootstrap } from '../src/main/opencode/managed-workflow/scripts/bootstrap-vault-memory.mjs'
+// The collector's REAL helpers. The bootstrap skeleton and its archived legacy
+// bank are checked against these rather than against rules re-stated in tests —
+// re-stated rules are how a self-confirming suite passes while the thing it
+// describes is broken.
+import { danglingReferences } from '../src/main/opencode/managed-workflow/scripts/collect-vault-save.mjs'
+
+// Mirrors the collector's own frontmatter predicate so the bootstrap skeleton is
+// judged by the same rule that will judge the first real save.
+function hasFrontmatter(text: string): boolean {
+  return /^---\r?\n[\s\S]*?\r?\n---\r?\n/.test(text)
+}
 
 const temporaryDirectories: string[] = []
 
@@ -126,7 +138,8 @@ describe('Cadence-managed OpenCode workflow', () => {
       'commands/save.md',
       'skills/cadence-merge-review/SKILL.md',
       'scripts/collect-vault-save.mjs',
-      'scripts/resolve-memory-route.mjs'
+      'scripts/resolve-memory-route.mjs',
+      'scripts/bootstrap-vault-memory.mjs'
     ])
 
     const startSkill = managedContent('skills/start/SKILL.md')
@@ -166,11 +179,7 @@ describe('Cadence-managed OpenCode workflow', () => {
       expect(skill).toContain('MANDATORY FIRST TOOL CALL')
       expect(skill).toContain('<MEMORY_HOME>')
       expect(skill).toContain('MEMORY_ROUTE=vault')
-      expect(skill).toContain('MEMORY_ROUTE=legacy-bank')
-      expect(skill).toContain('MEMORY_ROUTE=legacy-root')
       expect(skill).toContain('MEMORY_ROUTE=abort')
-      expect(skill).toContain('Legacy Bank Mode')
-      expect(skill).toContain('Legacy Root Mode')
       // The regression guard: a vault route must win even though the frozen
       // bank's HANDOFF.md exists alongside it.
       expect(skill).toContain('is **forbidden** in this case')
@@ -187,9 +196,23 @@ describe('Cadence-managed OpenCode workflow', () => {
 
     expect(startSkill).toContain('START_ABORTED_BAD_ROUTE')
     expect(saveSkill).toContain('SAVE_ABORTED_BAD_ROUTE')
-    // The save skill carries the stronger no-write wording, since it is the one
-    // that can destroy memory by routing wrong.
+
+    // Start may READ legacy memory — reading a legacy bank is safe and useful.
+    expect(startSkill).toContain('MEMORY_ROUTE=legacy-bank')
+    expect(startSkill).toContain('MEMORY_ROUTE=legacy-root')
+
+    // Save must have exactly ONE write destination. The legacy write modes are
+    // gone: a mis-resolved route used to be able to write a session's memory
+    // into a frozen bank, and removing the mode removes the destination. An
+    // unmigrated project is handled by creating its memory home, not by writing
+    // to its bank.
+    expect(saveSkill).toContain('exactly one write destination')
+    expect(saveSkill).toContain('There is no legacy write mode')
+    expect(saveSkill).toContain('BOOTSTRAP=required')
+    expect(saveSkill).toContain('bootstrap-vault-memory.mjs')
     expect(saveSkill).toContain('never write to it')
+    expect(saveSkill).not.toContain('## Legacy Bank Mode')
+    expect(saveSkill).not.toContain('## Legacy Root Mode')
 
     // Fidelity resolves to exactly two values. `high` is an input alias only and
     // must never be reported back, which a shipped build did on every run.
@@ -365,6 +388,180 @@ describe('Cadence-managed OpenCode workflow', () => {
     expect(routeFrom(nested).route).toBe('vault')
   })
 
+  it('bootstraps a vault memory home the collector validator accepts', async () => {
+    const root = await temporaryDirectory()
+    const workspace = await tree(root, 'legacy-project', {
+      'CLAUDE.md': '# Legacy Project\n\nNo vault marker here yet.\n',
+      '.claude/HANDOFF.md': '# old handoff\n\nlegacy content worth keeping\n',
+      '.claude/context-pins.md': '# old pins\n\n## PIN-001: something\n'
+    })
+    const memory = join(root, 'vault', 'Legacy Project', 'memory')
+
+    const result = bootstrap({
+      workspace,
+      memory,
+      project: 'Legacy Project',
+      today: '2026-07-22'
+    })
+    expect(result.marker).toBe(true)
+    expect(result.archived).toBe(2)
+
+    // The legacy bank is preserved verbatim, never converted, and never written to.
+    expect(readFileSync(join(memory, 'Archive', 'legacy-bank', 'HANDOFF.md.txt'), 'utf-8')).toBe(
+      '# old handoff\n\nlegacy content worth keeping\n'
+    )
+    expect(readFileSync(join(workspace, '.claude', 'HANDOFF.md'), 'utf-8')).toBe(
+      '# old handoff\n\nlegacy content worth keeping\n'
+    )
+
+    // The marker it wrote must be one the resolver actually accepts — otherwise the
+    // very next save would fail to find the home that was just created.
+    expect(routeFrom(workspace)).toMatchObject({ route: 'vault', home: memory })
+
+    // The skeleton must satisfy the collector's real validator, not merely look right.
+    const handoff = readFileSync(join(memory, 'HANDOFF.md'), 'utf-8')
+    expect(hasFrontmatter(handoff)).toBe(true)
+    for (const heading of [
+      'Current Task',
+      'Next Priority',
+      'Workflow State',
+      'Commit Checkpoint',
+      'Progress',
+      'Blockers and Residual Risk',
+      'Next Actions'
+    ]) {
+      expect(new RegExp(`^## ${heading}\\s*$`, 'm').test(handoff)).toBe(true)
+    }
+
+    // The four _Index live-count lines must match the collector's exact phrasings.
+    const index = readFileSync(join(memory, '_Index.md'), 'utf-8')
+    expect(index).toMatch(/~(\d+)\s+active PINs/i)
+    expect(index).toMatch(/the\s+(\d+)\s+live ADRs/i)
+    expect(index).toMatch(/the\s+(\d+)\s+live reusable patterns/i)
+    expect(index).toMatch(/the\s+(\d+)\s+live issue\/fix records/i)
+
+    // A well-formed Pin Review Log entry for the first real save to append to.
+    const pinsRef = readFileSync(join(memory, 'Pins-Reference.md'), 'utf-8')
+    const latest = pinsRef
+      .split('\n')
+      .filter((line) => /^- \d{4}-\d{2}-\d{2} \|/.test(line))
+      .at(-1)
+    expect(latest).toBeDefined()
+    for (const required of ['branch=', 'mode=', 'result=', 'drift=', 'hot_changes=']) {
+      expect(latest).toContain(required)
+    }
+    for (const file of ['Pins.md', 'Decisions.md', 'Patterns.md', 'Troubleshooting.md']) {
+      expect(hasFrontmatter(readFileSync(join(memory, file), 'utf-8'))).toBe(true)
+    }
+  })
+
+  it('archives a legacy bank where the collector will not scan it as live memory', async () => {
+    const root = await temporaryDirectory()
+    // A REAL legacy bank cites entries that no longer exist — superseded, or
+    // deleted long ago. If the archive is scanned as live memory those become
+    // dangling references, validation fails, and because apply writes before
+    // validate the project is left written-but-invalid and unsaveable forever.
+    const workspace = await tree(root, 'inconsistent', {
+      'CLAUDE.md': '# Inconsistent\n',
+      '.claude/decisions.md':
+        '# old decisions\n\n### ADR-042: A decision\n\nSupersedes ADR-011. See also TS-099.\n'
+    })
+    const memory = join(root, 'vault', 'inconsistent', 'memory')
+    const result = bootstrap({ workspace, memory, project: 'Inconsistent', today: '2026-07-22' })
+    expect(result.archived).toBe(1)
+
+    // Content preserved byte for byte...
+    const archived = join(memory, 'Archive', 'legacy-bank', 'decisions.md.txt')
+    expect(readFileSync(archived, 'utf-8')).toBe(
+      readFileSync(join(workspace, '.claude', 'decisions.md'), 'utf-8')
+    )
+
+    // ...and judged by the COLLECTOR'S OWN dangling-reference check, not by a
+    // re-statement of its rules here. ADR-011 and TS-099 are cited by the
+    // archived bank and defined nowhere; if the archive were scanned as live
+    // memory these would be dangling, validation would fail, and — because
+    // apply writes before validate — the project would be left written-but-
+    // invalid and unsaveable on every subsequent save.
+    expect(danglingReferences(memory)).toEqual([])
+
+    // Belt and braces: nothing under the memory home ends in .md except the
+    // live files, which is the mechanism that keeps the archive invisible.
+    const scanned: string[] = []
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name)
+        if (entry.isDirectory()) walk(full)
+        else if (entry.name.toLowerCase().endsWith('.md')) scanned.push(entry.name)
+      }
+    }
+    walk(memory)
+    expect(scanned.sort()).toEqual([
+      'Decisions.md',
+      'HANDOFF.md',
+      'Patterns.md',
+      'Pins-Reference.md',
+      'Pins.md',
+      'Troubleshooting.md',
+      '_Index.md'
+    ])
+  })
+
+  it('writes a marker when CLAUDE.md only documents one inside a code fence', async () => {
+    const root = await temporaryDirectory()
+    // Bootstrap used to test RAW text for the marker while the resolver tested
+    // FENCE-STRIPPED text. A documented example therefore looked like a live
+    // marker: no marker was written, the home was created anyway, the route
+    // never became vault, and re-running refused as occupied — unsaveable.
+    const workspace = await tree(root, 'documented', {
+      'CLAUDE.md':
+        '# Documented\n\nA project declares its memory home like this:\n\n' +
+        '```\nFelix memory home — Windows: `C:\\example` · WSL: `/mnt/c/example`\n```\n'
+    })
+    const memory = join(root, 'vault', 'documented', 'memory')
+    const result = bootstrap({ workspace, memory, project: 'Documented', today: '2026-07-22' })
+
+    expect(result.marker).toBe(true)
+    // The decisive check: the route must actually become vault afterwards.
+    expect(routeFrom(workspace)).toMatchObject({ route: 'vault', home: memory })
+  })
+
+  it('refuses a memory path containing a backtick', async () => {
+    const root = await temporaryDirectory()
+    const workspace = await tree(root, 'tick', { 'CLAUDE.md': '# tick\n' })
+    // A backtick closes the marker's quoted path early, so the resolver would
+    // read a truncated path and abort forever after a "successful" bootstrap.
+    expect(() =>
+      bootstrap({ workspace, memory: join(root, 'we`ird', 'memory'), today: '2026-07-22' })
+    ).toThrow(/backtick/)
+  })
+
+  it('refuses to bootstrap over an existing memory home', async () => {
+    const root = await temporaryDirectory()
+    const workspace = await tree(root, 'proj', { 'CLAUDE.md': '# proj\n' })
+    const occupied = join(root, 'someone-elses-vault')
+    await mkdir(occupied, { recursive: true })
+    await writeFile(join(occupied, 'HANDOFF.md'), '# another project\n', 'utf-8')
+
+    // This guard is what stops one project's save landing in another's vault.
+    expect(() =>
+      bootstrap({ workspace, memory: occupied, project: 'proj', today: '2026-07-22' })
+    ).toThrow(/already contains memory files/)
+    expect(readFileSync(join(occupied, 'HANDOFF.md'), 'utf-8')).toBe('# another project\n')
+
+    // Occupancy must recurse. A home whose live files were moved but whose
+    // Archive/ still holds content is not empty — re-skeletoning it would
+    // overwrite that archive.
+    const archiveOnly = join(root, 'archive-only')
+    await mkdir(join(archiveOnly, 'Archive', 'legacy-bank'), { recursive: true })
+    await writeFile(join(archiveOnly, 'Archive', 'legacy-bank', 'pins.md.txt'), 'kept\n', 'utf-8')
+    expect(() =>
+      bootstrap({ workspace, memory: archiveOnly, project: 'proj', today: '2026-07-22' })
+    ).toThrow(/already contains memory files/)
+    expect(readFileSync(join(archiveOnly, 'Archive', 'legacy-bank', 'pins.md.txt'), 'utf-8')).toBe(
+      'kept\n'
+    )
+  })
+
   it('strips fences and reports desync', () => {
     expect(stripFences('a\n```\nhidden\n```\nb').stripped.split('\n')).toEqual(['a', 'b'])
     expect(stripFences('a\n~~~\nhidden\n~~~\nb').stripped.split('\n')).toEqual(['a', 'b'])
@@ -408,7 +605,8 @@ describe('Cadence-managed OpenCode workflow', () => {
       'commands/save.md',
       'skills/cadence-merge-review/SKILL.md',
       'scripts/collect-vault-save.mjs',
-      'scripts/resolve-memory-route.mjs'
+      'scripts/resolve-memory-route.mjs',
+      'scripts/bootstrap-vault-memory.mjs'
     ])
 
     const second = await installManagedOpenCodeMemoryBankWorkflow(configDir)

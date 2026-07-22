@@ -5,6 +5,7 @@ import startSkill from './managed-workflow/skills/start/SKILL.md?raw'
 import saveSkill from './managed-workflow/skills/save/SKILL.md?raw'
 import saveCollector from './managed-workflow/scripts/collect-vault-save.mjs?raw'
 import routeResolver from './managed-workflow/scripts/resolve-memory-route.mjs?raw'
+import vaultBootstrap from './managed-workflow/scripts/bootstrap-vault-memory.mjs?raw'
 import startCommand from './managed-workflow/commands/start.md?raw'
 import saveCommand from './managed-workflow/commands/save.md?raw'
 import mergeReviewSkill from '../merge-review/managed-workflow/SKILL.md?raw'
@@ -33,7 +34,11 @@ export const MANAGED_OPENCODE_WORKFLOW_FILES: readonly ManagedOpenCodeWorkflowFi
   // the skills because two prose-embedded shell versions each misrouted on
   // well-formed input; here it is unit-tested directly and cannot drift between
   // the start and save copies.
-  { relativePath: join('scripts', 'resolve-memory-route.mjs'), content: normalizedContent(routeResolver) }
+  { relativePath: join('scripts', 'resolve-memory-route.mjs'), content: normalizedContent(routeResolver) },
+  // Creates a project's vault memory home on its first save. Without this, an
+  // unmigrated project had nowhere legitimate to save to, which is what made a
+  // legacy-bank write destination necessary in the first place.
+  { relativePath: join('scripts', 'bootstrap-vault-memory.mjs'), content: normalizedContent(vaultBootstrap) }
 ]
 
 async function writeManagedFile(path: string, content: string): Promise<boolean> {
