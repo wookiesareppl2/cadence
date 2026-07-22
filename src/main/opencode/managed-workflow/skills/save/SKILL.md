@@ -11,53 +11,32 @@ metadata:
 
 Resolve the project's memory home first, then delegate the entire save workflow to exactly one worker.
 
-## Resolve the memory home first — MANDATORY FIRST TOOL CALL
+## Step 1 — Get the memory route
 
-**Do not decide the memory route yourself. The route is computed, not inferred.**
-A wrong route here writes this session's memory into a frozen bank and loses it. This is
-the highest-risk step in the skill.
-
-Your first tool call in this skill MUST be the command below, before any other bash
-command, file read, glob, grep, task call, or write. In particular, do **not** test for
-`.claude/HANDOFF.md`, `.Codex/HANDOFF.md`, or any other memory file before running it —
-that test is part of this command, and running it early is what produces a wrong route.
+Run this now. It is the first action of this skill:
 
 ```bash
-CFG="${OPENCODE_CONFIG_DIR:-$HOME/.config/cadence/opencode}"
-NODE="$(command -v node 2>/dev/null || true)"
-if [ -z "$NODE" ] && [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1; NODE="$(command -v node 2>/dev/null || true)"; fi
-[ -z "$NODE" ] && NODE="$(ls -d "$HOME"/.nvm/versions/node/*/bin/node 2>/dev/null | tail -1)"
-if [ -z "$NODE" ]; then
-  echo "MEMORY_ROUTE=abort"
-  echo "REASON=node not found, so the memory route cannot be resolved. Refusing to guess."
-else
-  "$NODE" "$CFG/scripts/resolve-memory-route.mjs"
-fi
+bash "${OPENCODE_CONFIG_DIR:-$HOME/.config/cadence/opencode}/scripts/route.sh"
 ```
 
-The resolver is a shipped script, not logic for you to reproduce. Do not
-reimplement it, inline it, or work around it — if it does not run, abort and
-write nothing.
+It prints the route in one call. Every write in this skill goes to the memory home it
+names, so run it before reading files, running git, delegating, or writing anything.
 
 Use the printed `MEMORY_ROUTE` verbatim. It is the only valid source of the route:
 
-- `MEMORY_ROUTE=vault` → **Vault Mode**, with `<MEMORY_HOME>` as printed. The project's
-  `.claude/` bank is FROZEN: **never write to it**, never read it as memory, and never
-  let its contents influence the save. Legacy Bank Mode is **forbidden** in this case
-  even though `.claude/HANDOFF.md` exists — its existence is not evidence of anything.
-- `BOOTSTRAP=required` (printed with `legacy-bank` or `legacy-root`) → this project has
-  no vault memory home **yet**. That is not an error and never a reason to write into a
-  legacy bank. Run **Bootstrap** below to create the memory home, then save to it in
-  Vault Mode.
-- `MEMORY_ROUTE=abort` → stop immediately and report exactly:
-  `SAVE_ABORTED_BAD_ROUTE: <REASON>`. Do not fall back, and do not write anything.
+- `MEMORY_ROUTE=vault` → **Vault Mode**, writing to `<MEMORY_HOME>` as printed. That
+  folder is this project's memory: read from it, write to it, and cite it. Any legacy
+  bank still present in the repo is a frozen artifact the resolver has already accounted
+  for.
+- `BOOTSTRAP=required` (printed alongside a `PROPOSED_MEMORY_HOME`) → this project has no
+  vault memory home **yet**. Run **Bootstrap** below to create one, then save to it in
+  Vault Mode. This is the normal path for a project's first save.
+- `MEMORY_ROUTE=abort` → stop immediately, write nothing, and report exactly:
+  `SAVE_ABORTED_BAD_ROUTE: <REASON>`.
 
-**This skill has exactly one write destination: a vault memory home.** A project's
-`.claude/` bank is only ever a source to read and archive. There is no mode in which this
-skill writes to it — if you find yourself about to, you have mis-routed; stop.
-
-If you did not run the command, you do not know the route. Run it. Writing memory on an
-inferred route is the one failure this skill exists to prevent.
+**This skill has exactly one write destination: a vault memory home** — the
+`<MEMORY_HOME>` the resolver printed, or the one Bootstrap just created. Every write goes
+through the collector, pointed at that folder.
 
 The Obsidian vault is the permanent single source of truth for Sheldon's AI work.
 

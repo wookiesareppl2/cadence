@@ -6,6 +6,7 @@ import saveSkill from './managed-workflow/skills/save/SKILL.md?raw'
 import saveCollector from './managed-workflow/scripts/collect-vault-save.mjs?raw'
 import routeResolver from './managed-workflow/scripts/resolve-memory-route.mjs?raw'
 import vaultBootstrap from './managed-workflow/scripts/bootstrap-vault-memory.mjs?raw'
+import routeWrapper from './managed-workflow/scripts/route.sh?raw'
 import startCommand from './managed-workflow/commands/start.md?raw'
 import saveCommand from './managed-workflow/commands/save.md?raw'
 import mergeReviewSkill from '../merge-review/managed-workflow/SKILL.md?raw'
@@ -38,7 +39,11 @@ export const MANAGED_OPENCODE_WORKFLOW_FILES: readonly ManagedOpenCodeWorkflowFi
   // Creates a project's vault memory home on its first save. Without this, an
   // unmigrated project had nowhere legitimate to save to, which is what made a
   // legacy-bank write destination necessary in the first place.
-  { relativePath: join('scripts', 'bootstrap-vault-memory.mjs'), content: normalizedContent(vaultBootstrap) }
+  { relativePath: join('scripts', 'bootstrap-vault-memory.mjs'), content: normalizedContent(vaultBootstrap) },
+  // One-line entry point for the skills. The node-resolution boilerplate used to be
+  // inlined in each skill, where it read as configuration rather than as an action —
+  // and every observed session skipped it, across two model families.
+  { relativePath: join('scripts', 'route.sh'), content: normalizedContent(routeWrapper) }
 ]
 
 async function writeManagedFile(path: string, content: string): Promise<boolean> {

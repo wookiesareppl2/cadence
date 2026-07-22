@@ -139,7 +139,8 @@ describe('Cadence-managed OpenCode workflow', () => {
       'skills/cadence-merge-review/SKILL.md',
       'scripts/collect-vault-save.mjs',
       'scripts/resolve-memory-route.mjs',
-      'scripts/bootstrap-vault-memory.mjs'
+      'scripts/bootstrap-vault-memory.mjs',
+      'scripts/route.sh'
     ])
 
     const startSkill = managedContent('skills/start/SKILL.md')
@@ -176,23 +177,56 @@ describe('Cadence-managed OpenCode workflow', () => {
     // session's memory into the frozen bank. The route is therefore emitted by a
     // mandatory first command whose output the worker must use verbatim.
     for (const skill of [startSkill, saveSkill]) {
-      expect(skill).toContain('MANDATORY FIRST TOOL CALL')
       expect(skill).toContain('<MEMORY_HOME>')
       expect(skill).toContain('MEMORY_ROUTE=vault')
       expect(skill).toContain('MEMORY_ROUTE=abort')
-      // The regression guard: a vault route must win even though the frozen
-      // bank's HANDOFF.md exists alongside it.
-      expect(skill).toContain('is **forbidden** in this case')
+      // The vault route must point work at the resolved memory home, positively
+      // stated. (The old assertion here pinned the phrase "is **forbidden** in
+      // this case" — wording that named the wrong action, which is exactly what
+      // the models then performed.)
+      expect(skill).toContain('the resolver has already accounted')
       // The contract must be copied, not remembered. Paraphrasing it is how the
       // forbidden port-3000 fallback reappeared in a delegated worker prompt.
       expect(skill).toContain('verbatim')
       expect(skill).toContain('do not paraphrase')
-      // Routing is delegated to the shipped resolver, never reimplemented. Both
-      // skills must invoke it and must abort rather than guess without it.
-      expect(skill).toContain('scripts/resolve-memory-route.mjs')
-      expect(skill).toContain('not logic for you to reproduce')
-      expect(skill).toContain('node not found')
+      // Routing is delegated to the shipped wrapper, and the instruction to run
+      // it is a single short line — the node-resolution boilerplate that used to
+      // sit here read as configuration rather than as an action.
+      expect(skill).toContain('scripts/route.sh')
+      expect(skill).toContain('Run this now')
+
+      // THE LESSON THIS SUITE EXISTS TO KEEP: never name the wrong action.
+      //
+      // The skills used to say "do NOT test for `.claude/HANDOFF.md`,
+      // `.Codex/HANDOFF.md` ... before running it". Two model families then did
+      // exactly that instead of running the resolver — checking those two paths
+      // and nothing else, and writing `.Codex` with the same capital C used in
+      // the prohibition, though the directory on disk is `.codex`. The models
+      // were not reasoning about the filesystem; they were echoing the string
+      // from the sentence that forbade it. A prohibition that names a concrete
+      // wrong action reads as an instruction to perform it.
+      //
+      // So the routing section states only what to do. If a future edit
+      // reintroduces a forbidden-path list here, this fails.
+      const routingSection = skill.slice(0, skill.indexOf('## ', skill.indexOf('Step 1')))
+      // Self-check the slice: if a heading rename ever collapsed this to nothing,
+      // the three guards below would silently pass against an empty string.
+      expect(routingSection.length).toBeGreaterThan(500)
+      expect(routingSection).toContain('route.sh')
+      expect(routingSection).not.toMatch(/\.Codex/)
+      expect(routingSection).not.toMatch(/do \*\*not\*\* test for/i)
+      expect(routingSection).not.toMatch(/claude\/HANDOFF\.md/)
     }
+
+    // The same priming, one layer earlier: a command description and the skill's
+    // own frontmatter reach the model BEFORE the skill body. They named "legacy
+    // Memory Bank", and the v0.1.30 model's own words were "Memory Bank Mode
+    // with .claude". No path to echo, but the same expectation-setting — and
+    // leaving it would muddy attribution on the next test.
+    expect(managedContent('commands/start.md')).not.toMatch(/Memory Bank/)
+    expect(managedContent('commands/save.md')).not.toMatch(/Memory Bank/)
+    expect(startSkill.slice(0, startSkill.indexOf('---', 4))).not.toMatch(/Memory Bank/)
+    expect(saveSkill.slice(0, saveSkill.indexOf('---', 4))).not.toMatch(/Memory Bank/)
 
     expect(startSkill).toContain('START_ABORTED_BAD_ROUTE')
     expect(saveSkill).toContain('SAVE_ABORTED_BAD_ROUTE')
@@ -210,7 +244,11 @@ describe('Cadence-managed OpenCode workflow', () => {
     expect(saveSkill).toContain('There is no legacy write mode')
     expect(saveSkill).toContain('BOOTSTRAP=required')
     expect(saveSkill).toContain('bootstrap-vault-memory.mjs')
-    expect(saveSkill).toContain('never write to it')
+    // Stated positively: one destination, named. The prior assertion pinned
+    // "never write to it", which named the wrong action next to the routing
+    // decision — the pattern the models copied.
+    expect(saveSkill).toContain('exactly one write destination')
+    expect(saveSkill).toContain('Every write goes')
     expect(saveSkill).not.toContain('## Legacy Bank Mode')
     expect(saveSkill).not.toContain('## Legacy Root Mode')
 
@@ -606,7 +644,8 @@ describe('Cadence-managed OpenCode workflow', () => {
       'skills/cadence-merge-review/SKILL.md',
       'scripts/collect-vault-save.mjs',
       'scripts/resolve-memory-route.mjs',
-      'scripts/bootstrap-vault-memory.mjs'
+      'scripts/bootstrap-vault-memory.mjs',
+      'scripts/route.sh'
     ])
 
     const second = await installManagedOpenCodeMemoryBankWorkflow(configDir)

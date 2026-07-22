@@ -1,6 +1,6 @@
 ---
 name: start
-description: Resume a project session from its declared Felix vault memory home, a legacy Memory Bank, or a root handoff, with targeted context retrieval and readiness gates. Use only for /start or an explicit request to resume saved project context.
+description: Resume a project session from the memory home its resolver reports, with targeted context retrieval and readiness gates. Use only for /start or an explicit request to resume saved project context.
 compatibility: opencode
 metadata:
   managed-by: Cadence
@@ -11,37 +11,23 @@ metadata:
 
 Resolve the project's memory home first, then delegate the entire read/check workflow to exactly one worker.
 
-## Resolve the memory home first — MANDATORY FIRST TOOL CALL
+## Step 1 — Get the memory route
 
-**Do not decide the memory route yourself. The route is computed, not inferred.**
-
-Your first tool call in this skill MUST be the command below, before any other bash
-command, file read, glob, grep, or task call. In particular, do **not** test for
-`.claude/HANDOFF.md`, `.Codex/HANDOFF.md`, or any other memory file before running it —
-that test is part of this command, and running it early is what produces a wrong route.
+Run this now. It is the first action of this skill:
 
 ```bash
-CFG="${OPENCODE_CONFIG_DIR:-$HOME/.config/cadence/opencode}"
-NODE="$(command -v node 2>/dev/null || true)"
-if [ -z "$NODE" ] && [ -s "$HOME/.nvm/nvm.sh" ]; then . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1; NODE="$(command -v node 2>/dev/null || true)"; fi
-[ -z "$NODE" ] && NODE="$(ls -d "$HOME"/.nvm/versions/node/*/bin/node 2>/dev/null | tail -1)"
-if [ -z "$NODE" ]; then
-  echo "MEMORY_ROUTE=abort"
-  echo "REASON=node not found, so the memory route cannot be resolved. Refusing to guess."
-else
-  "$NODE" "$CFG/scripts/resolve-memory-route.mjs"
-fi
+bash "${OPENCODE_CONFIG_DIR:-$HOME/.config/cadence/opencode}/scripts/route.sh"
 ```
 
-The resolver is a shipped script, not logic for you to reproduce. Do not
-reimplement it, inline it, or work around it — if it does not run, abort.
+It prints the route in one call. Everything else in this skill depends on its output, so
+run it before reading files, running git, or delegating.
 
 Use the printed `MEMORY_ROUTE` verbatim. It is the only valid source of the route:
 
 - `MEMORY_ROUTE=vault` → **Vault Mode**, with `<MEMORY_HOME>` as printed. The project's
-  `.claude/` bank is FROZEN: never read it as memory, never cite it, and never let its
-  contents influence the briefing. Legacy Bank Mode is **forbidden** in this case even
-  though `.claude/HANDOFF.md` exists — its existence is not evidence of anything.
+  memory is exactly what is under `<MEMORY_HOME>`. Read only from there, cite only from
+  there, and base the whole briefing on it. Any legacy bank still present in the repo is
+  a frozen artifact that the resolver has already accounted for.
 - `MEMORY_ROUTE=legacy-bank` → **Legacy Bank Mode** using the printed `<MEMORY_HOME>`.
   Reading a legacy bank is safe and useful; this skill never writes.
 - `MEMORY_ROUTE=legacy-root` → **Legacy Root Mode** using root `HANDOFF.md`.
@@ -129,7 +115,7 @@ After locating the git repo root, read `CLAUDE.md` at the repo root and `.claude
 
 1. Treat the current OpenCode working directory as `<WORKSPACE_ROOT>`. The git repository may be the workspace root or a child up to two levels deep. Locate `.git` first and run git from that repository.
 2. Run `git log --oneline -20`, `git status --porcelain`, and `git branch --show-current`; cross-reference HANDOFF progress against commits and note discrepancies.
-3. Resolve the optional preview port only when the current request requires live UI; otherwise report `NOT NEEDED`. For Electron Vite, use explicit `electron.vite.config.*` `renderer.server.port`, else the Electron/Vite default `5173`. For ordinary Vite, use explicit `server.port`, else Vite default `5173`. For Next, use explicit `-p`/`--port`, else Next default `3000`. Check the expected port once. If Electron/Vite auto-incremented because the port was occupied, resolve the actual renderer URL from running-process/listener evidence; if that cannot be established, report `UNRESOLVED (expected 5173)` and **never substitute `3000`**. A refused connection is final evidence — do not retry it.
+3. Resolve the optional preview port only when the current request requires live UI; otherwise report `NOT NEEDED`. Determine the expected port from the project's own config: for Electron Vite use explicit `electron.vite.config.*` `renderer.server.port`, else the Electron/Vite default `5173`; for ordinary Vite use explicit `server.port`, else `5173`; for Next use explicit `-p`/`--port`, else `3000`. Check that one expected port once, and report only about that port. If Electron/Vite auto-incremented because the port was occupied, resolve the actual renderer URL from running-process/listener evidence; if that cannot be established, report `UNRESOLVED (expected <the port you determined>)`. A refused connection is final evidence; treat it as the answer.
 
 **Step 5: Self-verify** — personal layer and hot layer read in full; on-demand retrieval applied (or live files full in `max`); baseline read or confirmed absent; git validated; gates checked. Note every unreadable file and any escalation explicitly.
 
@@ -168,4 +154,4 @@ Return only this structure:
 > Context loaded from the Felix vault memory home and shared project baseline. Deeper entries are retrieved on demand or via `/start max`.
 
 **Footer (legacy modes)**
-> Context loaded from `.claude/` Memory Bank and shared project baseline files. Refer to those files for detail.
+> Context loaded from the resolved memory home and shared project baseline files. Refer to those files for detail.
