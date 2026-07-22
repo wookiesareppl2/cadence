@@ -6,3 +6,4 @@
 # to load on any Windows checkout while passing on the author's machine, because
 # freshly written files have not yet round-tripped through git.
 src/main/opencode/managed-workflow/scripts/*.mjs text eol=lf
+src/main/opencode/managed-workflow/scripts/*.sh text eol=lf
