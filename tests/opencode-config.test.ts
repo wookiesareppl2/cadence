@@ -49,8 +49,8 @@ describe('Cadence OpenCode configuration', () => {
 
     // Update BOTH values together, in the same change, or not at all.
     expect({ revision: OPENCODE_ROUTING_REVISION, shapeFingerprint }).toEqual({
-      revision: 3,
-      shapeFingerprint: '4fb551f42509'
+      revision: 4,
+      shapeFingerprint: '4bff968e930c'
     })
   })
 
@@ -78,16 +78,9 @@ describe('Cadence OpenCode configuration', () => {
 
     expect(config.preset).toBe(OPENCODE_ROUTING_PROFILE)
     expect(config.disabled_agents).toEqual([])
-    // The orchestrator runs the managed /start and /save skills, so its
-    // instruction-following decides whether the memory-route resolver is
-    // invoked at all. glm-5.2 led this list through v0.1.30-v0.1.32 and skipped
-    // the resolver in every observed session; the high-judgment model leads now.
-    expect(preset.orchestrator.model).toEqual([
-      { id: m.qwen37Max, variant: 'max' },
-      m.glm52,
-      m.kimi27,
-      m.mimoPro
-    ])
+    // Restored to glm-5.2: the v0.1.33 promotion of qwen3.7-max was chasing a
+    // non-cause (OpenCode was serving shadowed pre-vault skills, not Cadence's).
+    expect(preset.orchestrator.model).toEqual([m.glm52, m.kimi27, m.mimoPro])
     expect(preset.oracle.model).toEqual([{ id: m.qwen37Max, variant: 'max' }, m.glm52, m.mimoPro])
     expect(preset.explorer.model).toEqual([m.deepSeekFlash, m.mimo, m.minimaxM3])
     expect(preset.librarian.model).toEqual([m.deepSeekFlash, m.mimo, m.minimaxM3])
