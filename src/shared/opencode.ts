@@ -8,7 +8,7 @@ export const OPENCODE_ROUTING_PROFILE = 'cadence-go-capability-v1'
 // Bump whenever the routing preset changes. The runtime treats a profile as
 // already configured when the manifest carries this exact revision, so a preset
 // change that does not bump it is silently never delivered.
-export const OPENCODE_ROUTING_REVISION = 3
+export const OPENCODE_ROUTING_REVISION = 4
 export const OPENCODE_MEMORY_BANK_WORKFLOW_REVISION = 3
 
 type ModelEntry = string | { id: string; variant?: string }
@@ -89,16 +89,17 @@ export function createSlimConfig({
 
   const preset: Record<string, OpenCodeAgentConfig> = {
     orchestrator: {
-      // The orchestrator runs the managed /start and /save skills, so its
-      // instruction-following decides whether the memory-route resolver is
-      // actually invoked. glm-5.2 led this list through v0.1.30-v0.1.32 and
-      // skipped the resolver's mandatory first tool call in every observed
-      // session across all three builds, hand-rolling its own route check
-      // instead — once reaching the wrong route outright, and once reaching it
-      // first before self-correcting from prose. Lead with the same
-      // high-judgment model the oracle and council roles already use; the
-      // previous chain stays below it as fallback.
-      model: [{ id: models.qwen37Max, variant: 'max' }, models.glm52, models.kimi27, models.mimoPro]
+      // Restored to glm-5.2 after the resolver-skip investigation closed.
+      //
+      // v0.1.33 promoted qwen3.7-max here on the theory that the orchestrator
+      // was too weak to follow the skill's mandatory first tool call. It was
+      // not: OpenCode had never served Cadence's managed skill at all. Stale
+      // pre-vault skills in ~/.agents/skills and ~/.claude/skills shadowed the
+      // managed profile, and every model was faithfully following those
+      // instead. Removing them fixed /start and /save on this same list's
+      // original leader, so the heavier model bought nothing and cost plan
+      // budget on every session.
+      model: [models.glm52, models.kimi27, models.mimoPro]
     },
     oracle: {
       model: [{ id: models.qwen37Max, variant: 'max' }, models.glm52, models.mimoPro]
