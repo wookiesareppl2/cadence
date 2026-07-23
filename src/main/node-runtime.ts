@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 // The Node executable used to run our helper workers (the terminal pty host and
@@ -23,9 +23,35 @@ function bundledNodePath(): string | null {
   return join(resources, 'node', exe)
 }
 
+// Detect WSL by checking /proc/version for "Microsoft" or "WSL". In WSL, the
+// PATH inherits WSL's Node (which may have a TLS fingerprint rejected by
+// Cloudflare), so we prefer the Windows Node at the standard install path.
+function isWSL(): boolean {
+  if (process.platform !== 'linux') return false
+  try {
+    const version = readFileSync('/proc/version', 'utf-8')
+    return /microsoft|wsl/i.test(version)
+  } catch {
+    return false
+  }
+}
+
+function windowsNodePath(): string | null {
+  if (!isWSL()) return null
+  // Standard Windows Node.js install path, accessible from WSL
+  const winNode = '/mnt/c/Program Files/nodejs/node.exe'
+  return existsSync(winNode) ? winNode : null
+}
+
 export function nodeExecutable(): string {
   if (cached) return cached
   const bundled = bundledNodePath()
-  cached = bundled && existsSync(bundled) ? bundled : 'node'
+  if (bundled && existsSync(bundled)) {
+    cached = bundled
+  } else {
+    // In WSL, prefer Windows Node over WSL's own (different TLS fingerprint),
+    // falling back to whatever `node` PATH resolves to.
+    cached = windowsNodePath() ?? 'node'
+  }
   return cached
 }

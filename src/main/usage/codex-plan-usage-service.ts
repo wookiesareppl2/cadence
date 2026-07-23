@@ -42,8 +42,19 @@ function workerPath(): string {
   return join(__dirname, 'codex-usage-worker.mjs')
 }
 
+// Convert WSL paths (/mnt/c/...) to Windows paths (C:\...) when spawning
+// Windows Node from WSL. Windows Node can't read WSL-style paths.
+function toWindowsPathIfNecessary(path: string, nodeExe: string): string {
+  if (!nodeExe.endsWith('.exe')) return path
+  const match = path.match(/^\/mnt\/([a-z])\/(.*)$/i)
+  if (!match) return path
+  return `${match[1].toUpperCase()}:\\${match[2].replace(/\//g, '\\')}`
+}
+
 async function runWorkerProcess(command: WorkerCommand): Promise<string> {
-  const { stdout } = await execFileAsync(nodeExecutable(), [workerPath(), command], {
+  const nodeExe = nodeExecutable()
+  const worker = toWindowsPathIfNecessary(workerPath(), nodeExe)
+  const { stdout } = await execFileAsync(nodeExe, [worker, command], {
     timeout: WORKER_TIMEOUT_MS,
     windowsHide: true,
     maxBuffer: 1024 * 1024
@@ -67,12 +78,44 @@ function parseApiWindow(raw: RawApiWindow): UsageWindow | null {
   }
 }
 
+// Classify windows by reset duration rather than field name, so the code adapts
+// if Codex removes or reintroduces the 5-hour window. A 5-hour window resets in
+// ~5 hours (18000s), a 7-day window in ~7 days (604800s). Use 24 hours as the
+// boundary: anything shorter is "5-hour", anything longer is "7-day".
+const FIVE_HOUR_BOUNDARY_SECONDS = 24 * 60 * 60
+
+function classifyWindow(raw: RawApiWindow): 'fiveHour' | 'sevenDay' | null {
+  if (!raw || typeof raw.reset_at !== 'number') return null
+  const secondsUntilReset = raw.reset_at - Date.now() / 1000
+  return secondsUntilReset <= FIVE_HOUR_BOUNDARY_SECONDS ? 'fiveHour' : 'sevenDay'
+}
+
 function mapLiveUsage(data: { plan_type?: unknown; rate_limit?: RawApiRateLimit }): CodexPlanUsage {
   const rateLimit = data.rate_limit
   const now = new Date().toISOString()
+
+  // Classify each window by duration, not field name
+  const primaryClass = classifyWindow(rateLimit?.primary_window)
+  const secondaryClass = classifyWindow(rateLimit?.secondary_window)
+
+  let fiveHour: UsageWindow | null = null
+  let sevenDay: UsageWindow | null = null
+
+  if (primaryClass === 'fiveHour') {
+    fiveHour = parseApiWindow(rateLimit?.primary_window)
+  } else if (primaryClass === 'sevenDay') {
+    sevenDay = parseApiWindow(rateLimit?.primary_window)
+  }
+
+  if (secondaryClass === 'fiveHour') {
+    fiveHour = parseApiWindow(rateLimit?.secondary_window)
+  } else if (secondaryClass === 'sevenDay') {
+    sevenDay = parseApiWindow(rateLimit?.secondary_window)
+  }
+
   return {
-    fiveHour: parseApiWindow(rateLimit?.primary_window),
-    sevenDay: parseApiWindow(rateLimit?.secondary_window),
+    fiveHour,
+    sevenDay,
     planType: typeof data.plan_type === 'string' ? data.plan_type : null,
     sourcePath: USAGE_ENDPOINT,
     sourceTimestamp: now,
