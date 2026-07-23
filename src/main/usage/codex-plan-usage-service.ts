@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { nodeExecutable } from '../node-runtime'
+import { tlsCapableNodeExecutable } from '../node-runtime'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import type { UsageWindow } from '@shared/claude-plan-usage'
 import { retryAfterHeaderMs, UsageRateLimitError } from './usage-rate-limit'
@@ -52,7 +52,7 @@ function toWindowsPathIfNecessary(path: string, nodeExe: string): string {
 }
 
 async function runWorkerProcess(command: WorkerCommand): Promise<string> {
-  const nodeExe = nodeExecutable()
+  const nodeExe = tlsCapableNodeExecutable()
   const worker = toWindowsPathIfNecessary(workerPath(), nodeExe)
   const { stdout } = await execFileAsync(nodeExe, [worker, command], {
     timeout: WORKER_TIMEOUT_MS,
@@ -78,44 +78,56 @@ function parseApiWindow(raw: RawApiWindow): UsageWindow | null {
   }
 }
 
-// Classify windows by reset duration rather than field name, so the code adapts
-// if Codex removes or reintroduces the 5-hour window. A 5-hour window resets in
-// ~5 hours (18000s), a 7-day window in ~7 days (604800s). Use 24 hours as the
-// boundary: anything shorter is "5-hour", anything longer is "7-day".
+// Classify windows by reset duration rather than field name, so the mapping
+// stays correct if Codex reorders, removes, or reintroduces a window. A 5-hour
+// window resets in ~5 hours (18000s), a 7-day window in ~7 days (604800s);
+// 24 hours sits far from both, so ordinary clock skew cannot cross it.
 const FIVE_HOUR_BOUNDARY_SECONDS = 24 * 60 * 60
 
-function classifyWindow(raw: RawApiWindow): 'fiveHour' | 'sevenDay' | null {
+type WindowSlot = 'fiveHour' | 'sevenDay'
+
+// Returns null when the window carries no usable reset time — absent, wrong
+// type, or already elapsed. parseApiWindow deliberately tolerates a missing
+// reset_at, so "unclassifiable" must never mean "discard": the caller falls
+// back to the field's positional meaning instead.
+function classifyWindow(raw: RawApiWindow): WindowSlot | null {
   if (!raw || typeof raw.reset_at !== 'number') return null
   const secondsUntilReset = raw.reset_at - Date.now() / 1000
+  if (secondsUntilReset < 0) return null
   return secondsUntilReset <= FIVE_HOUR_BOUNDARY_SECONDS ? 'fiveHour' : 'sevenDay'
 }
 
 function mapLiveUsage(data: { plan_type?: unknown; rate_limit?: RawApiRateLimit }): CodexPlanUsage {
   const rateLimit = data.rate_limit
   const now = new Date().toISOString()
+  const primaryRaw = rateLimit?.primary_window
+  const secondaryRaw = rateLimit?.secondary_window
+  const primary = parseApiWindow(primaryRaw)
+  const secondary = parseApiWindow(secondaryRaw)
 
-  // Classify each window by duration, not field name
-  const primaryClass = classifyWindow(rateLimit?.primary_window)
-  const secondaryClass = classifyWindow(rateLimit?.secondary_window)
+  const primaryClass = classifyWindow(primaryRaw)
+  const secondaryClass = classifyWindow(secondaryRaw)
 
-  let fiveHour: UsageWindow | null = null
-  let sevenDay: UsageWindow | null = null
-
-  if (primaryClass === 'fiveHour') {
-    fiveHour = parseApiWindow(rateLimit?.primary_window)
-  } else if (primaryClass === 'sevenDay') {
-    sevenDay = parseApiWindow(rateLimit?.primary_window)
-  }
-
-  if (secondaryClass === 'fiveHour') {
-    fiveHour = parseApiWindow(rateLimit?.secondary_window)
-  } else if (secondaryClass === 'sevenDay') {
-    sevenDay = parseApiWindow(rateLimit?.secondary_window)
+  // Trust duration classification wherever it is confident, and never let an
+  // unclassifiable window displace a classified one. A window with no usable
+  // reset time simply takes whichever slot is left, so it still renders — the
+  // previous positional behaviour — instead of vanishing or overwriting.
+  let primarySlot: WindowSlot
+  if (primaryClass && secondaryClass && primaryClass !== secondaryClass) {
+    primarySlot = primaryClass
+  } else if (primaryClass && !secondaryClass) {
+    primarySlot = primaryClass
+  } else if (!primaryClass && secondaryClass) {
+    primarySlot = secondaryClass === 'fiveHour' ? 'sevenDay' : 'fiveHour'
+  } else {
+    // Neither is classifiable, or both claim the same slot: fall back to each
+    // field's positional meaning (primary = 5-hour, secondary = 7-day).
+    primarySlot = 'fiveHour'
   }
 
   return {
-    fiveHour,
-    sevenDay,
+    fiveHour: primarySlot === 'fiveHour' ? primary : secondary,
+    sevenDay: primarySlot === 'sevenDay' ? primary : secondary,
     planType: typeof data.plan_type === 'string' ? data.plan_type : null,
     sourcePath: USAGE_ENDPOINT,
     sourceTimestamp: now,
