@@ -73,6 +73,30 @@ const CODEX_PROMPT_NEWLINE = '\x1b[13;28;13;1;16_\x1b[13;28;13;0;16_'
 // sequence works where a win32-input key record would be collapsed to a bare CR.
 const CLAUDE_PROMPT_NEWLINE = '\x1b\r'
 
+// Quick-launch commands per platform: a normal launch and a skip-permissions variant.
+// Shown as deck-level buttons so the user can start an AI terminal session without
+// manually typing the command.
+const QUICK_LAUNCH: Record<TerminalPlatform, { label: string; command: string; skipLabel: string; skipCommand: string }> = {
+  claude: {
+    label: 'Launch Claude',
+    command: 'claude',
+    skipLabel: 'Claude (skip perms)',
+    skipCommand: 'claude --dangerously-skip-permissions'
+  },
+  codex: {
+    label: 'Launch Codex',
+    command: 'codex',
+    skipLabel: 'Codex (yolo)',
+    skipCommand: 'codex --yolo'
+  },
+  opencode: {
+    label: 'Launch OpenCode',
+    command: 'opencode',
+    skipLabel: 'OpenCode (auto)',
+    skipCommand: 'opencode --auto'
+  }
+}
+
 // The prompt-newline shortcut differs per CLI: Codex uses Shift+Enter, Claude uses
 // Ctrl+Enter. Returns the bytes to inject for a newline, or null if the keydown is
 // not a newline shortcut (so Enter and everything else fall through unchanged).
@@ -326,7 +350,7 @@ export const TerminalDeck = memo(function TerminalDeck({
   backgroundSessionCount?: number
   backgroundTerminals?: TerminalBackgroundLocation[]
   onSelectBackgroundTerminal?: (terminal: TerminalBackgroundLocation) => void
-  onAdd: (cwd?: string | null, title?: string, wslDistro?: string | null) => void
+  onAdd: (cwd?: string | null, title?: string, wslDistro?: string | null, initialInput?: string | null) => void
   onClose: (id: string) => void
   onDetach?: () => void
 }): JSX.Element {
@@ -409,6 +433,31 @@ export const TerminalDeck = memo(function TerminalDeck({
           ) : null}
         </div>
         <div className="terminal-actions">
+          {(() => {
+            const q = QUICK_LAUNCH[platform]
+            return (
+              <>
+                <button
+                  type="button"
+                  className="terminal-action"
+                  onClick={() => onAdd(defaultCwd, undefined, defaultWslDistro, q.command)}
+                  disabled={!defaultCwd}
+                  title={defaultCwd ? `Launch ${PLATFORM_CONFIG[platform].label} in a new terminal` : noProjectLabel}
+                >
+                  {q.label}
+                </button>
+                <button
+                  type="button"
+                  className="terminal-action"
+                  onClick={() => onAdd(defaultCwd, undefined, defaultWslDistro, q.skipCommand)}
+                  disabled={!defaultCwd}
+                  title={defaultCwd ? `Launch ${PLATFORM_CONFIG[platform].label} with skip-permissions in a new terminal` : noProjectLabel}
+                >
+                  {q.skipLabel}
+                </button>
+              </>
+            )
+          })()}
           {onDetach ? (
             <button type="button" className="terminal-action" onClick={onDetach} title="Detach terminals to a separate window">
               Detach

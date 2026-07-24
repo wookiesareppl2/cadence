@@ -121,12 +121,25 @@ function bashGuard(platform, openCodeRuntime, mergeReviewEnabled) {
     `export CADENCE_MERGE_REVIEW_ENABLED=${mergeReviewEnabled ? '1' : '0'}`
   )
   if (platform === 'opencode' && openCodeRuntime) {
+    // Resolve the server URL + password at call time from the endpoint file
+    // Cadence rewrites on every server (re)start — never bake a concrete port into
+    // the wrapper. A baked port strands the terminal the instant the server moves
+    // (a health restart, or a second Cadence instance), which shows up as an
+    // `opencode` session whose spinner never resolves and whose interrupt never
+    // lands. Reading the file fresh each launch means the next run self-heals onto
+    // the current server. Filename mirrors SERVER_ENDPOINT_FILE in opencode-runtime.ts.
     commands.push(
       `export OPENCODE_CONFIG_DIR="$HOME/.config/cadence/opencode"`,
       `export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`,
-      `export OPENCODE_SERVER_PASSWORD=${shellSingleQuote(openCodeRuntime.password)}`,
-      `export CADENCE_OPENCODE_URL=${shellSingleQuote(openCodeRuntime.baseUrl)}`,
-      `opencode() { command opencode attach "$CADENCE_OPENCODE_URL" --dir "$PWD" "$@"; }`,
+      `opencode() { ` +
+        `local __ep="$OPENCODE_CONFIG_DIR/server-endpoint.env"; ` +
+        `if [ ! -r "$__ep" ]; then printf '%s\\n' "Cadence: the OpenCode server is not available (missing $__ep)." "Open a new OpenCode terminal from Cadence to start it." >&2; return 1; fi; ` +
+        `local __url __pw; ` +
+        `__url="$(sed -n 's/^CADENCE_OPENCODE_URL=//p' "$__ep" | head -n1)"; ` +
+        `__pw="$(sed -n 's/^CADENCE_OPENCODE_PASSWORD=//p' "$__ep" | head -n1)"; ` +
+        `if [ -z "$__url" ]; then printf '%s\\n' "Cadence: the OpenCode endpoint file is malformed ($__ep)." >&2; return 1; fi; ` +
+        `OPENCODE_SERVER_PASSWORD="$__pw" command opencode attach "$__url" --dir "$PWD" "$@"; ` +
+      `}`,
       `export -f opencode`
     )
   }
