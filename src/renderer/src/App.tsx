@@ -310,7 +310,7 @@ function useSessionScopedTerminals(
   backgroundSessionCount: number
   backgroundTerminals: TerminalBackgroundLocation[]
   pendingSessions: AssistantSession[]
-  addTerminal: (cwd?: string | null, title?: string, wslDistro?: string | null) => void
+  addTerminal: (cwd?: string | null, title?: string, wslDistro?: string | null, initialInput?: string | null) => void
   resumeSession: (session: AssistantSession) => void
   closeTerminal: (id: string) => void
   selectBackgroundTerminal: (terminal: TerminalBackgroundLocation) => void
@@ -379,7 +379,8 @@ function useSessionScopedTerminals(
       openTerminal: boolean,
       cwd?: string | null,
       title?: string,
-      wslDistro?: string | null
+      wslDistro?: string | null,
+      initialInput?: string | null
     ): string | null => {
       if (!project.path) return null
       const pendingId = createPendingSessionId()
@@ -396,7 +397,7 @@ function useSessionScopedTerminals(
         }
       ])
       if (openTerminal) {
-        addTerminal(pendingId, cwd ?? project.path, title, wslDistro ?? project.origin?.distro ?? null)
+        addTerminal(pendingId, cwd ?? project.path, title, wslDistro ?? project.origin?.distro ?? null, initialInput)
       }
       onSelectedSessionIdChange(pendingId)
       return pendingId
@@ -455,7 +456,7 @@ function useSessionScopedTerminals(
   )
 
   const handleAddTerminal = useCallback(
-    (cwd?: string | null, title?: string, wslDistro?: string | null) => {
+    (cwd?: string | null, title?: string, wslDistro?: string | null, initialInput?: string | null) => {
       // Add a side-shell only to a genuinely *active* session: one that is pending
       // (just started) or already has a live terminal (e.g. a resumed one). Extra
       // terminals then stay grouped with that session.
@@ -463,7 +464,7 @@ function useSessionScopedTerminals(
         selectedSessionId != null &&
         (isPendingSessionId(selectedSessionId) || tabs.some((tab) => tab.sessionKey === selectedSessionId))
       if (sessionIsActive) {
-        addTerminal(selectedSessionId!, cwd, title, wslDistro)
+        addTerminal(selectedSessionId!, cwd, title, wslDistro, initialInput)
         return
       }
       // A historical session is selected but has no live terminal (typically after
@@ -479,7 +480,7 @@ function useSessionScopedTerminals(
       }
       // Only a project is selected (no session at all): a terminal here is new work,
       // so begin a fresh session rooted in the project.
-      if (selectedProject) beginSession(selectedProject, true, cwd, title, wslDistro)
+      if (selectedProject) beginSession(selectedProject, true, cwd, title, wslDistro, initialInput)
     },
     [addTerminal, beginSession, resumeSession, sessions, selectedProject, selectedSessionId, tabs]
   )

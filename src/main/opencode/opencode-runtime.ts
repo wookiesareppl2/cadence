@@ -3,8 +3,8 @@ import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk'
 import { execFile } from 'node:child_process'
 import { createServer } from 'node:net'
 import { randomBytes } from 'node:crypto'
-import { readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import {
   OPENCODE_MINIMUM_VERSION,
@@ -56,6 +56,46 @@ type RunningOpenCode = {
   port: number
   password: string
   baseUrl: string
+  home: string
+}
+
+// The managed server runs on a fresh random port every start. Rather than freeze
+// that port into each terminal's `opencode` command — which strands the terminal
+// the moment the server moves — Cadence writes the current URL + password here on
+// every (re)start, and the terminal wrapper reads it at launch time. Keep this
+// filename in sync with the wrapper in terminal-worker.cjs.
+export const SERVER_ENDPOINT_FILE = 'server-endpoint.env'
+
+// A two-line KEY=value file the terminal wrapper parses with `sed`. Values are
+// app-generated and shell-safe (a localhost URL and a hex password), one per line.
+export function formatServerEndpoint(baseUrl: string, password: string): string {
+  return `CADENCE_OPENCODE_URL=${baseUrl}\nCADENCE_OPENCODE_PASSWORD=${password}\n`
+}
+
+async function writeServerEndpoint(runtime: RunningOpenCode): Promise<void> {
+  const uncPath = join(managedOpenCodeConfigDir(runtime.distro, runtime.home), SERVER_ENDPOINT_FILE)
+  await mkdir(dirname(uncPath), { recursive: true })
+  const temporaryPath = `${uncPath}.${process.pid}.cadence.tmp`
+  try {
+    await writeFile(temporaryPath, formatServerEndpoint(runtime.baseUrl, runtime.password), 'utf-8')
+    await rename(temporaryPath, uncPath)
+  } catch (error) {
+    await unlink(temporaryPath).catch(() => undefined)
+    throw error
+  }
+  // The file carries the server password; a UNC write can't set POSIX mode, so
+  // tighten it to the user through the WSL bridge. Best-effort — a single-user
+  // WSL home is already private, and the server exposes the same password in its
+  // own process environment.
+  const posixPath = `${runtime.home}/.config/cadence/opencode/${SERVER_ENDPOINT_FILE}`
+  await runWslCommandViaPty(runtime.distro, `chmod 600 ${shellSingleQuote(posixPath)}`, COMMAND_TIMEOUT_MS).catch(
+    () => undefined
+  )
+}
+
+async function removeServerEndpoint(runtime: RunningOpenCode): Promise<void> {
+  const uncPath = join(managedOpenCodeConfigDir(runtime.distro, runtime.home), SERVER_ENDPOINT_FILE)
+  await unlink(uncPath).catch(() => undefined)
 }
 
 let running: RunningOpenCode | null = null
@@ -386,7 +426,13 @@ async function startOpenCodeRuntime(signal: AbortSignal): Promise<RunningOpenCod
     `export OPENCODE_SERVER_PASSWORD=${shellSingleQuote(password)}`,
     `exec $HOME/.opencode/bin/opencode serve --hostname 127.0.0.1 --port ${port}`
   ].join('; ')
-  const candidate: RunningOpenCode = { distro: detection.distro, port, password, baseUrl }
+  const candidate: RunningOpenCode = {
+    distro: detection.distro,
+    port,
+    password,
+    baseUrl,
+    home: detection.home
+  }
 
   try {
     await startOpenCodeServerViaPty(detection.distro, command)
@@ -395,6 +441,12 @@ async function startOpenCodeRuntime(signal: AbortSignal): Promise<RunningOpenCod
     await validateManagedAgents(baseUrl, password, signal)
     throwIfAborted(signal)
     running = candidate
+    // Publish the live address so terminals resolve it at launch time. Best-effort:
+    // the server itself is up and usable by the in-process client regardless, so a
+    // transient UNC hiccup must not fail the whole runtime start.
+    await writeServerEndpoint(candidate).catch((error) => {
+      console.error('[opencode] could not write the server endpoint file', error)
+    })
     return candidate
   } catch (error) {
     if (!signal.aborted) await stopOpenCodeServerViaPty().catch(() => undefined)
@@ -426,10 +478,15 @@ export async function getOpenCodeTerminalRuntime(): Promise<{
 }
 
 export async function stopOpenCodeRuntime(): Promise<void> {
+  const previous = running
   await lifecycle.stop(async () => {
     running = null
     await stopOpenCodeServerViaPty()
   })
+  // Remove the stale endpoint so a terminal launched after an intentional stop
+  // fails with a clear message instead of attaching to a dead port. A later
+  // (re)start republishes it.
+  if (previous) await removeServerEndpoint(previous)
 }
 
 export function windowsPathToWsl(path: string): string {
