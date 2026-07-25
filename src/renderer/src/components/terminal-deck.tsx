@@ -87,7 +87,7 @@ const QUICK_LAUNCH: Record<TerminalPlatform, { label: string; command: string; s
     label: 'Launch Codex',
     command: 'codex',
     skipLabel: 'Codex (yolo)',
-    skipCommand: 'codex --yolo'
+    skipCommand: 'codex --dangerously-bypass-approvals-and-sandbox'
   },
   opencode: {
     label: 'Launch OpenCode',
