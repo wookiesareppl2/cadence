@@ -16,7 +16,9 @@ type WorkerRequest = {
   platform?: TerminalPlatform
   cwd?: string
   wslDistro?: string
-  openCodeRuntime?: { baseUrl: string; password: string }
+  // `endpointFile` names this instance's endpoint file; the wrapper resolves the
+  // live URL + password from it at launch time (see bashGuard in terminal-worker.cjs).
+  openCodeRuntime?: { baseUrl: string; password: string; endpointFile: string }
   mergeReviewEnabled?: boolean
   data?: string
   cols?: number
@@ -188,7 +190,11 @@ export async function startTerminal(
   if (platform === 'opencode' && managed) {
     const runtime = await getOpenCodeTerminalRuntime()
     distro = runtime.distro
-    openCodeRuntime = { baseUrl: runtime.baseUrl, password: runtime.password }
+    openCodeRuntime = {
+      baseUrl: runtime.baseUrl,
+      password: runtime.password,
+      endpointFile: runtime.endpointFile
+    }
   }
 
   let workspaceCwd: string | undefined

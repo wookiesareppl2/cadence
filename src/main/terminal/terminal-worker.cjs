@@ -127,12 +127,17 @@ function bashGuard(platform, openCodeRuntime, mergeReviewEnabled) {
     // (a health restart, or a second Cadence instance), which shows up as an
     // `opencode` session whose spinner never resolves and whose interrupt never
     // lands. Reading the file fresh each launch means the next run self-heals onto
-    // the current server. Filename mirrors SERVER_ENDPOINT_FILE in opencode-runtime.ts.
+    // the current server.
+    //
+    // The filename is per-instance and comes from the launching Cadence
+    // (serverEndpointFile in opencode-runtime.ts) — never hard-code it here. A
+    // shared name let a second instance's server address land in this terminal,
+    // and let that instance's shutdown delete the file this one depends on.
     commands.push(
       `export OPENCODE_CONFIG_DIR="$HOME/.config/cadence/opencode"`,
       `export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`,
       `opencode() { ` +
-        `local __ep="$OPENCODE_CONFIG_DIR/server-endpoint.env"; ` +
+        `local __ep="$OPENCODE_CONFIG_DIR/"${shellSingleQuote(openCodeRuntime.endpointFile)}; ` +
         `if [ ! -r "$__ep" ]; then printf '%s\\n' "Cadence: the OpenCode server is not available (missing $__ep)." "Open a new OpenCode terminal from Cadence to start it." >&2; return 1; fi; ` +
         `local __url __pw; ` +
         `__url="$(sed -n 's/^CADENCE_OPENCODE_URL=//p' "$__ep" | head -n1)"; ` +

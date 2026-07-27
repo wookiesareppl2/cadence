@@ -2,7 +2,7 @@ import { app } from 'electron'
 import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk'
 import { execFile } from 'node:child_process'
 import { createServer } from 'node:net'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
@@ -57,14 +57,62 @@ type RunningOpenCode = {
   password: string
   baseUrl: string
   home: string
+  // Resolved once at start so the stop path removes exactly the file this run published.
+  endpointFile: string
 }
 
 // The managed server runs on a fresh random port every start. Rather than freeze
 // that port into each terminal's `opencode` command — which strands the terminal
-// the moment the server moves — Cadence writes the current URL + password here on
-// every (re)start, and the terminal wrapper reads it at launch time. Keep this
-// filename in sync with the wrapper in terminal-worker.cjs.
-export const SERVER_ENDPOINT_FILE = 'server-endpoint.env'
+// the moment the server moves — Cadence writes the current URL + password to an
+// endpoint file on every (re)start, and the terminal wrapper reads it at launch
+// time. The wrapper receives the resolved name (see openCodeRuntime.endpointFile
+// in terminal-worker.cjs) rather than hard-coding it.
+//
+// The name is keyed to the instance because two Cadences can run at once: a dev
+// build takes a separate Electron identity (configureRuntimeIdentity in
+// main/index.ts), so the single-instance lock does not hold them apart, and each
+// runs its own server on its own random port. One shared file made them collide
+// three ways — the second to start silently overwrote the first's address (new
+// terminals attached to the wrong instance's server), the first to quit deleted
+// the file out from under the other's healthy server, and the survivor never
+// recovered because the file is only written at server start. Keying by userData
+// path gives each instance a file it alone publishes, reads, and removes.
+export function serverEndpointFile(instanceKey: string): string {
+  return `server-endpoint.${instanceKey}.env`
+}
+
+// Short, filename-safe, and stable for the life of an install. Read lazily —
+// `app` is unavailable when this module is imported outside Electron (tests).
+function currentEndpointFile(): string {
+  const key = createHash('sha256').update(app.getPath('userData')).digest('hex').slice(0, 12)
+  return serverEndpointFile(key)
+}
+
+// v0.1.36 and earlier published to one shared `server-endpoint.env`. Nothing reads
+// it once every instance is on a per-instance name, but it holds a server password,
+// so it should not linger. It cannot be deleted on sight: an instance of that older
+// version may still be running and serving live terminals from it, and removing it
+// would strand that instance exactly the way this change exists to prevent. So
+// retire it only once it is provably dead.
+const LEGACY_SHARED_ENDPOINT_FILE = 'server-endpoint.env'
+
+async function retireLegacySharedEndpoint(configDir: string): Promise<void> {
+  const legacyPath = join(configDir, LEGACY_SHARED_ENDPOINT_FILE)
+  const contents = await readFile(legacyPath, 'utf-8').catch(() => null)
+  if (contents === null) return
+  const baseUrl = /^CADENCE_OPENCODE_URL=(.*)$/m.exec(contents)?.[1]?.trim()
+  if (baseUrl) {
+    try {
+      // Liveness only — any HTTP answer means a server is still listening there.
+      // A 401 is the healthy unauthenticated response, so status does not matter.
+      await fetch(`${baseUrl}/global/health`, { signal: AbortSignal.timeout(1_500) })
+      return
+    } catch {
+      // Unreachable: that port is dead and the file is just a stale password.
+    }
+  }
+  await unlink(legacyPath).catch(() => undefined)
+}
 
 // A two-line KEY=value file the terminal wrapper parses with `sed`. Values are
 // app-generated and shell-safe (a localhost URL and a hex password), one per line.
@@ -73,7 +121,8 @@ export function formatServerEndpoint(baseUrl: string, password: string): string 
 }
 
 async function writeServerEndpoint(runtime: RunningOpenCode): Promise<void> {
-  const uncPath = join(managedOpenCodeConfigDir(runtime.distro, runtime.home), SERVER_ENDPOINT_FILE)
+  const configDir = managedOpenCodeConfigDir(runtime.distro, runtime.home)
+  const uncPath = join(configDir, runtime.endpointFile)
   await mkdir(dirname(uncPath), { recursive: true })
   const temporaryPath = `${uncPath}.${process.pid}.cadence.tmp`
   try {
@@ -87,14 +136,15 @@ async function writeServerEndpoint(runtime: RunningOpenCode): Promise<void> {
   // tighten it to the user through the WSL bridge. Best-effort — a single-user
   // WSL home is already private, and the server exposes the same password in its
   // own process environment.
-  const posixPath = `${runtime.home}/.config/cadence/opencode/${SERVER_ENDPOINT_FILE}`
+  const posixPath = `${runtime.home}/.config/cadence/opencode/${runtime.endpointFile}`
   await runWslCommandViaPty(runtime.distro, `chmod 600 ${shellSingleQuote(posixPath)}`, COMMAND_TIMEOUT_MS).catch(
     () => undefined
   )
+  await retireLegacySharedEndpoint(configDir).catch(() => undefined)
 }
 
 async function removeServerEndpoint(runtime: RunningOpenCode): Promise<void> {
-  const uncPath = join(managedOpenCodeConfigDir(runtime.distro, runtime.home), SERVER_ENDPOINT_FILE)
+  const uncPath = join(managedOpenCodeConfigDir(runtime.distro, runtime.home), runtime.endpointFile)
   await unlink(uncPath).catch(() => undefined)
 }
 
@@ -431,7 +481,8 @@ async function startOpenCodeRuntime(signal: AbortSignal): Promise<RunningOpenCod
     port,
     password,
     baseUrl,
-    home: detection.home
+    home: detection.home,
+    endpointFile: currentEndpointFile()
   }
 
   try {
@@ -472,9 +523,15 @@ export async function getOpenCodeTerminalRuntime(): Promise<{
   distro: string
   baseUrl: string
   password: string
+  endpointFile: string
 }> {
   const runtime = await ensureOpenCodeRuntime()
-  return { distro: runtime.distro, baseUrl: runtime.baseUrl, password: runtime.password }
+  return {
+    distro: runtime.distro,
+    baseUrl: runtime.baseUrl,
+    password: runtime.password,
+    endpointFile: runtime.endpointFile
+  }
 }
 
 export async function stopOpenCodeRuntime(): Promise<void> {

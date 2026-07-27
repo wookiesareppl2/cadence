@@ -14,6 +14,7 @@ import type {
   AssistantSessionHistoryEntry,
   SessionOrigin
 } from '@shared/sessions'
+import { isOpenCodeSessionId } from '@shared/opencode'
 import type { OpenCodeActivitySnapshot, OpenCodeAgentActivity } from '@shared/opencode'
 import { WINDOWS_ORIGIN } from '@shared/sessions'
 import { workspaceProjectId } from '../workspaces/workspace-utils'
@@ -311,7 +312,21 @@ function activityStatus(status: SessionStatus | undefined): OpenCodeAgentActivit
   return status.type
 }
 
+function emptyActivity(sessionId: string): OpenCodeActivitySnapshot {
+  return {
+    sessionId,
+    jobs: [],
+    pendingTodos: 0,
+    completedTodos: 0,
+    fetchedAt: new Date().toISOString()
+  }
+}
+
 export async function getOpenCodeActivity(sessionId: string): Promise<OpenCodeActivitySnapshot> {
+  // A session selected under Claude or Codex is a UUID, and the panel polls on a
+  // timer, so forwarding it would raise an identical server 500 every few seconds.
+  // There is genuinely no OpenCode activity for such an id: report none.
+  if (!isOpenCodeSessionId(sessionId)) return emptyActivity(sessionId)
   const client = await getOpenCodeClient()
   const parentResponse = await client.session.get({ path: { id: sessionId } })
   const parent = parentResponse.data

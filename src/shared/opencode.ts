@@ -203,6 +203,16 @@ export type OpenCodeAgentActivity = {
 
 export type OpenCodeAgentPaneLayout = 'tiled' | 'rows' | 'columns'
 
+// OpenCode session ids look like `ses_06cf94579ffetKvMLAgwXbVwZq`. The server
+// validates that prefix itself and answers anything else with a 500
+// (`Expected a string starting with "ses"`). Cadence identifies Claude and Codex
+// sessions by UUID instead, so an id belonging to another platform must never
+// reach an OpenCode call — a selection that carries across platforms otherwise
+// turns every poll into a server error.
+export function isOpenCodeSessionId(value: string | null | undefined): value is string {
+  return typeof value === 'string' && value.startsWith('ses')
+}
+
 function terminalIdPart(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, '_').slice(-48) || 'session'
 }

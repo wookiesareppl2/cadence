@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { JSX } from 'react'
 import type { FileRequest } from '@shared/project-files'
 import {
+  isOpenCodeSessionId,
   openCodeAgentAttachCommand,
   openCodeAgentTerminalId,
   type OpenCodeActivitySnapshot,
@@ -77,6 +78,14 @@ export function OpenCodeActivityPanel({
 
   const refresh = useCallback(async () => {
     if (!sessionId) return
+    // The selection can still name a Claude or Codex session (a UUID) when this
+    // panel mounts. There is no OpenCode activity to show for one, so drop the
+    // stale snapshot rather than polling for it every few seconds.
+    if (!isOpenCodeSessionId(sessionId)) {
+      setSnapshot(null)
+      setError(null)
+      return
+    }
     try {
       setSnapshot(await window.dashboard.openCode.getActivity(sessionId))
       setError(null)
