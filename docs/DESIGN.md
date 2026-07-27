@@ -311,6 +311,32 @@ vs. `Select a project to open a terminal` when none is picked.
   managed resources. Existing Ready connections therefore gain workflow updates after a
   Cadence app update without reconnecting or reapplying routing.
 
+### OpenCode usage strip
+
+OpenCode is the one platform whose usage strip shows **no percentage bars**, because
+no honest percentage exists. Its plan quota is enforced by the provider and exposed
+nowhere — no usage/quota/balance endpoint, and no rate-limit headers on successful
+responses — while plan-included models bill nothing, so a cost-derived gauge sits at
+0% no matter how heavily the plan is used. This follows the context gauge's rule:
+never render a gauge that is confidently wrong.
+
+It reuses `UsageBar` / `UsageBarPlaceholder` unchanged — no new card, no new CSS:
+
+- **Leading slot — the provider's own report.** The only hard fact available arrives
+  as a `429` when a prompt is refused: `retry-after` gives an exact reset and the body
+  names the limit (`"limitName": "5 hour"`). Rendered as a full `UsageBar` at 100%, so
+  `barTier()` already places it in the `critical` tier and the standard countdown runs
+  off `resetsAt`. Footer reads `Reported by OpenCode`; the provider's message is the
+  `title`. With nothing reported, a placeholder reads `No limit reported by OpenCode`.
+- **Weekly / Monthly spend.** Placeholders carrying the real metered figure
+  (`$0.96 · Metered spend only — plan models are not billed per use`). Deliberately
+  not bars: the dollar total is real, but the limit it would be drawn against is not.
+
+The limit is observed by subscribing to the OpenCode server's event stream and
+watching `session.error` for an `APIError` with `statusCode 429`. Prompts are sent by
+the `opencode` TUI in the terminal rather than by Cadence's own client, so watching
+our own API calls would never see one; the event stream is instance-wide and does.
+
 ## Context-usage gauge
 
 The selected session shows a **context gauge** (`.context-gauge`) in the History

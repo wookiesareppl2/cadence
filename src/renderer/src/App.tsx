@@ -26,7 +26,7 @@ import { OpenCodeCompanionWindow } from '@renderer/components/opencode/OpenCodeC
 import { OpenCodeSlimUpdateBanner } from '@renderer/components/opencode/OpenCodeSlimUpdateBanner'
 import type { ClaudePlanUsage, PlanUsageRefreshMeta, UsageWindow } from '@shared/claude-plan-usage'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
-import type { OpenCodePlanUsage } from '@shared/opencode'
+import type { OpenCodePlanLimit, OpenCodePlanUsage } from '@shared/opencode'
 import { isPlatformId, PLATFORM_CONFIG, PLATFORM_IDS, type PlatformId } from '@shared/platform'
 import { APP_NAME } from '@shared/brand'
 import type { AssistantSession, SessionOrigin } from '@shared/sessions'
@@ -2486,6 +2486,7 @@ function ProviderWorkspace({
           planUsage={planUsage}
           planError={planError}
           loadingLabel={`Fetching ${platformConfig.label} usage`}
+          spend={platform === 'opencode' ? openCodeSpend(planUsage) : null}
         />
 
         <div
@@ -2581,11 +2582,15 @@ function ProviderWorkspace({
 function UsageStrip({
   planUsage,
   planError,
-  loadingLabel
+  loadingLabel,
+  spend
 }: {
   planUsage: PlanUsageDisplay | null
   planError: string | null
   loadingLabel: string
+  // Present only for OpenCode, whose figures are metered spend rather than a
+  // quota — see OpenCodeUsageStrip.
+  spend?: OpenCodeSpend | null
 }): JSX.Element {
   const refreshLabel = planUsage ? usageRefreshLabel(planUsage, planError) : null
   const refreshTitle = planUsage ? planError ?? planUsage.refresh?.message ?? undefined : undefined
@@ -2593,6 +2598,8 @@ function UsageStrip({
     planError ??
     (planUsage?.refresh?.state === 'rate_limited' ? refreshLabel : planUsage?.refresh?.message) ??
     loadingLabel
+
+  if (spend) return <OpenCodeUsageStrip spend={spend} planError={planError} />
 
   return (
     <div className="usage-strip">
@@ -2658,6 +2665,65 @@ function formatUsageFetchedAt(value: string): string {
     hour: '2-digit',
     minute: '2-digit'
   }).format(date)
+}
+
+type OpenCodeSpend = {
+  limit: OpenCodePlanLimit | null
+  sevenDayCost: number
+  monthlyCost: number
+}
+
+// Null until the first poll lands, so the strip shows its loading state rather
+// than an authoritative-looking $0.00.
+function openCodeSpend(planUsage: PlanUsageDisplay | null): OpenCodeSpend | null {
+  if (!planUsage || !('monthlyCost' in planUsage)) return null
+  const usage = planUsage as OpenCodePlanUsage
+  return {
+    limit: usage.limit ?? null,
+    sevenDayCost: usage.sevenDayCost,
+    monthlyCost: usage.monthlyCost
+  }
+}
+
+function formatSpend(cost: number): string {
+  return `$${cost.toFixed(2)}`
+}
+
+// OpenCode's plan quota is enforced by the provider and readable nowhere: there is
+// no usage endpoint, and plan-included models report zero cost, so a percentage
+// bar could only ever sit at 0% however hard the plan is worked. Rather than show
+// a gauge that is confidently wrong, this mirrors the context gauge's rule — never
+// render a misleading empty gauge — and shows only what is actually known: the
+// provider's own limit report when it exists, and real metered spend otherwise.
+function OpenCodeUsageStrip({
+  spend,
+  planError
+}: {
+  spend: OpenCodeSpend
+  planError: string | null
+}): JSX.Element {
+  const { limit } = spend
+  const meteredNote = 'Metered spend only — plan models are not billed per use'
+
+  return (
+    <div className="usage-strip">
+      {limit ? (
+        // A reached limit is the one hard fact available, so it takes the leading
+        // slot at full bar: barTier() puts 100% in the critical tier already.
+        <UsageBar
+          label={`${limit.limitName} limit reached`}
+          utilization={100}
+          resetsAt={limit.resetsAt}
+          refreshLabel="Reported by OpenCode"
+          refreshTitle={limit.detail ?? undefined}
+        />
+      ) : (
+        <UsageBarPlaceholder label="Plan limit" message={planError ?? 'No limit reported by OpenCode'} />
+      )}
+      <UsageBarPlaceholder label="Weekly spend" message={`${formatSpend(spend.sevenDayCost)} · ${meteredNote}`} />
+      <UsageBarPlaceholder label="Monthly spend" message={`${formatSpend(spend.monthlyCost)} · ${meteredNote}`} />
+    </div>
+  )
 }
 
 function UsageBarPlaceholder({ label, message }: { label: string; message: string }): JSX.Element {

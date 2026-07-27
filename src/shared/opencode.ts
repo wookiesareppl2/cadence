@@ -188,6 +188,10 @@ export type OpenCodePlanUsage = {
   isEstimate: true
   fetchedAt: string
   refresh?: PlanUsageRefreshMeta
+  // The provider's actual quota state, when it has reported one. The cost figures
+  // above cannot stand in for it: plan-included models bill nothing, so they leave
+  // every window at zero no matter how heavily the plan is used.
+  limit: OpenCodePlanLimit | null
 }
 
 export type OpenCodeAgentActivity = {
@@ -224,6 +228,16 @@ export function openCodeAgentTerminalId(parentSessionId: string, childSessionId:
 export function openCodeAgentAttachCommand(sessionId: string): string {
   const quoted = `'${sessionId.replace(/'/g, `'"'"'`)}'`
   return `opencode --session ${quoted}`
+}
+
+// The provider's own report of a reached quota. `resetsAt` comes from the 429's
+// `retry-after`, so it is exact rather than estimated; it is null only when the
+// provider omitted both the header and a countdown in its message.
+export type OpenCodePlanLimit = {
+  limitName: string
+  resetsAt: string | null
+  observedAt: string
+  detail: string | null
 }
 
 export type OpenCodeActivitySnapshot = {

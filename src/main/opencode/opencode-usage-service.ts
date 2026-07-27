@@ -1,5 +1,7 @@
-import type { OpenCodePlanUsage } from '@shared/opencode'
+import type { OpenCodePlanLimit, OpenCodePlanUsage } from '@shared/opencode'
 import { listAllOpenCodeMessages } from './opencode-session-service'
+import { getPlanLimit } from './opencode-plan-limit'
+import { ensureOpenCodePlanLimitWatch } from './opencode-plan-limit-watch'
 
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1000
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000
@@ -9,7 +11,7 @@ const SEVEN_DAY_LIMIT = 30
 const MONTHLY_LIMIT = 60
 const CACHE_MS = 30_000
 
-let cache: { expiresAt: number; value: OpenCodePlanUsage } | null = null
+let cache: { expiresAt: number; value: OpenCodePlanUsage; limitKey: string } | null = null
 
 export type OpenCodeCostRecord = {
   role: string
@@ -39,7 +41,8 @@ function utilization(cost: number, limit: number): number {
 
 export function summarizeOpenCodeUsage(
   records: OpenCodeCostRecord[],
-  now = Date.now()
+  now = Date.now(),
+  limit: OpenCodePlanLimit | null = null
 ): OpenCodePlanUsage {
   const messages = records.filter((message) => message.role === 'assistant')
   const fiveHourCost = rollingCost(messages, now, FIVE_HOURS_MS)
@@ -64,20 +67,32 @@ export function summarizeOpenCodeUsage(
     source: 'local-sessions',
     isEstimate: true,
     fetchedAt: new Date(now).toISOString(),
+    limit,
     refresh: {
       state: 'fresh',
       nextRefreshAt: new Date(now + CACHE_MS).toISOString(),
-      message: 'Estimated from local OpenCode session costs'
+      // Say what this actually is. Plan-included models report no cost, so these
+      // figures cover metered spend only and are not a read on the plan's quota.
+      message: limit
+        ? `${limit.limitName} limit reached — reported by OpenCode`
+        : 'Estimated metered spend from local OpenCode sessions'
     }
   }
 }
 
 export async function getOpenCodePlanUsage(): Promise<OpenCodePlanUsage> {
-  if (cache && cache.expiresAt > Date.now()) return cache.value
+  // Safe to call on every poll; the watch starts once and the runtime is being
+  // ensured by this function anyway.
+  ensureOpenCodePlanLimitWatch()
+  const limit = getPlanLimit()
+  const limitKey = limit ? `${limit.limitName}|${limit.resetsAt ?? 'unknown'}|${limit.observedAt}` : 'none'
+  // A limit that arrived or lapsed since the last poll must not wait out the
+  // cache — that state is the most useful thing on the panel.
+  if (cache && cache.expiresAt > Date.now() && cache.limitKey === limitKey) return cache.value
   const now = Date.now()
   const rows = await listAllOpenCodeMessages()
-  const value = summarizeOpenCodeUsage(rows.map((row) => row.info), now)
-  cache = { expiresAt: now + CACHE_MS, value }
+  const value = summarizeOpenCodeUsage(rows.map((row) => row.info), now, limit)
+  cache = { expiresAt: now + CACHE_MS, value, limitKey }
   return value
 }
 
