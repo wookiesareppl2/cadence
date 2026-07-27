@@ -168,14 +168,27 @@ export function projectId(
 // Map a model id to its native context window (tokens) so the gauge has a
 // denominator. Values follow the published model windows; an unknown model falls
 // back to 200K, the conservative floor shared by the smaller Claude/Codex tiers.
+//
+// Opus and Sonnet ship a 1M window from version 4 onward. Read that version out
+// of the id rather than listing each release: a literal list silently mis-reported
+// every new model — `claude-opus-5` matched no rule, fell through to the 200K
+// floor, and showed a healthy 321K session as "321K / 200K · 100%".
+//
+// The trailing `(?!\d)` stops a date suffix reading as a version, so
+// `claude-3-5-sonnet-20241022` is not mistaken for a Sonnet 20.
+const LARGE_WINDOW_FAMILY = /(?:opus|sonnet)-(\d{1,2})(?!\d)/i
+const LARGE_WINDOW_MIN_VERSION = 4
+
 const CONTEXT_WINDOW_RULES: { test: RegExp; window: number }[] = [
-  { test: /opus-4|sonnet-4|fable|mythos/i, window: 1_000_000 },
+  { test: /fable|mythos/i, window: 1_000_000 },
   { test: /gpt-5|codex/i, window: 272_000 },
   { test: /haiku|sonnet-3|opus-3|claude-3|gpt-4/i, window: 200_000 }
 ]
 
-function contextWindowForModel(model: string | null): number | null {
+export function contextWindowForModel(model: string | null): number | null {
   if (!model) return null
+  const family = LARGE_WINDOW_FAMILY.exec(model)
+  if (family && Number.parseInt(family[1], 10) >= LARGE_WINDOW_MIN_VERSION) return 1_000_000
   for (const rule of CONTEXT_WINDOW_RULES) {
     if (rule.test.test(model)) return rule.window
   }

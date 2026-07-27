@@ -25,3 +25,5 @@ AGENTS.md
 docs/RELEASING.md
 **/.coverage
 **/coverage-*.json
+# Playwright MCP scratch snapshots from local UI measurement runs
+.playwright-mcp/
