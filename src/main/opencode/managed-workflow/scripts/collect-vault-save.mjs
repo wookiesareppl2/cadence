@@ -921,6 +921,49 @@ function appendHunk(currentText, text) {
   return ['@@', `-${anchor}`, `+${anchor}`, '+', ...patchLines(addition, '+'), '*** End of File']
 }
 
+// The Pin Review Log line must land INSIDE the `## Pin Review Log` section,
+// because `latestPinReview` reads only that section. A plain end-of-file append
+// happens to satisfy that today purely because the section is currently last in
+// Pins-Reference.md — add any section after it and every save's line would land
+// outside the reader's window, failing validation for a reason that points
+// nowhere near the cause. Anchor on the section instead of the file so the
+// layout stops mattering.
+// Constants live inside the function: the mode dispatch runs at the top of this
+// file, so anything at module scope is still in its temporal dead zone when a
+// save calls in. Same trap as `resolveFidelity` (TS-115).
+function pinReviewAppendHunk(currentText, text) {
+  const heading = 'Pin Review Log'
+  const datedLine = /^- \d{4}-\d{2}-\d{2} \|/
+  const addition = String(text).trim()
+  if (!addition) throw new Error('Append content is empty')
+  if (currentText.includes(addition)) throw new Error('Append content already exists')
+
+  const lines = currentText.replace(/\r\n/g, '\n').replace(/\n+$/, '').split('\n')
+  const headingPattern = new RegExp(`^##\\s+${heading}\\s*$`)
+  const headingIndex = lines.findIndex((line) => headingPattern.test(line))
+  if (headingIndex < 0) {
+    throw new Error(`Pins-Reference.md has no "## ${heading}" section to append the review line to`)
+  }
+
+  // Section runs to the next same-level heading, or to end of file.
+  let end = lines.length
+  for (let index = headingIndex + 1; index < lines.length; index += 1) {
+    if (/^##\s+/.test(lines[index])) { end = index; break }
+  }
+
+  // Anchor on the last dated line in the section — it carries a date and free
+  // text, so it is effectively unique in the file. With none, anchor the heading
+  // itself and open the log.
+  let anchorIndex = -1
+  for (let index = end - 1; index > headingIndex; index -= 1) {
+    if (datedLine.test(lines[index])) { anchorIndex = index; break }
+  }
+  if (anchorIndex < 0) {
+    return ['@@', `-${lines[headingIndex]}`, `+${lines[headingIndex]}`, '+', ...patchLines(addition, '+')]
+  }
+  return ['@@', `-${lines[anchorIndex]}`, `+${lines[anchorIndex]}`, ...patchLines(addition, '+')]
+}
+
 function dailyIndexHunk(currentText, indexLine) {
   const line = String(indexLine).trim()
   if (!line.startsWith('- ')) throw new Error('Daily Index line must be a Markdown bullet')
@@ -1048,7 +1091,11 @@ function buildFileHunks(manifest, plan) {
   for (const [relativePath, text] of Object.entries(plan.appendText)) {
     if (Object.hasOwn(plan.replace, relativePath)) throw new Error(`Cannot replace file and append text together: ${relativePath}`)
     const current = readText(assertMemoryPath(memory, relativePath))
-    addHunk(relativePath, appendHunk(current, String(text)))
+    // Pins-Reference.md is section-anchored; every other appendText target is a
+    // plain end-of-file append.
+    addHunk(relativePath, relativePath === 'Pins-Reference.md'
+      ? pinReviewAppendHunk(current, String(text))
+      : appendHunk(current, String(text)))
   }
 
   // D4: guarantee a Pin Review Log line every save. If the worker supplied no
@@ -1067,7 +1114,7 @@ function buildFileHunks(manifest, plan) {
       const result = touchedPins ? 'PINS_UPDATED' : 'NO_PIN_CHANGES'
       const line = `- ${nzDate()} | branch=${branch} | mode=${mode} | result=${result} | drift=unverified | hot_changes=none | notes=Pin Review Log line auto-added by collector (worker omitted it).`
       const current = readText(prfPath)
-      if (!current.includes(`- ${nzDate()} | branch=${branch} |`)) addHunk(prfName, appendHunk(current, line))
+      if (!current.includes(`- ${nzDate()} | branch=${branch} |`)) addHunk(prfName, pinReviewAppendHunk(current, line))
     }
   }
 

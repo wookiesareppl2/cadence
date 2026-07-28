@@ -344,6 +344,13 @@ vs. `Select a project to open a terminal` when none is picked.
   any checkpoint — not merely the newest — is required so that regenerating a patch that was
   never applied keeps working. When adding a write path, record its checkpoint too or its
   recovery step will be refused.
+- **Write where the reader reads.** The Pin Review Log line is appended relative to the
+  `## Pin Review Log` heading, not to the end of `Pins-Reference.md`, because `latestPinReview`
+  parses only that section. An end-of-file append satisfied the reader by coincidence — the
+  section happened to be last — so adding any section after it would have put every save's line
+  outside the reader's window and failed validation with an error pointing nowhere near the
+  cause. Appends anchor on the last dated line in the section, or on the heading when the log
+  is empty, and a missing heading is a hard error rather than a silent end-of-file append.
 - Routing setup, profile maintenance, and runtime startup all install or repair these four
   managed resources. Existing Ready connections therefore gain workflow updates after a
   Cadence app update without reconnecting or reapplying routing.
