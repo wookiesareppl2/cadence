@@ -409,6 +409,21 @@ async function devServerState(repo) {
     : `DEV_SERVER=NOT RUNNING framework=${detected.framework} port=${detected.port}`
 }
 
+// The only two save fidelities. `full` and `audit` were synonyms for `max` that
+// were never once used in 37 recorded saves, so they are gone; anything else is
+// a typo and must fail loudly rather than silently degrade to a lesser save.
+// Kept inside the function body deliberately: the mode dispatch runs at the top
+// of this file, so a module-level `const` here is still in its temporal dead
+// zone by the time a save calls this.
+function resolveFidelity(value) {
+  const allowed = ['incremental', 'max']
+  const fidelity = value ?? 'incremental'
+  if (!allowed.includes(fidelity)) {
+    fail(`Unknown --fidelity "${fidelity}" (expected ${allowed.join(' or ')})`)
+  }
+  return fidelity
+}
+
 function createManifest(memory, workspace, repo, daily, state) {
   const frozen = {
     handoff: fileSnapshot(path.join(repo, '.claude', 'HANDOFF.md')),
@@ -421,6 +436,11 @@ function createManifest(memory, workspace, repo, daily, state) {
     workspace,
     repo,
     daily,
+    // Recorded once, here, and read by both apply and validate. Passing it
+    // separately to each step is what caused TS-115: apply never received it,
+    // defaulted to `incremental`, stamped that into the Pin Review line, and
+    // validate then rejected the save for not saying `mode=max`.
+    fidelity: resolveFidelity(args.fidelity),
     git: state,
     memoryFiles: memorySnapshot(memory),
     dailyFile: fileSnapshot(daily),
@@ -544,7 +564,7 @@ function emitPlanProtocolPacket() {
     'await tools.apply_patch(rendered.slice(start, end + "*** End Patch".length));',
     'PLAN_WRITE_JS_END',
     'PATCH_MODE_OUTPUT=inline text between START_GENERATED_SAVE_PATCH and END_GENERATED_SAVE_PATCH; extract from *** Begin Patch through *** End Patch and pass it unchanged to tools.apply_patch',
-    'VALIDATE_REQUIRED_ARGS=--manifest|--memory|--workspace|--fidelity|--changed',
+    'VALIDATE_REQUIRED_ARGS=--manifest|--memory|--workspace|--changed',
     'CHANGED_VALUES=relative memory paths from plan keys plus @daily when daily is present; pipe-separated',
     'SUCCESS=the same second exec applies the generated patch and returns SAVE_VALIDATION=PASS',
     '===== END_SAVE_PLAN_PROTOCOL =====',
@@ -964,7 +984,7 @@ function buildFileHunks(manifest, plan) {
     const prfPath = path.join(memory, prfName)
     if (!Object.hasOwn(plan.appendText, prfName) && !Object.hasOwn(plan.replace, prfName) && fs.existsSync(prfPath)) {
       const branch = manifest.git?.branch || 'unknown'
-      const mode = args.fidelity ?? 'incremental'
+      const mode = manifest.fidelity ?? 'incremental'
       const touchedPins = ['Pins.md', prfName].some((file) => Object.hasOwn(plan.replace, file)
         || Object.hasOwn(plan.appendEntries, file) || Object.hasOwn(plan.insertBefore, file)
         || Object.hasOwn(plan.replaceEntries, file) || Object.hasOwn(plan.removeEntries, file))
@@ -1200,7 +1220,10 @@ async function validateSave() {
   const repo = findRepo(workspace)
   const expectedChanged = new Set(listArg('changed').map((value) => value.split(path.sep).join('/')))
   if (!expectedChanged.size) throw new Error('Validation requires --changed')
-  const fidelity = args.fidelity ?? 'incremental'
+  // The manifest is authoritative so apply and validate can never disagree.
+  // `--fidelity` remains accepted for older manifests, but a manifest that
+  // carries one wins outright.
+  const fidelity = manifest.fidelity ?? resolveFidelity(args.fidelity)
   const errors = []
   const beforeFiles = manifest.memoryFiles ?? {}
   const afterFiles = memorySnapshot(memory)

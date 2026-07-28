@@ -91,8 +91,10 @@ The session delta must include only facts already known to the parent: current t
 
 ## Fidelity
 
+There are exactly two: `incremental` and `max`. Any other value is a typo and the collector fails the save rather than silently doing less than asked.
+
 - `incremental` (default): budgeted save. Read operational state fully, inspect bounded git/session deltas, and use targeted reads of append-only memory files and relevant pins.
-- `max`, `full`, or `audit`: full audit; read every live memory file and evaluate every active DNO/PIN.
+- `max`: full audit; read every live memory file and evaluate every active DNO/PIN.
 
 Escalate incremental to `max` when the memory structure is missing or malformed, bounded search cannot prove non-duplication, existing drift is `warn`, pins need bootstrapping, or this follows a release or major architecture change.
 
@@ -120,8 +122,10 @@ If today's NZ-dated note `<VAULT_ROOT>/01 - Daily Notes/YYYY-MM-DD.md` does NOT 
 ### Step 1 — Orientation + manifest (collector)
 
 ```bash
-"$NODE" "$COLLECTOR" --mode state --memory "<MEMORY_HOME>" --workspace "<WORKSPACE_ROOT>"
+"$NODE" "$COLLECTOR" --mode state --memory "<MEMORY_HOME>" --workspace "<WORKSPACE_ROOT>" --fidelity <MODE>
 ```
+
+`--fidelity` is passed HERE and nowhere else. The collector records it in the manifest, and both the apply and validate steps read it from there — so they cannot disagree about which mode this save is.
 
 Capture `MANIFEST=<path>`, plus the git state, changed paths, `NEXT_IDS` (next DNO/PIN/ADR/PAT/TS ids), the NZ daily path, and the latest Pin Review Log line. The manifest snapshots pre-save state — do NOT hand-edit any memory file or the daily note after this point (the collector rejects a save if they change out from under it).
 
@@ -167,7 +171,7 @@ Capture `APPLIED_CHANGED` from the output.
 ### Step 6 — Validate (required)
 
 ```bash
-"$NODE" "$COLLECTOR" --mode validate --manifest "<MANIFEST>" --memory "<MEMORY_HOME>" --workspace "<WORKSPACE_ROOT>" --fidelity <MODE> --changed "<APPLIED_CHANGED>"
+"$NODE" "$COLLECTOR" --mode validate --manifest "<MANIFEST>" --memory "<MEMORY_HOME>" --workspace "<WORKSPACE_ROOT>" --changed "<APPLIED_CHANGED>"
 ```
 
 Require `SAVE_VALIDATION=PASS`. On FAIL, read the `ERROR=` lines, build ONE corrective plan (for example create a missing referenced entry, or fix content), re-apply, and re-validate once. If it still fails, return `SAVE_VALIDATION_FAILED` with the manifest path and exact errors — never claim a successful checkpoint. Do not fall back to hand-editing memory files.

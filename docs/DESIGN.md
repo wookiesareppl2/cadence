@@ -328,8 +328,12 @@ vs. `Select a project to open a terminal` when none is picked.
   facts, then relays the result; every project read, git/port check, pin review, and Memory
   Bank write stays inside that worker. Fail closed when the worker cannot start.
 - `/start` defaults to targeted high-fidelity loading and accepts `max`. `/save` defaults
-  to an incremental checkpoint and accepts `max`, `full`, or `audit`, with automatic
-  escalation when targeted reads cannot prove safety.
+  to an incremental checkpoint and accepts exactly one other fidelity, `max`, with automatic
+  escalation when targeted reads cannot prove safety. There are only these two save
+  fidelities — the former `full`/`audit` synonyms were removed, and the collector now
+  rejects any other value rather than silently saving less than was asked for. The mode is
+  passed once, when the manifest is created, and both the apply and validate steps read it
+  from there so they cannot disagree.
 - Routing setup, profile maintenance, and runtime startup all install or repair these four
   managed resources. Existing Ready connections therefore gain workflow updates after a
   Cadence app update without reconnecting or reapplying routing.
