@@ -26,12 +26,19 @@
 }
 
 /* Custom scrollbars — blend with the warm dark theme instead of the default
-   white/grey OS scrollbars. Applies app-wide (lists, panels, terminal viewport). */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--surface-4) transparent;
-}
+   white/grey OS scrollbars. Applies app-wide (lists, panels, terminal viewport).
 
+   Deliberately styled with ::-webkit-scrollbar only. Chromium ignores every
+   ::-webkit-scrollbar rule as soon as `scrollbar-width` or `scrollbar-color` is
+   set, so declaring both silently hands every scrollbar back to the platform —
+   on Windows 11 that is the Fluent scrollbar, complete with arrow buttons.
+
+   That is not merely cosmetic in the terminal. `.xterm-viewport` is absolutely
+   positioned over `.xterm-screen`, and FitAddon reserves a fixed 14px for the
+   scrollbar when it picks a column count. A native Fluent scrollbar is wider
+   than that reserve, so it paints over the last column and the terminal reads
+   as "text cut off on the right". The 10px below stays inside the reserve.
+   Do not reintroduce scrollbar-width/scrollbar-color here. */
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -1290,9 +1297,12 @@ button {
 }
 
 /* Padding-less xterm mount inside the padded .terminal-surface. FitAddon derives
-   the column count from getComputedStyle(mountParent).width, which includes padding
-   under box-sizing: border-box — so the mount parent must have no padding or the
-   terminal lays out too wide and clips on the right. */
+   the column count from getComputedStyle(mountParent).width; keeping the mount
+   parent padding-free means that width is unambiguously the space xterm may use.
+   (Chromium reports the content width there regardless of box-sizing, so padding
+   here would not actually inflate the column count — this split is for clarity,
+   not a fix. The right-edge clipping came from scrollbar width; see the
+   ::-webkit-scrollbar note at the top of this file.) */
 .terminal-host {
   flex: 1;
   min-width: 0;

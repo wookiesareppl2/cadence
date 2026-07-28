@@ -31,7 +31,13 @@ export type TerminalDeckState = {
 }
 
 const TERMINAL_THEME = {
-  background: '#191614',
+  // Must stay equal to --surface-0. FitAddon floors the column count, so the
+  // terminal always leaves an unused gutter on the right (its 14px scrollbar
+  // reserve plus the rounding remainder — measured at 17-20px). Anything painted
+  // there in a different shade meets the text area in a hard vertical seam that
+  // reads as a black scrollbar with the text disappearing under it, which is
+  // exactly what "terminal text is cut off on the right" turned out to be.
+  background: '#1e1b19',
   foreground: '#e7ded7',
   // Keep the cursor visible without using the accent block, which flickers as
   // Codex rewrites animated status lines.
@@ -871,11 +877,8 @@ export function TerminalPane({
       </div>
       {error ? <div className="terminal-error">{error}</div> : null}
       {/* The padded `.terminal-surface` is the visual inset; xterm mounts into a
-          padding-less `.terminal-host` inside it. FitAddon sizes columns from
-          getComputedStyle(mountParent).width, which under box-sizing:border-box
-          reports the PADDING-inclusive width — so padding on the mount parent makes
-          it lay out too many columns and the right edge gets clipped. A padding-less
-          mount parent measures the true content width. */}
+          padding-less `.terminal-host` inside it, so the width FitAddon reads off
+          the mount parent is exactly the space xterm may fill. */}
       <div className="terminal-surface">
         <div ref={hostRef} className="terminal-host" aria-label={title} />
       </div>

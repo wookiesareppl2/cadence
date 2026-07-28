@@ -187,6 +187,21 @@ file from Files." / "Waiting for source edits…") when there's nothing to show.
 terminal deck mirrors this — `Loading project…` while a project is still resolving
 vs. `Select a project to open a terminal` when none is picked.
 
+## Scrollbars
+
+- **Style scrollbars with `::-webkit-scrollbar` only.** The rules live once, app-wide,
+  at the top of `styles.css` (10px, transparent track, `--surface-4` thumb on a 2px
+  transparent border so it reads as inset).
+- **Never add `scrollbar-width` or `scrollbar-color`.** Chromium ignores *every*
+  `::-webkit-scrollbar` rule the moment either standard property is set, so adding
+  them silently reverts the whole app to the platform scrollbar — on Windows 11 the
+  Fluent one, with arrow buttons, which is visibly off-theme.
+- This is load-bearing in the terminal, not just cosmetic. `.xterm-viewport` is
+  absolutely positioned **over** `.xterm-screen`, and FitAddon reserves a fixed
+  **14px** for the scrollbar when choosing a column count. Any scrollbar wider than
+  that reserve paints over the last column and reads as "terminal text cut off on the
+  right". Keep the scrollbar ≤ 14px.
+
 ## Terminals
 
 - **Detached terminal window:** reuse `.detached-terminal-shell` (full window on
@@ -200,6 +215,14 @@ vs. `Select a project to open a terminal` when none is picked.
   `border-color: var(--accent); color: var(--text-1)`) — the deck's Detach / + Add /
   Restart controls share this one class. The close button adds `.terminal-close` and
   uses the standard `✕` glyph.
+- **Terminal background must equal `--surface-0`.** `TERMINAL_THEME.background` and the
+  `.xterm-viewport` / `.xterm-screen` rules must all resolve to the same colour. FitAddon
+  floors the column count, so a terminal always leaves an unused right-hand gutter (its
+  fixed 14px scrollbar reserve plus the rounding remainder — 17–20px in practice). If the
+  gutter is a different shade from the text area, the two meet in a hard vertical seam that
+  looks like a black scrollbar, and text ending flush against it looks truncated. That
+  seam — not any real clipping — was the long-standing "terminal text is cut off on the
+  right" report.
 - **Selection colour:** xterm renders its own canvas, so selection is set in the JS
   `TERMINAL_THEME`, not via a CSS token — this is the one sanctioned place to write a
   concrete colour. Use a **translucent accent** so selected text stays readable:
