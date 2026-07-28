@@ -334,6 +334,16 @@ vs. `Select a project to open a terminal` when none is picked.
   rejects any other value rather than silently saving less than was asked for. The mode is
   passed once, when the manifest is created, and both the apply and validate steps read it
   from there so they cannot disagree.
+- **The save manifest accumulates checkpoints; it never rewrites the first one.** `memoryFiles`
+  is pre-save state and stays untouched, because validate diffs against it to derive the change
+  set. `apply` additionally records `appliedFiles` (what it wrote) and `patch` records
+  `projectedFiles` (what it expects the harness's `apply_patch` to produce). The tamper guard
+  passes if memory matches **any** of them. That is what makes the Step 6 recovery path
+  executable: a corrective re-apply after a failed validate is measured against the post-write
+  state instead of pre-save state, while an outside edit still matches no checkpoint. Accepting
+  any checkpoint — not merely the newest — is required so that regenerating a patch that was
+  never applied keeps working. When adding a write path, record its checkpoint too or its
+  recovery step will be refused.
 - Routing setup, profile maintenance, and runtime startup all install or repair these four
   managed resources. Existing Ready connections therefore gain workflow updates after a
   Cadence app update without reconnecting or reapplying routing.

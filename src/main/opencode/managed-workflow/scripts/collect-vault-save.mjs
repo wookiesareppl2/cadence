@@ -760,21 +760,97 @@ function assertMemoryPath(memory, relativePath) {
   return resolved
 }
 
+// The manifest carries TWO snapshots, and they answer different questions.
+//
+//   memoryFiles / dailyFile   pre-save state. Never rewritten, because validate
+//                             diffs against it to derive the full change set.
+//   appliedFiles / appliedDaily  state as of the last successful apply.
+//
+// This guard uses the applied snapshot when one exists. Step 6 tells the worker
+// to re-apply a corrective plan after a failed validate, but apply's own writes
+// had already moved the files away from the orientation snapshot, so the guard
+// rejected the repair with "Memory changed after orientation" and the save was
+// left half-written with no sanctioned way to fix it. Comparing against the
+// post-apply state instead lets the save correct itself while still catching a
+// genuine outside edit, which would match neither snapshot.
+// Only `exists` and `sha256` decide identity here — `bytes`/`mtimeMs` cannot be
+// predicted for a write the collector does not perform itself.
+function snapshotMismatch(expected, actual) {
+  for (const key of [...new Set([...Object.keys(expected), ...Object.keys(actual)])]) {
+    const left = expected[key] ?? { exists: false }
+    const right = actual[key] ?? { exists: false }
+    if (left.exists !== right.exists || left.sha256 !== right.sha256) return key
+  }
+  return null
+}
+
+// The manifest accumulates every state the collector itself produced or expects:
+//
+//   memoryFiles / dailyFile        pre-save. Never rewritten — validate diffs
+//                                  against it to derive the full change set.
+//   appliedFiles / appliedDaily    what `apply` actually wrote.
+//   projectedFiles / projectedDaily  what `patch` expects apply_patch to produce.
+//
+// The guard passes if memory matches ANY of them. Step 6 tells the worker to
+// re-apply a corrective plan after a failed validate, but the first apply had
+// already moved the files off the orientation snapshot, so the guard rejected
+// the repair with "Memory changed after orientation" and left the save
+// half-written with no sanctioned way to fix it.
+//
+// Accepting any known checkpoint — rather than just the newest — matters for the
+// patch flow, where the manifest records the expected result BEFORE apply_patch
+// runs. Regenerating a patch that was never applied must keep working, so
+// pre-write state has to stay acceptable too. A genuine outside edit still
+// matches no checkpoint at all.
 function assertUnchangedSinceManifest(manifest) {
   const current = memorySnapshot(manifest.memory)
-  const before = manifest.memoryFiles ?? {}
-  const keys = [...new Set([...Object.keys(before), ...Object.keys(current)])]
-  for (const key of keys) {
-    const left = before[key] ?? { exists: false }
-    const right = current[key] ?? { exists: false }
-    if (left.exists !== right.exists || left.sha256 !== right.sha256) {
-      throw new Error(`Memory changed after orientation: ${key}`)
-    }
+  const currentDaily = fileSnapshot(manifest.daily)
+  const checkpoints = [
+    ['the last apply', manifest.appliedFiles, manifest.appliedDaily],
+    ['the generated patch', manifest.projectedFiles, manifest.projectedDaily],
+    ['orientation', manifest.memoryFiles, manifest.dailyFile],
+  ].filter(([, files]) => Boolean(files))
+
+  let firstMismatch = null
+  for (const [stage, files, daily] of checkpoints) {
+    const mismatch = snapshotMismatch(files ?? {}, current)
+    const dailyExpected = daily ?? { exists: false }
+    const dailyChanged = currentDaily.exists !== dailyExpected.exists || currentDaily.sha256 !== dailyExpected.sha256
+    if (!mismatch && !dailyChanged) return
+    if (!firstMismatch) firstMismatch = { stage, mismatch, dailyChanged }
   }
-  const daily = fileSnapshot(manifest.daily)
-  if (daily.exists !== manifest.dailyFile.exists || daily.sha256 !== manifest.dailyFile.sha256) {
-    throw new Error('Daily note changed after orientation')
+  if (!firstMismatch) return
+  throw new Error(firstMismatch.mismatch
+    ? `Memory changed after ${firstMismatch.stage}: ${firstMismatch.mismatch}`
+    : `Daily note changed after ${firstMismatch.stage}`)
+}
+
+// Record where a successful apply left the files, so a corrective re-apply is
+// measured against that rather than against pre-save state.
+function recordAppliedSnapshot(manifest, manifestPath) {
+  manifest.appliedFiles = memorySnapshot(manifest.memory)
+  manifest.appliedDaily = fileSnapshot(manifest.daily)
+  manifest.appliedAt = new Date().toISOString()
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+}
+
+// The patch flow hands the write to the harness's apply_patch, so the collector
+// records what it expects the result to be. Same hunks and same trailing-newline
+// rule as `apply`, so the two agree byte for byte.
+function recordProjectedSnapshot(manifest, manifestPath, memory, fileHunks) {
+  const files = memorySnapshot(memory)
+  let daily = fileSnapshot(manifest.daily)
+  for (const [key, hunks] of fileHunks) {
+    const filePath = key === '@daily' ? manifest.daily : assertMemoryPath(memory, key)
+    const updated = applyCollectorHunks(readText(filePath, true), hunks)
+    const content = updated.endsWith('\n') ? updated : `${updated}\n`
+    const snapshot = { exists: true, bytes: Buffer.byteLength(content, 'utf8'), sha256: sha256(content) }
+    if (key === '@daily') daily = snapshot
+    else files[key] = snapshot
   }
+  manifest.projectedFiles = files
+  manifest.projectedDaily = daily
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
 }
 
 function normalizePlan(plan) {
@@ -1039,6 +1115,7 @@ function emitPatchPacket() {
   }
   patch.push('*** End Patch')
   if (boolArg('cleanup-plan')) fs.rmSync(planPath, { force: true })
+  recordProjectedSnapshot(manifest, manifestPath, memory, fileHunks)
   process.stdout.write([
     '===== START_GENERATED_SAVE_PATCH =====',
     `PLANNED_CHANGED=${changedList(fileHunks)}`,
@@ -1107,6 +1184,9 @@ function emitApplyPacket() {
     fs.writeFileSync(filePath, updated.endsWith('\n') ? updated : `${updated}\n`, 'utf8')
   }
   if (boolArg('cleanup-plan')) fs.rmSync(planPath, { force: true })
+  // Re-baseline before reporting success, so the corrective re-apply that Step 6
+  // prescribes on a failed validate is measured against what this apply wrote.
+  recordAppliedSnapshot(manifest, manifestPath)
   process.stdout.write([
     '===== START_SAVE_APPLY_RESULT =====',
     `APPLIED_CHANGED=${changedList(fileHunks)}`,
