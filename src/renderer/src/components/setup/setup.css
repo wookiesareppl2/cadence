@@ -124,6 +124,43 @@
   line-height: 1.4;
 }
 
+/* Shadowed managed skills. Uses --caution rather than an error colour: nothing is
+   broken or lost, but the profile the user thinks is running is not the one that
+   is, and that never surfaces anywhere else. Matches the caution treatment used
+   by the terminal error strip. */
+.setup-card-warning {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--caution) 45%, var(--border));
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--caution) 8%, transparent);
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.setup-card-warning p {
+  margin: 0;
+}
+
+.setup-card-warning strong {
+  color: var(--caution);
+}
+
+.setup-card-warning ul {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 2px;
+}
+
+.setup-card-warning code {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  word-break: break-all;
+}
+
 .setup-distro-field {
   display: grid;
   gap: 4px;

@@ -46,6 +46,19 @@ export const MANAGED_OPENCODE_WORKFLOW_FILES: readonly ManagedOpenCodeWorkflowFi
   { relativePath: join('scripts', 'route.sh'), content: normalizedContent(routeWrapper) }
 ]
 
+// OpenCode resolves skills from `.opencode/skills`, `~/.agents/skills/` and
+// `~/.claude/skills/`, and a user-level skill of the same name WINS over the
+// managed profile — delivering a file proves delivery, never execution (PIN-125).
+// Derived from the shipped file list rather than hard-coded, so a newly managed
+// skill is covered by shadow detection the day it is added.
+export const MANAGED_OPENCODE_SKILL_NAMES: readonly string[] = [
+  ...new Set(
+    MANAGED_OPENCODE_WORKFLOW_FILES.map((file) => file.relativePath.split(/[\\/]/))
+      .filter((segments) => segments[0] === 'skills' && segments.length > 2)
+      .map((segments) => segments[1])
+  )
+]
+
 async function writeManagedFile(path: string, content: string): Promise<boolean> {
   try {
     if ((await readFile(path, 'utf-8')) === content) return false

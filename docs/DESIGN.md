@@ -351,6 +351,16 @@ vs. `Select a project to open a terminal` when none is picked.
   outside the reader's window and failed validation with an error pointing nowhere near the
   cause. Appends anchor on the last dated line in the section, or on the heading when the log
   is empty, and a missing heading is a hard error rather than a silent end-of-file append.
+- **Shadowed skills get their own caution block, and Cadence never deletes them.** OpenCode
+  resolves skills from `~/.agents/skills/` and `~/.claude/skills/` *before* the managed profile,
+  so a user-level `start`/`save` of the same name silently replaces Cadence's — installing a file
+  proves delivery, never execution. The OpenCode setup card shows `.setup-card-warning` listing
+  the exact overriding paths whenever any are found. Deliberately **not** folded into `detail` or
+  the connected/error state: the connection genuinely works, so failing the card would strand the
+  user, and a grey detail line cannot carry "your skills are installed but not running". The
+  probed names derive from the shipped file list, so a newly managed skill is covered the day it
+  is added. Resolution stays manual — those directories may hold skills the user relies on
+  elsewhere, and deleting another tool's files is not Cadence's call.
 - Routing setup, profile maintenance, and runtime startup all install or repair these four
   managed resources. Existing Ready connections therefore gain workflow updates after a
   Cadence app update without reconnecting or reapplying routing.

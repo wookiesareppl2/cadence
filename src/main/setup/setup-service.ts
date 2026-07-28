@@ -101,12 +101,16 @@ export async function getSetupStatus(): Promise<SetupStatus> {
     version: openCodeRuntime.version,
     compatible: openCodeRuntime.compatible,
     authenticated: openCodeRuntime.connected,
+    // Deliberately NOT gated on shadowSkills. A shadowed profile is still a
+    // working OpenCode connection — blocking it would strand the user with no
+    // way in, when what they need is to be told what is overriding it.
     connected:
       openCodeRuntime.installed &&
       openCodeRuntime.compatible &&
       openCodeRuntime.connected &&
       openCodeRuntime.configured,
     configured: openCodeRuntime.configured,
+    shadowSkills: openCodeRuntime.shadowSkills,
     runtime: 'wsl',
     wslDistro: openCodeRuntime.distro,
     availableWslDistros: openCodeRuntime.availableDistros,

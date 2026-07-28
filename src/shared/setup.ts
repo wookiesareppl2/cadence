@@ -16,6 +16,10 @@ export type PlatformSetup = {
   wslDistro?: string | null
   availableWslDistros?: string[]
   configured?: boolean
+  // User-level skill directories that the provider loads AHEAD of Cadence's
+  // managed profile, so Cadence's skills are installed but never run. Empty
+  // unless something is actually overriding them.
+  shadowSkills?: string[]
   detail?: string | null
 }
 

@@ -339,6 +339,29 @@ function SetupCard({
       </div>
       {setup?.version ? <p className="setup-card-version">{setup.version}</p> : null}
       {setup?.detail ? <p className="setup-card-detail">{setup.detail}</p> : null}
+      {/* A shadowed profile looks completely healthy — the connection works and
+          Cadence's files are on disk — while the provider silently runs someone
+          else's skills instead. Nothing else on this card can convey that, so it
+          gets its own caution block naming the exact paths to move. */}
+      {setup?.shadowSkills?.length ? (
+        <div className="setup-card-warning" role="status">
+          <p>
+            <strong>Cadence&rsquo;s skills are installed but not being used.</strong> OpenCode loads
+            skills from these locations before Cadence&rsquo;s own, so these override it:
+          </p>
+          <ul>
+            {setup.shadowSkills.map((path) => (
+              <li key={path}>
+                <code>{path}</code>
+              </li>
+            ))}
+          </ul>
+          <p>
+            Rename or move them (in {setup.wslDistro ?? 'your WSL distribution'}), then re-check.
+            Cadence will not touch them for you — they may be skills you rely on elsewhere.
+          </p>
+        </div>
+      ) : null}
       {platform === 'opencode' && (setup?.availableWslDistros?.length ?? 0) > 1 ? (
         <label className="setup-distro-field">
           <span>WSL distribution</span>

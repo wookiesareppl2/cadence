@@ -17,7 +17,10 @@ import {
   stopOpenCodeServerViaPty
 } from './opencode-wsl-bridge'
 import { OpenCodeLifecycle } from './opencode-lifecycle'
-import { installManagedOpenCodeMemoryBankWorkflow } from './opencode-memory-bank-workflow'
+import {
+  installManagedOpenCodeMemoryBankWorkflow,
+  MANAGED_OPENCODE_SKILL_NAMES
+} from './opencode-memory-bank-workflow'
 import { managedOpenCodeConfigDir } from './opencode-profile-paths'
 
 const execFileAsync = promisify(execFile)
@@ -48,6 +51,12 @@ export type OpenCodeRuntimeDetection = {
   version: string | null
   connected: boolean
   configured: boolean
+  // User-level skills that OpenCode resolves AHEAD of Cadence's managed profile,
+  // as `~/.agents/skills/save` style paths. Non-empty means the profile Cadence
+  // installs is being overridden by whatever is in those trees — the failure that
+  // cost five release cycles because the managed file on disk was correct every
+  // time and nobody checked what the skill tool actually served (PIN-125/TS-114).
+  shadowSkills: string[]
   detail: string | null
 }
 
@@ -276,6 +285,29 @@ function shellSingleQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`
 }
 
+// OpenCode searches `~/.agents/skills/` and `~/.claude/skills/` ahead of the
+// managed profile, so a leftover skill in either silently replaces Cadence's.
+// Only a skill Cadence itself manages can shadow one, so the probe asks about
+// exactly those names — an unrelated user skill is not a conflict.
+const SHADOW_SKILL_ROOTS = ['.agents/skills', '.claude/skills'] as const
+
+function shadowSkillProbe(): string {
+  const checks = SHADOW_SKILL_ROOTS.flatMap((root) =>
+    MANAGED_OPENCODE_SKILL_NAMES.map((name) => {
+      const relative = `${root}/${name}`
+      return `if test -e "$HOME/${relative}"; then printf 'shadow=%s\\n' ${shellSingleQuote(`~/${relative}`)}; fi`
+    })
+  )
+  return checks.join('; ')
+}
+
+function parseShadowSkills(probe: string): string[] {
+  return probe
+    .split(/\r?\n/)
+    .map((line) => line.match(/^shadow=(.+)$/)?.[1]?.trim())
+    .filter((value): value is string => Boolean(value))
+}
+
 export async function detectOpenCodeRuntime(): Promise<OpenCodeRuntimeDetection> {
   if (process.platform !== 'win32') {
     return {
@@ -288,6 +320,7 @@ export async function detectOpenCodeRuntime(): Promise<OpenCodeRuntimeDetection>
       version: null,
       connected: false,
       configured: false,
+      shadowSkills: [],
       detail: 'The current Cadence OpenCode integration requires WSL on Windows.'
     }
   }
@@ -305,6 +338,7 @@ export async function detectOpenCodeRuntime(): Promise<OpenCodeRuntimeDetection>
       version: null,
       connected: false,
       configured: false,
+      shadowSkills: [],
       detail: 'Install an Ubuntu WSL distribution before setting up OpenCode.'
     }
   }
@@ -316,7 +350,8 @@ export async function detectOpenCodeRuntime(): Promise<OpenCodeRuntimeDetection>
         `printf 'home=%s\\n' "$HOME"`,
         `if test -x $HOME/.opencode/bin/opencode; then printf 'version=%s\\n' "$($HOME/.opencode/bin/opencode --version | head -n 1)"; else printf 'version=\\n'; fi`,
         `if test -f "$HOME/.local/share/opencode/auth.json" && grep -q '"opencode-go"' "$HOME/.local/share/opencode/auth.json"; then printf 'connected=yes\\n'; else printf 'connected=no\\n'; fi`,
-        `if test -f "$HOME/.config/cadence/opencode/oh-my-opencode-slim.json" && grep -q ${shellSingleQuote(OPENCODE_ROUTING_PROFILE)} "$HOME/.config/cadence/opencode/oh-my-opencode-slim.json" && test -f "$HOME/.config/cadence/opencode/cadence-routing-manifest.json" && grep -q ${shellSingleQuote(`"routingRevision": ${OPENCODE_ROUTING_REVISION}`)} "$HOME/.config/cadence/opencode/cadence-routing-manifest.json"; then printf 'configured=yes\\n'; else printf 'configured=no\\n'; fi`
+        `if test -f "$HOME/.config/cadence/opencode/oh-my-opencode-slim.json" && grep -q ${shellSingleQuote(OPENCODE_ROUTING_PROFILE)} "$HOME/.config/cadence/opencode/oh-my-opencode-slim.json" && test -f "$HOME/.config/cadence/opencode/cadence-routing-manifest.json" && grep -q ${shellSingleQuote(`"routingRevision": ${OPENCODE_ROUTING_REVISION}`)} "$HOME/.config/cadence/opencode/cadence-routing-manifest.json"; then printf 'configured=yes\\n'; else printf 'configured=no\\n'; fi`,
+        shadowSkillProbe()
       ].join('; ')
     )
     const fields = new Map(
@@ -328,6 +363,13 @@ export async function detectOpenCodeRuntime(): Promise<OpenCodeRuntimeDetection>
     )
     const version = fields.get('version')?.trim() || null
     const compatible = isOpenCodeVersionCompatible(version)
+    const shadowSkills = parseShadowSkills(probe)
+    // Shadowing outranks the version/install hints in `detail`: those describe
+    // setup that is merely incomplete, while this one means the profile Cadence
+    // installed is not the one being run — and it fails silently by design.
+    const shadowDetail = shadowSkills.length
+      ? `${shadowSkills.join(' and ')} override Cadence's managed skills — OpenCode loads those first`
+      : null
     return {
       kind: 'wsl',
       distro,
@@ -338,11 +380,12 @@ export async function detectOpenCodeRuntime(): Promise<OpenCodeRuntimeDetection>
       version,
       connected: fields.get('connected') === 'yes',
       configured: fields.get('configured') === 'yes',
-      detail: version
+      shadowSkills,
+      detail: shadowDetail ?? (version
         ? compatible
           ? `Running in ${distro}`
           : `Update OpenCode to ${OPENCODE_MINIMUM_VERSION} or newer in ${distro}`
-        : `Install OpenCode in ${distro}`
+        : `Install OpenCode in ${distro}`)
     }
   } catch (error) {
     return {
@@ -355,6 +398,7 @@ export async function detectOpenCodeRuntime(): Promise<OpenCodeRuntimeDetection>
       version: null,
       connected: false,
       configured: false,
+      shadowSkills: [],
       detail: error instanceof Error ? error.message : `Unable to inspect ${distro}`
     }
   }
