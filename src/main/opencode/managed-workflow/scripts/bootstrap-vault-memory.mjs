@@ -176,30 +176,53 @@ export function todayInNz() {
 // Appended to the original name, which already ends in `.md`, giving `<name>.md.txt`.
 export const ARCHIVE_SUFFIX = '.txt'
 
-function copyLegacyBank(workspace, memoryDir, log) {
+// Legacy memory takes two shapes, and both must be carried across or the
+// project's accumulated history is stranded in the repo:
+//
+//   Legacy Bank — `<workspace>/.claude/*.md`
+//   Legacy Root — `<workspace>/HANDOFF.md` (a save that ran before the project
+//                 had any bank at all; the resolver calls this `legacy-root`)
+//
+// Only the bank was handled originally, so bootstrapping a legacy-root project
+// produced an empty memory home and left its real handoff behind, unreferenced.
+function legacySources(workspace) {
   const bank = path.join(workspace, '.claude')
-  if (!fs.existsSync(bank)) return 0
-  const names = fs
-    .readdirSync(bank)
-    .filter((name) => name.toLowerCase().endsWith('.md'))
-  if (!names.length) return 0
+  const sources = []
+  if (fs.existsSync(bank) && fs.statSync(bank).isDirectory()) {
+    for (const name of fs.readdirSync(bank).filter((n) => n.toLowerCase().endsWith('.md'))) {
+      sources.push({ from: path.join(bank, name), as: name, label: `.claude/${name}` })
+    }
+  }
+  const rootHandoff = path.join(workspace, 'HANDOFF.md')
+  if (fs.existsSync(rootHandoff) && fs.statSync(rootHandoff).isFile()) {
+    // Namespaced so it cannot collide with a bank file of the same name.
+    sources.push({ from: rootHandoff, as: 'root-HANDOFF.md', label: 'HANDOFF.md (project root)' })
+  }
+  return sources
+}
+
+function copyLegacyBank(workspace, memoryDir, log) {
+  const sources = legacySources(workspace)
+  if (!sources.length) return 0
   const target = path.join(memoryDir, 'Archive', 'legacy-bank')
   fs.mkdirSync(target, { recursive: true })
-  for (const name of names) {
-    fs.copyFileSync(path.join(bank, name), path.join(target, `${name}${ARCHIVE_SUFFIX}`))
-    log.push(`  archived ${name} as ${name}${ARCHIVE_SUFFIX}`)
+  for (const source of sources) {
+    fs.copyFileSync(source.from, path.join(target, `${source.as}${ARCHIVE_SUFFIX}`))
+    log.push(`  archived ${source.label} as ${source.as}${ARCHIVE_SUFFIX}`)
   }
   fs.writeFileSync(
     path.join(target, 'README.txt'),
-    'Verbatim copy of this project\'s legacy .claude/ memorybank, taken at vault bootstrap.\n\n' +
+    'Verbatim copy of this project\'s legacy memory, taken at vault bootstrap.\n' +
+      'Sources: a legacy .claude/ memorybank and/or a root HANDOFF.md written before\n' +
+      'the project had a vault memory home.\n\n' +
       'Files carry a .md.txt suffix so the save collector does not scan them as live memory:\n' +
       'it treats every *.md under the memory home as a citer for dangling-reference checks, and\n' +
-      'legacy banks routinely cite entries that no longer exist. Content is byte-identical to the\n' +
+      'legacy memory routinely cites entries that no longer exist. Content is byte-identical to the\n' +
       'originals; only the file names differ.\n\n' +
       'Promote entries from here into the live memory files as tasks touch them.\n',
     'utf-8'
   )
-  return names.length
+  return sources.length
 }
 
 function writeMarker(workspace, memoryDir, log) {
