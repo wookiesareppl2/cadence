@@ -301,6 +301,19 @@ function shadowSkillProbe(): string {
   return checks.join('; ')
 }
 
+// Shadowing is APPENDED to the setup hint, never substituted for it: the full
+// overriding paths are already listed in the setup card's warning block, and
+// replacing this line dropped the only actionable next step ("Install OpenCode
+// in Ubuntu") for anyone carrying a stale ~/.claude/skills/save.
+export function composeOpenCodeDetail(setupDetail: string, shadowSkills: string[]): string {
+  if (!shadowSkills.length) return setupDetail
+  const overriding =
+    shadowSkills.length === 1
+      ? 'a user-level skill overrides'
+      : `${shadowSkills.length} user-level skills override`
+  return `${setupDetail} — but ${overriding} Cadence's managed skills`
+}
+
 function parseShadowSkills(probe: string): string[] {
   return probe
     .split(/\r?\n/)
@@ -364,10 +377,6 @@ export async function detectOpenCodeRuntime(): Promise<OpenCodeRuntimeDetection>
     const version = fields.get('version')?.trim() || null
     const compatible = isOpenCodeVersionCompatible(version)
     const shadowSkills = parseShadowSkills(probe)
-    // Appended, never substituted. The shadow paths are already listed in full by
-    // the setup card's warning block, and replacing `detail` dropped the only
-    // actionable next step — someone with a stale ~/.claude/skills/save and no
-    // OpenCode installed lost "Install OpenCode in Ubuntu" entirely.
     const setupDetail = version
       ? compatible
         ? `Running in ${distro}`
@@ -384,9 +393,7 @@ export async function detectOpenCodeRuntime(): Promise<OpenCodeRuntimeDetection>
       connected: fields.get('connected') === 'yes',
       configured: fields.get('configured') === 'yes',
       shadowSkills,
-      detail: shadowSkills.length
-        ? `${setupDetail} — but ${shadowSkills.length} user-level skill${shadowSkills.length > 1 ? 's' : ''} override Cadence's managed skills`
-        : setupDetail
+      detail: composeOpenCodeDetail(setupDetail, shadowSkills)
     }
   } catch (error) {
     return {

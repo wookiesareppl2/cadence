@@ -1348,7 +1348,9 @@ function validatePinReview(memory, branch, fidelity, errors) {
   for (const requiredText of [nzDate(), `branch=${branch}`, 'result=', 'drift=', 'hot_changes=']) {
     if (!latest.includes(requiredText)) errors.push(`Latest Pin Review Log missing ${requiredText}`)
   }
-  const stamped = /\bmode=([a-z]+)/.exec(latest)?.[1] ?? null
+  // Anchored on the field separator, not a bare `\bmode=`: a branch name may
+  // legally contain `mode=`, and `branch=` precedes `mode=` on the line.
+  const stamped = /\|\s*mode=([a-z]+)/.exec(latest)?.[1] ?? null
   if (stamped === null) {
     errors.push('Latest Pin Review Log missing mode=')
   } else if (fidelityRank(stamped) < 0) {
@@ -1386,8 +1388,10 @@ async function validateSave() {
   if (!expectedChanged.size) throw new Error('Validation requires --changed')
   // The manifest is authoritative so apply and validate can never disagree.
   // `--fidelity` remains accepted for older manifests, but a manifest that
-  // carries one wins outright.
-  const fidelity = manifest.fidelity ?? resolveFidelity(args.fidelity)
+  // carries one wins outright. Run BOTH through resolveFidelity: an unranked
+  // value would make every `>=` comparison below vacuously true and silently
+  // disable the check, so a hand-edited manifest must fail loudly instead.
+  const fidelity = resolveFidelity(manifest.fidelity ?? args.fidelity)
   const errors = []
   const beforeFiles = manifest.memoryFiles ?? {}
   const afterFiles = memorySnapshot(memory)

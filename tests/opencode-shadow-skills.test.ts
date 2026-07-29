@@ -3,6 +3,7 @@ import {
   MANAGED_OPENCODE_SKILL_NAMES,
   MANAGED_OPENCODE_WORKFLOW_FILES
 } from '../src/main/opencode/opencode-memory-bank-workflow'
+import { composeOpenCodeDetail } from '../src/main/opencode/opencode-runtime'
 
 // OpenCode resolves skills from `~/.agents/skills/` and `~/.claude/skills/` before
 // Cadence's managed profile, so a leftover skill of the same name silently replaces
@@ -34,6 +35,23 @@ describe('managed OpenCode skill names', () => {
       expect(name).not.toMatch(/[\\/]/)
       expect(name.length).toBeGreaterThan(0)
     }
+  })
+
+  // The shadow note is APPENDED so the actionable hint survives — replacing it
+  // cost a user with no OpenCode installed the "Install OpenCode" instruction.
+  it('keeps the setup hint and appends the shadow note', () => {
+    expect(composeOpenCodeDetail('Install OpenCode in Ubuntu', [])).toBe('Install OpenCode in Ubuntu')
+    expect(composeOpenCodeDetail('Install OpenCode in Ubuntu', ['~/.claude/skills/save'])).toBe(
+      "Install OpenCode in Ubuntu — but a user-level skill overrides Cadence's managed skills"
+    )
+  })
+
+  it('agrees in number for one versus several shadowed skills', () => {
+    const one = composeOpenCodeDetail('Running in Ubuntu', ['~/.claude/skills/save'])
+    const two = composeOpenCodeDetail('Running in Ubuntu', ['~/.claude/skills/save', '~/.agents/skills/start'])
+    expect(one).toContain('a user-level skill overrides')
+    expect(two).toContain('2 user-level skills override')
+    expect(one).not.toContain('skill override ')
   })
 
   it('never treats a non-skill managed file as a skill', () => {
