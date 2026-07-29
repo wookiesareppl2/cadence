@@ -29,4 +29,32 @@ export declare function resolveRoute(options: {
   fileExists: (path: string) => boolean
 }): { route: MemoryRoute; home?: string; reason?: string }
 
+export declare function findBrainRoot(options: {
+  candidates: string[]
+  readFileSafe: (path: string) => string | null
+  isDirectory: (path: string) => boolean
+  fileExists: (path: string) => boolean
+}): string | null
+
+export declare function toWslPath(p: string): string
+
+/**
+ * The vault's top-level areas, read live. There is deliberately no default area
+ * — see the .mjs for why a constant here is always wrong eventually.
+ */
+export declare function listVaultAreas(
+  brainRoot: string | null,
+  options?: {
+    readdir?: (dir: string) => string[]
+    isDirectory?: (path: string) => boolean
+  }
+): string[]
+
+/** `category` is REQUIRED: callers must ask rather than fall back to a default. */
+export declare function proposeMemoryHome(
+  brainRoot: string | null,
+  projectName: string | null,
+  category: string | undefined
+): string | null
+
 export declare function main(cwd?: string): string

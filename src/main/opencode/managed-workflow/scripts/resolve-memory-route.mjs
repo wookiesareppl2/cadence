@@ -18,7 +18,7 @@
 //   WORKSPACE_ROOT=<path>
 //   REASON=<text>                 (only when MEMORY_ROUTE=abort)
 
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 
 export const MARKER_PHRASE = 'Felix memory home'
@@ -234,11 +234,40 @@ export function toWslPath(p) {
   return `/mnt/${match[1].toLowerCase()}/${match[2].split('\\').join('/')}`
 }
 
-export const DEFAULT_VAULT_CATEGORY = '04 - Personal Projects'
+/**
+ * The vault's top-level areas, read live rather than assumed.
+ *
+ * There is deliberately NO default area. A hardcoded one silently files a
+ * project in the wrong place — a project belonging to an existing client area
+ * landed under personal projects because the default said so, and nothing
+ * surfaced the choice. The vault's shape also changes over time: areas get
+ * added, renamed and reorganised, so any constant here is wrong eventually.
+ * Enumerating means the caller offers what actually exists today, and the owner
+ * decides.
+ */
+export function listVaultAreas(brainRoot, { readdir, isDirectory: isDir } = {}) {
+  if (!brainRoot) return []
+  const read = readdir ?? ((dir) => readdirSync(dir))
+  const dir = isDir ?? isDirectory
+  let entries
+  try {
+    entries = read(brainRoot)
+  } catch {
+    return []
+  }
+  return entries
+    .filter((name) => !name.startsWith('.'))
+    .filter((name) => dir(join(brainRoot, name)))
+    .sort((left, right) => left.localeCompare(right))
+}
 
-/** Where an unmigrated project's memory home should be created. */
-export function proposeMemoryHome(brainRoot, projectName, category = DEFAULT_VAULT_CATEGORY) {
-  if (!brainRoot || !projectName) return null
+/**
+ * Compose a memory home once the area has been CHOSEN. `category` is required —
+ * callers must not fall back to a default, because guessing is the failure this
+ * function exists to avoid.
+ */
+export function proposeMemoryHome(brainRoot, projectName, category) {
+  if (!brainRoot || !projectName || !category) return null
   return join(brainRoot, category, projectName, 'memory')
 }
 
@@ -294,24 +323,35 @@ export function main(cwd = process.cwd()) {
   if (result.reason) lines.push(`REASON=${result.reason}`)
 
   // A project without a vault memory home is not an error and never a reason to
-  // write into a legacy bank — it just has not been set up yet. Propose where it
-  // should live so a first save can create it, exactly as a first save on a new
-  // project has always created the memory system.
+  // write into a legacy bank — it just has not been set up yet. Report WHERE IT
+  // COULD GO and let the owner choose. This never proposes a location: the
+  // resolver cannot know which area a project belongs to, and a default silently
+  // files it wrong (a client project landed under personal projects because the
+  // default said so).
   if (result.route === 'legacy-bank' || result.route === 'legacy-root') {
     // Discover the adapter from the environment only. No machine-specific path
     // is hardcoded: this script ships to every install, and a path naming one
-    // developer's account would be dead weight everywhere else. If no adapter is
-    // found the proposal degrades to "unknown", which asks rather than guesses.
+    // developer's account would be dead weight everywhere else.
     const candidates = []
     for (const base of [process.env.HOME, process.env.USERPROFILE]) {
       if (!base) continue
       candidates.push(join(base, '.claude', 'CLAUDE.md'), join(base, '.codex', 'AGENTS.md'))
     }
     const brain = findBrainRoot({ candidates, readFileSafe, isDirectory, fileExists })
-    const proposed = proposeMemoryHome(brain, basename(root))
     lines.push('BOOTSTRAP=required')
-    if (proposed) lines.push(`PROPOSED_MEMORY_HOME=${proposed}`)
-    else lines.push('PROPOSED_MEMORY_HOME=unknown (vault root not found; ask before creating one)')
+    // Distinct key on purpose: MEMORY_HOME is already emitted above for the
+    // legacy route, and two lines with the same key is a contract a parser can
+    // read the wrong way round.
+    lines.push('MEMORY_HOME_DECISION=ask (no vault memory home yet; the owner chooses where it goes)')
+    lines.push(`PROJECT_NAME=${basename(root)}`)
+    if (brain) {
+      const areas = listVaultAreas(brain)
+      lines.push(`VAULT_ROOT=${brain}`)
+      lines.push(`VAULT_AREAS=${areas.join('|') || 'none found'}`)
+      lines.push('MEMORY_HOME_FORM=<VAULT_ROOT>/<chosen area>/<PROJECT_NAME>/memory')
+    } else {
+      lines.push('VAULT_ROOT=unknown (vault root not found; ask before creating one)')
+    }
     if (result.route === 'legacy-bank') {
       lines.push('LEGACY_BANK_PRESENT=true (archive it during bootstrap; never write to it)')
     }

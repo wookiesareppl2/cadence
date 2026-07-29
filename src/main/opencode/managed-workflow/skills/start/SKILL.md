@@ -33,7 +33,8 @@ Use the printed `MEMORY_ROUTE` verbatim. It is the only valid source of the rout
 - `MEMORY_ROUTE=legacy-root` → **Legacy Root Mode** using root `HANDOFF.md`.
 - `BOOTSTRAP=required` → the project has no vault memory home yet. Brief from whatever
   legacy memory exists, and say plainly in Setup Gates that the project is not yet on the
-  vault and that the next `/save` will create its memory home at `<PROPOSED_MEMORY_HOME>`.
+  vault and that the next `/save` will ask where to create its memory home before writing
+  anything. Do not name a location — the resolver deliberately proposes none.
   **Do not create it here** — reading must never write.
 - `MEMORY_ROUTE=abort` → stop immediately and report exactly:
   `START_ABORTED_BAD_ROUTE: <REASON>`. Do not fall back to any legacy mode.

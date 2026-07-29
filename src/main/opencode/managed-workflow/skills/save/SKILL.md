@@ -28,9 +28,12 @@ Use the printed `MEMORY_ROUTE` verbatim. It is the only valid source of the rout
   folder is this project's memory: read from it, write to it, and cite it. Any legacy
   bank still present in the repo is a frozen artifact the resolver has already accounted
   for.
-- `BOOTSTRAP=required` (printed alongside a `PROPOSED_MEMORY_HOME`) → this project has no
-  vault memory home **yet**. Run **Bootstrap** below to create one, then save to it in
-  Vault Mode. This is the normal path for a project's first save.
+- `BOOTSTRAP=required` → this project has no vault memory home **yet**. Run **Bootstrap**
+  below to create one, then save to it in Vault Mode. This is the normal path for a
+  project's first save. The resolver prints `MEMORY_HOME_DECISION=ask`: it never proposes
+  a location, so you must get one from Sheldon before creating anything. Note the
+  `MEMORY_HOME` on the line above is the LEGACY path it is routing away from — never
+  bootstrap into it.
 - `MEMORY_ROUTE=abort` → stop immediately, write nothing, and report exactly:
   `SAVE_ABORTED_BAD_ROUTE: <REASON>`.
 
@@ -46,10 +49,21 @@ A first save on an unmigrated project sets the memory system up, exactly as a fi
 on a new project always has. Run the shipped script; do not create the files by hand — the
 skeleton must satisfy the collector's validator, and hand-built ones do not.
 
+**ASK FIRST — the location is never assumed.** Stop and ask Sheldon which vault area this
+project belongs in, offering the areas the resolver printed in `VAULT_AREAS` and saying
+which project you are asking about. Accept an area he names that is not on the list, or a
+full path of his choosing; the list is what exists today, not a closed set. Only once he
+has answered, compose the memory home as `MEMORY_HOME_FORM` describes and run the script.
+
+Do not guess, do not default to whichever area other projects use, and do not proceed on
+silence. A memory home cannot be relocated afterwards without tripping the guard that
+stops one project's save landing in another project's vault, so a wrong answer here is
+expensive and a question is cheap.
+
 ```bash
 "$NODE" "$CFG/scripts/bootstrap-vault-memory.mjs" \
   --workspace "<WORKSPACE_ROOT>" \
-  --memory "<PROPOSED_MEMORY_HOME>"
+  --memory "<VAULT_ROOT>/<area Sheldon chose>/<PROJECT_NAME>/memory"
 ```
 
 - It creates the memory home, copies any legacy `.claude/` bank **verbatim** into
@@ -57,7 +71,8 @@ skeleton must satisfy the collector's validator, and hand-built ones do not.
 - It refuses if the target already holds memory files. If it refuses, **stop and report** —
   never point it somewhere else to get past the refusal. That guard is what stops one
   project's save landing in another project's vault.
-- If `PROPOSED_MEMORY_HOME=unknown`, stop and ask where the memory home should live.
+- If `VAULT_ROOT=unknown`, the vault itself could not be located — stop and ask; do not
+  invent a path.
 - On `BOOTSTRAP=ok`, continue with the Vault Mode contract using the new `<MEMORY_HOME>`.
   Treat the archived legacy bank as source material: promote entries it justifies as part
   of this save, rather than bulk-converting it.
