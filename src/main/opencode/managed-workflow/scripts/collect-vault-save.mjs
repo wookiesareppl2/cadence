@@ -176,6 +176,40 @@ function dailyPath(memory) {
   return path.join(findVaultRoot(memory), '01 - Daily Notes', `${nzDate()}.md`)
 }
 
+// The collector creates today's note rather than leaving it to the worker.
+// A worker's own file tools are not guaranteed to reach the vault — Codex runs
+// its worker in a sandbox owned by a different account, so its patch could not
+// create a file under the user's OneDrive, and the save failed validation for a
+// note that could never have been written. The collector already writes there
+// with fs, so creation belongs here; the worker still authors the session
+// content through the plan.
+//
+// Deliberately NO `## Session` heading: the worker adds the first one in the
+// same plan, so a first save of the day is not a special case, and an empty
+// placeholder session never reaches the vault. Frontmatter is forced to the
+// values validateDaily requires — the shipped template declares
+// `project: meta` / `type: reference`, which would fail validation verbatim.
+function ensureDailyNote(dailyFile) {
+  if (fs.existsSync(dailyFile)) return false
+  const date = path.basename(dailyFile, '.md')
+  const content = [
+    '---',
+    `date: ${date}`,
+    'status: active',
+    'project: personal',
+    'type: log',
+    '---',
+    '',
+    `# ${date}`,
+    '',
+    '## Index',
+    '',
+  ].join('\n')
+  fs.mkdirSync(path.dirname(dailyFile), { recursive: true })
+  fs.writeFileSync(dailyFile, content, 'utf8')
+  return true
+}
+
 function emitChunk(label, filePath, text, extra = []) {
   const bytes = Buffer.byteLength(text, 'utf8')
   process.stdout.write(`===== START_SAVE_CHUNK ${label} =====\n`)
@@ -191,22 +225,27 @@ function emitChunk(label, filePath, text, extra = []) {
 // old check adopted it as the repo and then every git command against it failed
 // — the save aborted on a project that simply had no repository yet. Ask git
 // itself rather than trusting the presence of a path.
-function isRepo(directory) {
-  const probe = spawnSync('git', ['-C', directory, 'rev-parse', '--git-dir'], {
+// DETECTION MUST USE THE SAME GIT INVOCATION AS `git()`, which sets
+// safe.directory. A repository created by another account — a sandboxed agent
+// running as its own user, for instance — makes bare git commands fail with
+// "detected dubious ownership". Detection without the flag then reported NO
+// REPOSITORY on a perfectly good repo, while every actual git call would have
+// worked, because those go through `git()`.
+function gitProbe(directory, commandArgs) {
+  return spawnSync('git', ['-c', `safe.directory=${directory}`, '-C', directory, ...commandArgs], {
     encoding: 'utf8',
     windowsHide: true,
     timeout: 10000,
   })
-  return probe.status === 0
+}
+
+function isRepo(directory) {
+  return gitProbe(directory, ['rev-parse', '--git-dir']).status === 0
 }
 
 function findRepo(workspace) {
   const root = path.resolve(workspace)
-  const direct = spawnSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], {
-    encoding: 'utf8',
-    windowsHide: true,
-    timeout: 10000,
-  })
+  const direct = gitProbe(root, ['rev-parse', '--show-toplevel'])
   if (direct.status === 0 && direct.stdout.trim()) return path.resolve(direct.stdout.trim())
 
   const queue = [{ directory: root, depth: 0 }]
@@ -496,6 +535,10 @@ async function emitStatePacket() {
     : '[NO COMMITTED DELTA FROM CHECKPOINT]'
   const ids = nextIds(memory)
   const daily = dailyPath(memory)
+  // Must happen BEFORE createManifest: the manifest snapshots the daily note,
+  // and a file appearing after that snapshot is exactly what the tamper guard
+  // refuses.
+  const dailyCreated = ensureDailyNote(daily)
   const server = await devServerState(root)
   const manifest = createManifest(memory, workspace, root, daily, { branch, head, origin, status })
   const maxPaths = 100
@@ -504,7 +547,7 @@ async function emitStatePacket() {
     '===== START_SAVE_STATE_PACKET =====',
     `MEMORY=${memory}`,
     `VAULT_ROOT=${findVaultRoot(memory)}`,
-    `DAILY=${daily}`,
+    `DAILY=${daily}${dailyCreated ? ' [CREATED by the collector — add this session via the plan\'s daily.session]' : ''}`,
     `NZ_NOW=${nzNow()}`,
     `REPO=${root}${repo ? '' : ' [NO GIT REPOSITORY — git facts unavailable; memory is still saved]'}`,
     `BRANCH=${branch || (repo ? '(detached)' : '(no repository)')}`,
@@ -1041,8 +1084,16 @@ function dailyIndexHunk(currentText, indexLine) {
   if (!line.startsWith('- ')) throw new Error('Daily Index line must be a Markdown bullet')
   if (currentText.includes(line)) throw new Error('Daily Index line already exists')
   const firstSession = currentText.match(/^## Session \d+.*$/m)
-  if (!firstSession) throw new Error('Daily note has no Session heading anchor')
-  return ['@@', `-${firstSession[0]}`, `+${line}`, '+', `+${firstSession[0]}`]
+  if (firstSession) return ['@@', `-${firstSession[0]}`, `+${line}`, '+', `+${firstSession[0]}`]
+  // A note the collector just created has an Index but no session yet — the
+  // worker supplies the first one in the same plan. Anchor on the Index heading
+  // so the first save of the day is not a special case the worker must detect.
+  // `[ \t]*`, not `\s*`: in multiline mode `\s` matches the newline too, so the
+  // captured anchor became "## Index\n" — two lines to the line-based applier,
+  // which then could not locate it.
+  const indexHeading = currentText.match(/^## Index[ \t]*$/m)
+  if (!indexHeading) throw new Error('Daily note has no Session or Index heading anchor')
+  return ['@@', `-${indexHeading[0]}`, `+${indexHeading[0]}`, '+', `+${line}`]
 }
 
 // The heading level an entry file uses for its top-level entries (the modal
@@ -1205,8 +1256,14 @@ function buildFileHunks(manifest, plan) {
   if (plan.daily) {
     const current = readText(manifest.daily)
     const hunks = []
-    if (plan.daily.indexLine) hunks.push(dailyIndexHunk(current, plan.daily.indexLine))
+    // Session BEFORE index line. Both hunks are built against the same text, and
+    // on a note the collector just created `## Index` is also the last line — so
+    // both anchor on it. Appending the session first leaves `## Index` in place
+    // for the index hunk to insert under, putting the bullet above the session.
+    // Reverse the order and the index line lands beneath the session body.
+    // On an existing note the anchors differ and the order is immaterial.
     if (plan.daily.session) hunks.push(appendHunk(current, plan.daily.session))
+    if (plan.daily.indexLine) hunks.push(dailyIndexHunk(current, plan.daily.indexLine))
     if (!hunks.length) throw new Error('Daily plan has no indexLine or session')
     fileHunks.set('@daily', hunks)
   }
