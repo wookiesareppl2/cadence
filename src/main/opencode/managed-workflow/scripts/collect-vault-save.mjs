@@ -186,6 +186,20 @@ function emitChunk(label, filePath, text, extra = []) {
   process.stdout.write(`===== END_SAVE_CHUNK ${label} =====\n`)
 }
 
+// A `.git` ENTRY is not a repository. An abandoned or half-created `.git`
+// directory with no HEAD, config, objects or refs satisfies existsSync, so the
+// old check adopted it as the repo and then every git command against it failed
+// — the save aborted on a project that simply had no repository yet. Ask git
+// itself rather than trusting the presence of a path.
+function isRepo(directory) {
+  const probe = spawnSync('git', ['-C', directory, 'rev-parse', '--git-dir'], {
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 10000,
+  })
+  return probe.status === 0
+}
+
 function findRepo(workspace) {
   const root = path.resolve(workspace)
   const direct = spawnSync('git', ['-C', root, 'rev-parse', '--show-toplevel'], {
@@ -198,14 +212,23 @@ function findRepo(workspace) {
   const queue = [{ directory: root, depth: 0 }]
   while (queue.length) {
     const { directory, depth } = queue.shift()
-    if (fs.existsSync(path.join(directory, '.git'))) return directory
+    if (fs.existsSync(path.join(directory, '.git')) && isRepo(directory)) return directory
     if (depth >= 2) continue
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       if (!entry.isDirectory() || entry.name === '.git' || entry.name === 'node_modules') continue
       queue.push({ directory: path.join(directory, entry.name), depth: depth + 1 })
     }
   }
-  throw new Error(`Git repository not found within depth 2 of ${root}`)
+  // No repository is a legitimate state, not an error: a project can be real
+  // work with real memory long before it is put under version control. The save
+  // degrades to the filesystem facts instead of aborting. Callers use
+  // `repoRoot()` for filesystem paths and gate git on the null.
+  return null
+}
+
+/** Filesystem anchor for a project, whether or not it has a repository. */
+function repoRoot(repo, workspace) {
+  return repo ?? path.resolve(workspace)
 }
 
 function run(command, commandArgs, cwd, optional = false) {
@@ -458,20 +481,23 @@ async function emitStatePacket() {
   const memory = memoryHome()
   const workspace = path.resolve(required('workspace'))
   const repo = findRepo(workspace)
+  const root = repoRoot(repo, workspace)
   const handoff = readText(path.join(memory, 'HANDOFF.md'))
-  const branch = git(repo, ['branch', '--show-current'])
-  const head = git(repo, ['rev-parse', 'HEAD'])
-  const origin = branch ? git(repo, ['rev-parse', `origin/${branch}`], true) || 'ABSENT' : 'ABSENT'
-  const status = git(repo, ['status', '--porcelain'])
-  const base = deriveBaseCommit(repo, handoff, head)
-  const paths = changedPaths(repo, base, head, status)
+  // Every git fact degrades to empty when the project has no repository. The
+  // save still records memory; it just cannot cross-check it against history.
+  const branch = repo ? git(repo, ['branch', '--show-current']) : ''
+  const head = repo ? git(repo, ['rev-parse', 'HEAD'], true) : ''
+  const origin = repo && branch ? git(repo, ['rev-parse', `origin/${branch}`], true) || 'ABSENT' : 'ABSENT'
+  const status = repo ? git(repo, ['status', '--porcelain']) : ''
+  const base = repo && head ? deriveBaseCommit(repo, handoff, head) : ''
+  const paths = repo ? changedPaths(repo, base, head, status) : []
   const commits = base && base !== head
     ? git(repo, ['log', '--max-count=20', '--date=short', '--pretty=format:%H%x09%ad%x09%s', `${base}..${head}`], true)
     : '[NO COMMITTED DELTA FROM CHECKPOINT]'
   const ids = nextIds(memory)
   const daily = dailyPath(memory)
-  const server = await devServerState(repo)
-  const manifest = createManifest(memory, workspace, repo, daily, { branch, head, origin, status })
+  const server = await devServerState(root)
+  const manifest = createManifest(memory, workspace, root, daily, { branch, head, origin, status })
   const maxPaths = 100
   const shownPaths = paths.slice(0, maxPaths)
   process.stdout.write([
@@ -480,8 +506,8 @@ async function emitStatePacket() {
     `VAULT_ROOT=${findVaultRoot(memory)}`,
     `DAILY=${daily}`,
     `NZ_NOW=${nzNow()}`,
-    `REPO=${repo}`,
-    `BRANCH=${branch || '(detached)'}`,
+    `REPO=${root}${repo ? '' : ' [NO GIT REPOSITORY — git facts unavailable; memory is still saved]'}`,
+    `BRANCH=${branch || (repo ? '(detached)' : '(no repository)')}`,
     `HEAD=${head}`,
     `ORIGIN_BRANCH=${origin}`,
     `TREE=${status ? 'DIRTY' : 'CLEAN'}`,
@@ -577,12 +603,12 @@ async function emitBundlePacket() {
   const workspace = path.resolve(required('workspace'))
   const repo = findRepo(workspace)
   const handoff = readText(path.join(memory, 'HANDOFF.md'))
-  const head = git(repo, ['rev-parse', 'HEAD'])
-  const status = git(repo, ['status', '--porcelain'])
-  const base = deriveBaseCommit(repo, handoff, head)
-  const paths = changedPaths(repo, base, head, status)
+  const head = repo ? git(repo, ['rev-parse', 'HEAD'], true) : ''
+  const status = repo ? git(repo, ['status', '--porcelain']) : ''
+  const base = repo && head ? deriveBaseCommit(repo, handoff, head) : ''
+  const paths = repo ? changedPaths(repo, base, head, status) : []
   const review = latestPinReview(memory)
-  const terms = deriveBundleTerms(repo, base, head, paths, handoff)
+  const terms = repo ? deriveBundleTerms(repo, base, head, paths, handoff) : []
   const ids = deriveBundleIds(handoff, review)
 
   process.stdout.write('===== START_SAVE_BUNDLE =====\n')
@@ -692,7 +718,18 @@ function safeRepoPath(repo, relativePath) {
 
 function emitSourcePacket() {
   const repo = findRepo(required('workspace'))
-  const head = git(repo, ['rev-parse', 'HEAD'])
+  // Source diffs are a git product. With no repository there is nothing to diff,
+  // which is reported rather than treated as a failure.
+  if (!repo) {
+    process.stdout.write([
+      '===== START_SAVE_SOURCE_PACKET =====',
+      'SOURCE_DIFFS=none (project has no git repository)',
+      '===== END_SAVE_SOURCE_PACKET =====',
+      '',
+    ].join('\n'))
+    return
+  }
+  const head = git(repo, ['rev-parse', 'HEAD'], true)
   const baseInput = args.base && args.base !== 'UNRESOLVED' ? args.base : ''
   const base = baseInput ? git(repo, ['rev-parse', '--verify', `${baseInput}^{commit}`], true) : ''
   const status = git(repo, ['status', '--porcelain'])
@@ -1436,9 +1473,12 @@ async function validateSave() {
     if (!actualChanged.includes(key)) errors.push(`Expected file did not change: ${key}`)
   }
 
+  // The manifest recorded the workspace root when there is no repository, so the
+  // frozen-bank check still anchors correctly either way.
+  const root = repoRoot(repo, manifest.repo ?? workspace)
   const frozenNow = {
-    handoff: fileSnapshot(path.join(repo, '.claude', 'HANDOFF.md')),
-    pins: fileSnapshot(path.join(repo, '.claude', 'context-pins.md')),
+    handoff: fileSnapshot(path.join(root, '.claude', 'HANDOFF.md')),
+    pins: fileSnapshot(path.join(root, '.claude', 'context-pins.md')),
   }
   for (const key of ['handoff', 'pins']) {
     const before = manifest.frozen[key]
@@ -1446,10 +1486,12 @@ async function validateSave() {
     if (before.exists !== after.exists || before.sha256 !== after.sha256) errors.push(`Frozen repo .claude ${key} changed`)
   }
 
-  const branch = git(repo, ['branch', '--show-current'])
-  const head = git(repo, ['rev-parse', 'HEAD'])
-  const origin = branch ? git(repo, ['rev-parse', `origin/${branch}`], true) || 'ABSENT' : 'ABSENT'
-  const status = git(repo, ['status', '--porcelain'])
+  // With no repository these all read empty, matching what orientation recorded,
+  // so the did-the-repo-move-under-us checks pass trivially rather than fail.
+  const branch = repo ? git(repo, ['branch', '--show-current']) : ''
+  const head = repo ? git(repo, ['rev-parse', 'HEAD'], true) : ''
+  const origin = repo && branch ? git(repo, ['rev-parse', `origin/${branch}`], true) || 'ABSENT' : 'ABSENT'
+  const status = repo ? git(repo, ['status', '--porcelain']) : ''
   if (branch !== manifest.git.branch) errors.push(`Repo branch changed: ${manifest.git.branch} -> ${branch}`)
   if (head !== manifest.git.head) errors.push(`Repo HEAD changed: ${manifest.git.head} -> ${head}`)
   if (origin !== manifest.git.origin) errors.push(`Repo origin changed: ${manifest.git.origin} -> ${origin}`)
@@ -1467,7 +1509,7 @@ async function validateSave() {
   const counts = validateIndexCounts(memory, errors)
   const review = validatePinReview(memory, branch, fidelity, errors)
   const daily = validateDaily(manifest.daily, expectedChanged, errors)
-  const server = await devServerState(repo)
+  const server = await devServerState(root)
 
   if (errors.length) {
     process.stdout.write([
