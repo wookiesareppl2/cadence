@@ -760,19 +760,6 @@ function assertMemoryPath(memory, relativePath) {
   return resolved
 }
 
-// The manifest carries TWO snapshots, and they answer different questions.
-//
-//   memoryFiles / dailyFile   pre-save state. Never rewritten, because validate
-//                             diffs against it to derive the full change set.
-//   appliedFiles / appliedDaily  state as of the last successful apply.
-//
-// This guard uses the applied snapshot when one exists. Step 6 tells the worker
-// to re-apply a corrective plan after a failed validate, but apply's own writes
-// had already moved the files away from the orientation snapshot, so the guard
-// rejected the repair with "Memory changed after orientation" and the save was
-// left half-written with no sanctioned way to fix it. Comparing against the
-// post-apply state instead lets the save correct itself while still catching a
-// genuine outside edit, which would match neither snapshot.
 // Only `exists` and `sha256` decide identity here — `bytes`/`mtimeMs` cannot be
 // predicted for a write the collector does not perform itself.
 function snapshotMismatch(expected, actual) {
@@ -811,6 +798,11 @@ function assertUnchangedSinceManifest(manifest) {
     ['orientation', manifest.memoryFiles, manifest.dailyFile],
   ].filter(([, files]) => Boolean(files))
 
+  // Fail CLOSED. A manifest carrying no snapshot at all is malformed or forged,
+  // and an empty checkpoint list would otherwise skip the loop and return clean,
+  // letting `--manifest` point at a hand-written stub to bypass the guard.
+  if (!checkpoints.length) throw new Error('Manifest carries no memory snapshot to verify against')
+
   let firstMismatch = null
   for (const [stage, files, daily] of checkpoints) {
     const mismatch = snapshotMismatch(files ?? {}, current)
@@ -827,11 +819,18 @@ function assertUnchangedSinceManifest(manifest) {
 
 // Record where a successful apply left the files, so a corrective re-apply is
 // measured against that rather than against pre-save state.
-function recordAppliedSnapshot(manifest, manifestPath) {
+// `changed` accumulates across applies. Validate derives the actual change set
+// from the ORIENTATION snapshot, so it is cumulative by construction; if the
+// corrective apply of a Step 6 recovery reported only its own files, validate
+// would reject everything the first apply wrote as "Unexpected changed file".
+// Reporting the union keeps the two sides measuring the same thing.
+function recordAppliedSnapshot(manifest, manifestPath, changed) {
   manifest.appliedFiles = memorySnapshot(manifest.memory)
   manifest.appliedDaily = fileSnapshot(manifest.daily)
   manifest.appliedAt = new Date().toISOString()
+  manifest.appliedChanged = [...new Set([...(manifest.appliedChanged ?? []), ...changed])]
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+  return manifest.appliedChanged
 }
 
 // The patch flow hands the write to the harness's apply_patch, so the collector
@@ -1142,9 +1141,18 @@ function buildFileHunks(manifest, plan) {
   return { memory, fileHunks }
 }
 
+function changedKeys(fileHunks) {
+  return [...fileHunks.keys()]
+}
+
+// `@daily` sorts last so the list reads memory-files-then-daily, as before.
+function orderedChangedList(keys) {
+  const files = keys.filter((key) => key !== '@daily')
+  return [...files, ...(keys.includes('@daily') ? ['@daily'] : [])].join('|')
+}
+
 function changedList(fileHunks) {
-  const keys = [...fileHunks.keys()].filter((key) => key !== '@daily')
-  return [...keys, ...(fileHunks.has('@daily') ? ['@daily'] : [])].join('|')
+  return orderedChangedList(changedKeys(fileHunks))
 }
 
 function emitPatchPacket() {
@@ -1161,8 +1169,11 @@ function emitPatchPacket() {
     for (const hunk of hunks) patch.push(...hunk)
   }
   patch.push('*** End Patch')
-  if (boolArg('cleanup-plan')) fs.rmSync(planPath, { force: true })
+  // Record before deleting the plan: recordProjectedSnapshot re-runs the hunk
+  // applier and can throw, and losing the plan to a failure here would leave the
+  // caller with neither a patch nor the plan that produced it.
   recordProjectedSnapshot(manifest, manifestPath, memory, fileHunks)
+  if (boolArg('cleanup-plan')) fs.rmSync(planPath, { force: true })
   process.stdout.write([
     '===== START_GENERATED_SAVE_PATCH =====',
     `PLANNED_CHANGED=${changedList(fileHunks)}`,
@@ -1233,10 +1244,14 @@ function emitApplyPacket() {
   if (boolArg('cleanup-plan')) fs.rmSync(planPath, { force: true })
   // Re-baseline before reporting success, so the corrective re-apply that Step 6
   // prescribes on a failed validate is measured against what this apply wrote.
-  recordAppliedSnapshot(manifest, manifestPath)
+  // APPLIED_CHANGED is the CUMULATIVE set for this manifest, not just this
+  // apply's files — validate measures against orientation, so a recovery apply
+  // that reported only its own files would have every earlier file rejected as
+  // "Unexpected changed file".
+  const cumulativeChanged = recordAppliedSnapshot(manifest, manifestPath, changedKeys(fileHunks))
   process.stdout.write([
     '===== START_SAVE_APPLY_RESULT =====',
-    `APPLIED_CHANGED=${changedList(fileHunks)}`,
+    `APPLIED_CHANGED=${orderedChangedList(cumulativeChanged)}`,
     'APPLY_STATUS=WRITTEN',
     '===== END_SAVE_APPLY_RESULT =====',
     '',
@@ -1310,14 +1325,36 @@ function validateHandoff(memory, errors) {
   }
 }
 
+// The manifest records the fidelity REQUESTED at orientation, but the skill tells
+// the worker to escalate `incremental` to `max` mid-save (ambiguous duplicate
+// detection, existing drift=warn, a save following a release) and to stamp the
+// resolved mode into the review line. So the stamped mode legitimately differs
+// from the manifest, and demanding a literal match failed every escalated save.
+//
+// Escalation is one-directional, so the rule is "at least as thorough as
+// requested": a max request is never satisfied by an incremental line, but an
+// incremental request accepts either. Requiring equality in both directions is
+// what TS-115 was, inverted.
+function fidelityRank(mode) {
+  return ['incremental', 'max'].indexOf(mode)
+}
+
 function validatePinReview(memory, branch, fidelity, errors) {
   const latest = latestPinReview(memory)
   if (!latest) {
     errors.push('Pin Review Log has no dated entry')
     return ''
   }
-  for (const requiredText of [nzDate(), `branch=${branch}`, `mode=${fidelity}`, 'result=', 'drift=', 'hot_changes=']) {
+  for (const requiredText of [nzDate(), `branch=${branch}`, 'result=', 'drift=', 'hot_changes=']) {
     if (!latest.includes(requiredText)) errors.push(`Latest Pin Review Log missing ${requiredText}`)
+  }
+  const stamped = /\bmode=([a-z]+)/.exec(latest)?.[1] ?? null
+  if (stamped === null) {
+    errors.push('Latest Pin Review Log missing mode=')
+  } else if (fidelityRank(stamped) < 0) {
+    errors.push(`Latest Pin Review Log has unknown mode=${stamped}`)
+  } else if (fidelityRank(stamped) < fidelityRank(fidelity)) {
+    errors.push(`Latest Pin Review Log records mode=${stamped} for a ${fidelity} save`)
   }
   return latest
 }

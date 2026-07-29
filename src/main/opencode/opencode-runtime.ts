@@ -364,12 +364,15 @@ export async function detectOpenCodeRuntime(): Promise<OpenCodeRuntimeDetection>
     const version = fields.get('version')?.trim() || null
     const compatible = isOpenCodeVersionCompatible(version)
     const shadowSkills = parseShadowSkills(probe)
-    // Shadowing outranks the version/install hints in `detail`: those describe
-    // setup that is merely incomplete, while this one means the profile Cadence
-    // installed is not the one being run — and it fails silently by design.
-    const shadowDetail = shadowSkills.length
-      ? `${shadowSkills.join(' and ')} override Cadence's managed skills — OpenCode loads those first`
-      : null
+    // Appended, never substituted. The shadow paths are already listed in full by
+    // the setup card's warning block, and replacing `detail` dropped the only
+    // actionable next step — someone with a stale ~/.claude/skills/save and no
+    // OpenCode installed lost "Install OpenCode in Ubuntu" entirely.
+    const setupDetail = version
+      ? compatible
+        ? `Running in ${distro}`
+        : `Update OpenCode to ${OPENCODE_MINIMUM_VERSION} or newer in ${distro}`
+      : `Install OpenCode in ${distro}`
     return {
       kind: 'wsl',
       distro,
@@ -381,11 +384,9 @@ export async function detectOpenCodeRuntime(): Promise<OpenCodeRuntimeDetection>
       connected: fields.get('connected') === 'yes',
       configured: fields.get('configured') === 'yes',
       shadowSkills,
-      detail: shadowDetail ?? (version
-        ? compatible
-          ? `Running in ${distro}`
-          : `Update OpenCode to ${OPENCODE_MINIMUM_VERSION} or newer in ${distro}`
-        : `Install OpenCode in ${distro}`)
+      detail: shadowSkills.length
+        ? `${setupDetail} — but ${shadowSkills.length} user-level skill${shadowSkills.length > 1 ? 's' : ''} override Cadence's managed skills`
+        : setupDetail
     }
   } catch (error) {
     return {
