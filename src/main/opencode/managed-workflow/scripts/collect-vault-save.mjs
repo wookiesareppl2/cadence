@@ -565,7 +565,7 @@ function emitPlanProtocolPacket() {
     'PLAN_WRITE_JS_END',
     'PATCH_MODE_OUTPUT=inline text between START_GENERATED_SAVE_PATCH and END_GENERATED_SAVE_PATCH; extract from *** Begin Patch through *** End Patch and pass it unchanged to tools.apply_patch',
     'VALIDATE_REQUIRED_ARGS=--manifest|--memory|--workspace|--changed',
-    'CHANGED_VALUES=relative memory paths from plan keys plus @daily when daily is present; pipe-separated',
+    'CHANGED_VALUES=copy PLANNED_CHANGED verbatim; pipe-separated. Do NOT derive it from your plan keys: on a corrective re-patch the plan keys are a subset of what has actually changed since orientation, and validate rejects the difference as Unexpected changed file.',
     'SUCCESS=the same second exec applies the generated patch and returns SAVE_VALIDATION=PASS',
     '===== END_SAVE_PLAN_PROTOCOL =====',
     '',
@@ -824,10 +824,19 @@ function assertUnchangedSinceManifest(manifest) {
 //   - reporting only the current invocation's files broke Step 6 recovery, since
 //     validate measures cumulatively and rejected the first apply's files as
 //     "Unexpected changed file";
-//   - accumulating a union across invocations breaks the other direction, because
-//     a plan that is regenerated but never applied, or a correction that restores
-//     a file to its original content, claims a change that never happened
-//     ("Expected file did not change").
+//   - accumulating a union of plan keys across invocations breaks the other
+//     direction: a correction that restores a file to its original content claims
+//     a change that never happened ("Expected file did not change"). The same
+//     union would have done it for a regenerated-but-unapplied patch had the
+//     patch path ever read it, which it did not.
+//
+// KNOWN TRADE-OFF: on the apply path the collector is both writer and reader, so
+// this check no longer cross-references intent against outcome — a corrective
+// plan that regenerates a file back to its pre-save content passes silently
+// where the old plan-key union reported "Expected file did not change". The two
+// are indistinguishable from disk state (a deliberate restore looks identical to
+// a botched regeneration), so catching it needs the worker to declare intent
+// rather than the collector to infer it.
 //
 // Diffing an end state against orientation is exactly right in every one of those
 // cases, and it is what validate already does.

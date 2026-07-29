@@ -263,6 +263,24 @@ describe('Codex patch path', () => {
     expect(plannedChanged(corrective)).toContain('Troubleshooting.md')
   })
 
+  // The point of PLANNED_CHANGED is that validate AGREES with it once the write
+  // lands — asserting the string alone would not catch the two sides drifting.
+  // `apply` runs the same hunks through the same trailing-newline rule as the
+  // harness's apply_patch, so it stands in for the write here.
+  it('reports a set validate accepts once the write lands', () => {
+    orient('incremental')
+    plan({ replace: { 'HANDOFF.md': '# Handoff\n\nPatched.\n' } })
+    const planned = plannedChanged(patch())
+    expect(planned).not.toBe('')
+
+    plan({ replace: { 'HANDOFF.md': '# Handoff\n\nPatched.\n' } })
+    expect(apply().status).toBe(0)
+
+    const out = validate(planned).out
+    expect(out).not.toContain('Unexpected changed file')
+    expect(out).not.toContain('Expected file did not change')
+  })
+
   it('does not claim files from a patch that was never applied', () => {
     orient('incremental')
     plan({ replace: { 'HANDOFF.md': '# Handoff\n\nAbandoned.\n' } })
