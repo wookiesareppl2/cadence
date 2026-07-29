@@ -621,21 +621,34 @@ function emitPlanProtocolPacket() {
     'COLLECTOR_GUARANTEES=the collector owns mechanical correctness: (1) it stamps the four _Index.md live counts to the true post-apply count (never hand-author them; put _Index.md in replace only for structure/status prose); (2) it normalizes each appended/inserted entry heading to the file canonical level; (3) it guarantees a Pin Review Log line. Take the validator --changed list from PLANNED_CHANGED (it may list _Index.md or Pins-Reference.md even when your plan omitted them).',
     'REFERENTIAL_INTEGRITY=every entry ID you cite in a Source/Refs field (e.g. ADR-109) must be created in this save or already exist; validation fails on any dangling reference.',
     'PLAN_RUNTIME=JSON.stringify and string methods are available; btoa, atob, TextEncoder, Buffer, --plan-base64, and shell redirection are forbidden',
+    // THE COLLECTOR WRITES TO THE MEMORY HOME. The harness must not.
+    //
+    // This flow used to render a patch and hand it to tools.apply_patch. That
+    // routes every vault write through the harness's filesystem helper, which is
+    // sandboxed to the workspace — a memory home under the user's OneDrive is
+    // outside it, and the write failed with
+    // "helper_unknown_error: setup refresh had errors", leaving the save with the
+    // daily note created and nothing else written.
+    //
+    // A shell_command running node has no such limit: the same save that failed
+    // to apply its patch had already created the memory home, archived a 37KB
+    // legacy handoff and written the daily note, all through node. So `apply`
+    // does the writing and the harness only creates the plan file, which lives in
+    // the system temp directory and is therefore inside the sandbox.
     'PLAN_WRITE_JS_BEGIN',
     'const planPath = manifest + ".plan.json";',
     'const json = JSON.stringify(plan, null, 2) + "\\n";',
     'const planPatch = ["*** Begin Patch", `*** Add File: ${planPath.replace(/\\\\/g, "/")}`, ...json.trimEnd().split("\\n").map((line) => `+${line}`), "*** End Patch"].join("\\n");',
     'await tools.apply_patch(planPatch);',
-    'const rendered = await tools.shell_command({ command: `node "${collector}" --mode patch --manifest "${manifest}" --plan "${planPath}" --cleanup-plan true`, workdir: workspace, timeout_ms: 120000 });',
-    'const start = rendered.indexOf("*** Begin Patch");',
-    'const end = rendered.indexOf("*** End Patch", start);',
-    'if (start < 0 || end < 0) throw new Error("Generated patch markers missing");',
-    'await tools.apply_patch(rendered.slice(start, end + "*** End Patch".length));',
+    'const applied = await tools.shell_command({ command: `node "${collector}" --mode apply --manifest "${manifest}" --plan "${planPath}" --cleanup-plan true`, workdir: workspace, timeout_ms: 120000 });',
+    'const changed = /APPLIED_CHANGED=(.*)/.exec(applied)?.[1]?.trim();',
+    'if (!changed) throw new Error("apply did not report APPLIED_CHANGED: " + applied);',
+    'const validation = await tools.shell_command({ command: `node "${collector}" --mode validate --manifest "${manifest}" --memory "${memory}" --workspace "${workspace}" --changed "${changed}"`, workdir: workspace, timeout_ms: 120000 });',
     'PLAN_WRITE_JS_END',
-    'PATCH_MODE_OUTPUT=inline text between START_GENERATED_SAVE_PATCH and END_GENERATED_SAVE_PATCH; extract from *** Begin Patch through *** End Patch and pass it unchanged to tools.apply_patch',
+    'APPLY_MODE_OUTPUT=APPLIED_CHANGED=<pipe-separated> and APPLY_STATUS=WRITTEN between START_SAVE_APPLY_RESULT and END_SAVE_APPLY_RESULT. The collector has already written every file; there is no patch to apply and tools.apply_patch must NOT be used for any memory-home path.',
     'VALIDATE_REQUIRED_ARGS=--manifest|--memory|--workspace|--changed',
-    'CHANGED_VALUES=copy PLANNED_CHANGED verbatim; pipe-separated. Do NOT derive it from your plan keys: on a corrective re-patch the plan keys are a subset of what has actually changed since orientation, and validate rejects the difference as Unexpected changed file.',
-    'SUCCESS=the same second exec applies the generated patch and returns SAVE_VALIDATION=PASS',
+    'CHANGED_VALUES=copy APPLIED_CHANGED verbatim; pipe-separated. Do NOT derive it from your plan keys: on a corrective re-apply the plan keys are a subset of what has actually changed since orientation, and validate rejects the difference as Unexpected changed file.',
+    'SUCCESS=the same second exec runs apply then validate and returns SAVE_VALIDATION=PASS',
     '===== END_SAVE_PLAN_PROTOCOL =====',
     '',
   ].join('\n'))
