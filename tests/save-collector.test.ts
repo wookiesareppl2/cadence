@@ -234,6 +234,66 @@ describe('Step 6 recovery', () => {
   })
 })
 
+// Codex drives the save through `patch` + its own apply_patch rather than
+// `apply`. It had the same Step 6 defect, and the first round of fixes only
+// covered the apply path.
+describe('Codex patch path', () => {
+  function patch(): Run {
+    return collector(['--mode', 'patch', '--manifest', manifest, '--plan', `${manifest}.plan.json`])
+  }
+
+  function plannedChanged(run: Run): string {
+    return /^PLANNED_CHANGED=(.*)$/m.exec(run.out)?.[1] ?? ''
+  }
+
+  it('reports the projected end state, so a corrective re-patch reconciles', () => {
+    orient('incremental')
+    // Establish "a write already landed" with a real write rather than a
+    // hand-simulated one — the collector also auto-adds the Pin Review line, so
+    // reconstructing the post-patch state by hand would not match.
+    plan({ replace: { 'HANDOFF.md': '# Handoff\n\nFirst.\n' } })
+    expect(apply().status).toBe(0)
+
+    plan({ replace: { 'Troubleshooting.md': '# Troubleshooting\n\nCorrected.\n' } })
+    const corrective = patch()
+    expect(corrective.status).toBe(0)
+    // Must still carry what was already written, or validate rejects those as
+    // "Unexpected changed file" — the Step 6 defect, on the Codex path.
+    expect(plannedChanged(corrective)).toContain('HANDOFF.md')
+    expect(plannedChanged(corrective)).toContain('Troubleshooting.md')
+  })
+
+  it('does not claim files from a patch that was never applied', () => {
+    orient('incremental')
+    plan({ replace: { 'HANDOFF.md': '# Handoff\n\nAbandoned.\n' } })
+    patch()
+    // Never applied; regenerate against a different file instead.
+    plan({ replace: { 'Troubleshooting.md': '# Troubleshooting\n\nInstead.\n' } })
+    const regenerated = patch()
+    expect(regenerated.status).toBe(0)
+    expect(plannedChanged(regenerated)).toContain('Troubleshooting.md')
+    expect(plannedChanged(regenerated)).not.toContain('HANDOFF.md')
+  })
+})
+
+describe('changed-set reporting', () => {
+  // A correction that restores a file to its original content genuinely leaves
+  // it unchanged, so claiming it changed produces "Expected file did not change".
+  it('omits a file a correction restored to its original content', () => {
+    orient('incremental')
+    const original = readFileSync(join(memory, 'HANDOFF.md'), 'utf-8')
+    plan({ replace: { 'HANDOFF.md': '# Handoff\n\nTemporary.\n' } })
+    apply()
+    plan({ replace: { 'HANDOFF.md': original } })
+    const reverted = appliedChanged(apply())
+    expect(reverted).not.toContain('HANDOFF.md')
+
+    const out = validate(reverted).out
+    expect(out).not.toContain('Expected file did not change')
+    expect(out).not.toContain('Unexpected changed file')
+  })
+})
+
 describe('Pin Review Log placement', () => {
   // TS-120: the line was appended at end-of-file while its reader parses only the
   // section — correct only while that section happened to be last.

@@ -817,25 +817,51 @@ function assertUnchangedSinceManifest(manifest) {
     : `Daily note changed after ${firstMismatch.stage}`)
 }
 
+// The one definition of "what this save changed", shared by every writer and by
+// validate. Both sides MUST compute it the same way against the ORIENTATION
+// snapshot, or they disagree:
+//
+//   - reporting only the current invocation's files broke Step 6 recovery, since
+//     validate measures cumulatively and rejected the first apply's files as
+//     "Unexpected changed file";
+//   - accumulating a union across invocations breaks the other direction, because
+//     a plan that is regenerated but never applied, or a correction that restores
+//     a file to its original content, claims a change that never happened
+//     ("Expected file did not change").
+//
+// Diffing an end state against orientation is exactly right in every one of those
+// cases, and it is what validate already does.
+function changedAgainstOrientation(manifest, afterFiles, afterDaily) {
+  const before = manifest.memoryFiles ?? {}
+  const keys = [...new Set([...Object.keys(before), ...Object.keys(afterFiles)])].sort()
+  const changed = []
+  for (const key of keys) {
+    const left = before[key] ?? { exists: false }
+    const right = afterFiles[key] ?? { exists: false }
+    if (left.exists !== right.exists || left.sha256 !== right.sha256) changed.push(key)
+  }
+  const beforeDaily = manifest.dailyFile ?? { exists: false }
+  if (beforeDaily.exists !== afterDaily.exists || beforeDaily.sha256 !== afterDaily.sha256) {
+    changed.push('@daily')
+  }
+  return changed
+}
+
 // Record where a successful apply left the files, so a corrective re-apply is
 // measured against that rather than against pre-save state.
-// `changed` accumulates across applies. Validate derives the actual change set
-// from the ORIENTATION snapshot, so it is cumulative by construction; if the
-// corrective apply of a Step 6 recovery reported only its own files, validate
-// would reject everything the first apply wrote as "Unexpected changed file".
-// Reporting the union keeps the two sides measuring the same thing.
-function recordAppliedSnapshot(manifest, manifestPath, changed) {
+function recordAppliedSnapshot(manifest, manifestPath) {
   manifest.appliedFiles = memorySnapshot(manifest.memory)
   manifest.appliedDaily = fileSnapshot(manifest.daily)
   manifest.appliedAt = new Date().toISOString()
-  manifest.appliedChanged = [...new Set([...(manifest.appliedChanged ?? []), ...changed])]
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
-  return manifest.appliedChanged
+  return { files: manifest.appliedFiles, daily: manifest.appliedDaily }
 }
 
 // The patch flow hands the write to the harness's apply_patch, so the collector
 // records what it expects the result to be. Same hunks and same trailing-newline
-// rule as `apply`, so the two agree byte for byte.
+// rule as `apply`, so the two agree byte for byte. Returning the projected end
+// state lets PLANNED_CHANGED be derived from it rather than from this plan's
+// keys — which is what makes a corrective re-patch reconcile.
 function recordProjectedSnapshot(manifest, manifestPath, memory, fileHunks) {
   const files = memorySnapshot(memory)
   let daily = fileSnapshot(manifest.daily)
@@ -850,6 +876,7 @@ function recordProjectedSnapshot(manifest, manifestPath, memory, fileHunks) {
   manifest.projectedFiles = files
   manifest.projectedDaily = daily
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+  return { files, daily }
 }
 
 function normalizePlan(plan) {
@@ -1141,18 +1168,10 @@ function buildFileHunks(manifest, plan) {
   return { memory, fileHunks }
 }
 
-function changedKeys(fileHunks) {
-  return [...fileHunks.keys()]
-}
-
 // `@daily` sorts last so the list reads memory-files-then-daily, as before.
 function orderedChangedList(keys) {
   const files = keys.filter((key) => key !== '@daily')
   return [...files, ...(keys.includes('@daily') ? ['@daily'] : [])].join('|')
-}
-
-function changedList(fileHunks) {
-  return orderedChangedList(changedKeys(fileHunks))
 }
 
 function emitPatchPacket() {
@@ -1172,11 +1191,15 @@ function emitPatchPacket() {
   // Record before deleting the plan: recordProjectedSnapshot re-runs the hunk
   // applier and can throw, and losing the plan to a failure here would leave the
   // caller with neither a patch nor the plan that produced it.
-  recordProjectedSnapshot(manifest, manifestPath, memory, fileHunks)
+  const projected = recordProjectedSnapshot(manifest, manifestPath, memory, fileHunks)
   if (boolArg('cleanup-plan')) fs.rmSync(planPath, { force: true })
+  // PLANNED_CHANGED is the projected end state versus orientation, not this
+  // plan's keys. A corrective re-patch after a failed validate must include what
+  // earlier applied patches already wrote, or validate rejects them as
+  // "Unexpected changed file" — the apply path's Step 6 defect, on this path.
   process.stdout.write([
     '===== START_GENERATED_SAVE_PATCH =====',
-    `PLANNED_CHANGED=${changedList(fileHunks)}`,
+    `PLANNED_CHANGED=${orderedChangedList(changedAgainstOrientation(manifest, projected.files, projected.daily))}`,
     patch.join('\n'),
     '===== END_GENERATED_SAVE_PATCH =====',
     '',
@@ -1244,14 +1267,12 @@ function emitApplyPacket() {
   if (boolArg('cleanup-plan')) fs.rmSync(planPath, { force: true })
   // Re-baseline before reporting success, so the corrective re-apply that Step 6
   // prescribes on a failed validate is measured against what this apply wrote.
-  // APPLIED_CHANGED is the CUMULATIVE set for this manifest, not just this
-  // apply's files — validate measures against orientation, so a recovery apply
-  // that reported only its own files would have every earlier file rejected as
-  // "Unexpected changed file".
-  const cumulativeChanged = recordAppliedSnapshot(manifest, manifestPath, changedKeys(fileHunks))
+  // APPLIED_CHANGED is derived from the post-write state versus orientation —
+  // the same computation validate performs — so the two cannot disagree.
+  const applied = recordAppliedSnapshot(manifest, manifestPath)
   process.stdout.write([
     '===== START_SAVE_APPLY_RESULT =====',
-    `APPLIED_CHANGED=${orderedChangedList(cumulativeChanged)}`,
+    `APPLIED_CHANGED=${orderedChangedList(changedAgainstOrientation(manifest, applied.files, applied.daily))}`,
     'APPLY_STATUS=WRITTEN',
     '===== END_SAVE_APPLY_RESULT =====',
     '',
@@ -1393,17 +1414,12 @@ async function validateSave() {
   // disable the check, so a hand-edited manifest must fail loudly instead.
   const fidelity = resolveFidelity(manifest.fidelity ?? args.fidelity)
   const errors = []
-  const beforeFiles = manifest.memoryFiles ?? {}
-  const afterFiles = memorySnapshot(memory)
-  const allKeys = [...new Set([...Object.keys(beforeFiles), ...Object.keys(afterFiles)])].sort()
-  const actualChanged = []
-  for (const key of allKeys) {
-    const before = beforeFiles[key] ?? { exists: false }
-    const after = afterFiles[key] ?? { exists: false }
-    if (before.exists !== after.exists || before.sha256 !== after.sha256) actualChanged.push(key)
-  }
-  const afterDaily = fileSnapshot(manifest.daily)
-  if (manifest.dailyFile.exists !== afterDaily.exists || manifest.dailyFile.sha256 !== afterDaily.sha256) actualChanged.push('@daily')
+  // Same helper the writers report from, so the two sides cannot drift apart.
+  const actualChanged = changedAgainstOrientation(
+    manifest,
+    memorySnapshot(memory),
+    fileSnapshot(manifest.daily)
+  )
   for (const key of actualChanged) {
     if (!expectedChanged.has(key)) errors.push(`Unexpected changed file: ${key}`)
   }
