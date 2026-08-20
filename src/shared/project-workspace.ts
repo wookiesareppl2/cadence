@@ -1,6 +1,6 @@
 // Per-project notes and tasks. Anchored to a project DIRECTORY (never a session)
 // so they persist across every session in that project — and across AI models:
-// the same folder opened in Claude, Codex, and OpenCode shares one set of notes/tasks.
+// the same folder opened in Claude or Codex shares one set of notes/tasks.
 // Stored in the app's userData dir, never inside a provider's own config directory.
 
 export type ProjectTask = {
@@ -27,9 +27,11 @@ export function emptyProjectWorkspace(): ProjectWorkspace {
 
 // Notes/tasks are shared across AI models for the same directory, so the store is
 // keyed by the platform-independent part of the projectId. A projectId is always
-// `<platform>:<rest>` (e.g. `claude:c:\…` or `opencode:wsl:Ubuntu:/home/…`);
-// dropping the leading provider yields one key for the same folder. Other
-// (already-platform-independent) ids pass through unchanged.
+// `<platform>:<rest>` (e.g. `claude:c:\…`); dropping the leading provider yields
+// one key for the same folder. Other (already-platform-independent) ids pass
+// through unchanged. `opencode:` stays in the strip list even though OpenCode was
+// removed as a provider: entries stored under it must still fold onto the same
+// directory key, or a folder previously opened there would orphan its notes.
 export function projectWorkspaceKey(projectId: string): string {
   return projectId.replace(/^(claude|codex|opencode):/, '')
 }

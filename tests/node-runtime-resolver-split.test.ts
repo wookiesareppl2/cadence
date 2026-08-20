@@ -6,8 +6,7 @@ import { describe, expect, it } from 'vitest'
 //
 //   nodeExecutable()           must stay ABI-compatible with the host platform,
 //                              because the terminal pty host loads node-pty (a
-//                              native module) and the OpenCode WSL bridge runs
-//                              through it too.
+//                              native module) through it.
 //   tlsCapableNodeExecutable() may prefer a Windows node.exe under WSL, because
 //                              the Codex backend edge rejects WSL Node's TLS
 //                              fingerprint — safe only because that worker is
@@ -21,10 +20,7 @@ import { describe, expect, it } from 'vitest'
 const root = join(__dirname, '..')
 const read = (relative: string): string => readFileSync(join(root, relative), 'utf-8')
 
-const ABI_CRITICAL_CONSUMERS = [
-  'src/main/terminal/terminal-service.ts',
-  'src/main/opencode/opencode-wsl-bridge.ts'
-]
+const ABI_CRITICAL_CONSUMERS = ['src/main/terminal/terminal-service.ts']
 const TLS_CONSUMER = 'src/main/usage/codex-plan-usage-service.ts'
 
 describe('Node resolver split', () => {

@@ -21,12 +21,8 @@ import { MemoryView } from '@renderer/components/memory/MemoryView'
 import { SetupGate } from '@renderer/components/setup/SetupGate'
 import { SettingsModal } from '@renderer/components/settings/SettingsModal'
 import { TitlebarMenus, type TitlebarMenuItem } from '@renderer/components/titlebar/TitlebarMenus'
-import { OpenCodeActivityPanel } from '@renderer/components/opencode/OpenCodeActivityPanel'
-import { OpenCodeCompanionWindow } from '@renderer/components/opencode/OpenCodeCompanionWindow'
-import { OpenCodeSlimUpdateBanner } from '@renderer/components/opencode/OpenCodeSlimUpdateBanner'
 import type { ClaudePlanUsage, PlanUsageRefreshMeta, UsageWindow } from '@shared/claude-plan-usage'
 import type { CodexPlanUsage } from '@shared/codex-plan-usage'
-import type { OpenCodePlanLimit, OpenCodePlanUsage } from '@shared/opencode'
 import { isPlatformId, PLATFORM_CONFIG, PLATFORM_IDS, type PlatformId } from '@shared/platform'
 import { APP_NAME } from '@shared/brand'
 import type { AssistantSession, SessionOrigin } from '@shared/sessions'
@@ -83,13 +79,6 @@ const DEFAULT_PANEL_SIZES: PanelSizePreferences = {
     filesPanel: null,
     historySidebar: null,
     workspaceDock: null
-  },
-  opencode: {
-    projectSidebar: null,
-    projectList: null,
-    filesPanel: null,
-    historySidebar: null,
-    workspaceDock: null
   }
 }
 
@@ -133,13 +122,6 @@ function revivePanelSizePreferences(value: PanelSizePreferences): PanelSizePrefe
       filesPanel: normalizePanelSize('filesPanel', value.codex?.filesPanel),
       historySidebar: normalizePanelSize('historySidebar', value.codex?.historySidebar),
       workspaceDock: normalizePanelSize('workspaceDock', value.codex?.workspaceDock)
-    },
-    opencode: {
-      projectSidebar: normalizePanelSize('projectSidebar', value.opencode?.projectSidebar),
-      projectList: normalizePanelSize('projectList', value.opencode?.projectList),
-      filesPanel: normalizePanelSize('filesPanel', value.opencode?.filesPanel),
-      historySidebar: normalizePanelSize('historySidebar', value.opencode?.historySidebar),
-      workspaceDock: normalizePanelSize('workspaceDock', value.opencode?.workspaceDock)
     }
   }
 }
@@ -440,11 +422,7 @@ function useSessionScopedTerminals(
       if (session.projectId) onSelectedProjectIdChange(session.projectId)
       onSelectedSessionIdChange(session.id)
       const command =
-        platform === 'claude'
-          ? `claude --resume ${session.id}`
-          : platform === 'codex'
-            ? `codex resume ${session.id}`
-            : `opencode --session ${session.id}`
+        platform === 'claude' ? `claude --resume ${session.id}` : `codex resume ${session.id}`
       const existing = tabs.find((tab) => tab.sessionKey === session.id)
       if (existing) {
         window.dashboard.terminal.input(existing.id, `${command}\r`)
@@ -588,11 +566,6 @@ type PlanUsageState<T extends PlanUsageDisplay> = {
 type PlanUsageStates = {
   claude: PlanUsageState<ClaudePlanUsage>
   codex: PlanUsageState<CodexPlanUsage>
-  opencode: PlanUsageState<OpenCodePlanUsage>
-}
-
-function isOpenCodeCompanionWindow(): boolean {
-  return new URLSearchParams(window.location.search).get('view') === 'opencode-companion'
 }
 
 function isSetupStatus(value: unknown): value is SetupStatus {
@@ -703,8 +676,6 @@ function useProjectFileWatcher(
 }
 
 export function App(): JSX.Element {
-  if (isOpenCodeCompanionWindow()) return <OpenCodeCompanionWindow />
-
   const detachedTerminalPlatform = getDetachedTerminalPlatform()
   if (detachedTerminalPlatform) return <DetachedTerminalWindow platform={detachedTerminalPlatform} />
 
@@ -796,7 +767,7 @@ function DashboardApp(): JSX.Element {
   const planUsageStates = usePlanUsagePolling(connectedPlatforms)
   const [selectedSessionIds, setSelectedSessionIds] = usePersistentState<Record<PlatformId, string | null>>(
     'selection:sessions:v1',
-    { claude: null, codex: null, opencode: null },
+    { claude: null, codex: null },
     undefined,
     // Don't restore a transient pending-session selection from a previous run —
     // start clean. Passed as the load-only transform so a live pending selection
@@ -804,36 +775,34 @@ function DashboardApp(): JSX.Element {
     // must not scrub itself as the selection round-trips main ↔ detached window).
     (value) => ({
       claude: isPendingSessionId(value.claude) ? null : value.claude,
-      codex: isPendingSessionId(value.codex) ? null : value.codex,
-      opencode: isPendingSessionId(value.opencode) ? null : value.opencode
+      codex: isPendingSessionId(value.codex) ? null : value.codex
     })
   )
   const [selectedProjectIds, setSelectedProjectIds] = usePersistentState<Record<PlatformId, string | null>>(
     'selection:projects:v1',
-    { claude: null, codex: null, opencode: null }
+    { claude: null, codex: null }
   )
   // Session details is now a modal popup (not a persistent panel), so this is a
   // transient per-platform open flag, not persisted across launches.
   const [sessionDetailOpen, setSessionDetailOpen] = useState<Record<PlatformId, boolean>>({
     claude: false,
-    codex: false,
-    opencode: false
+    codex: false
   })
   const [historySidebarOpen, setHistorySidebarOpen] = usePersistentState<Record<PlatformId, boolean>>(
     'selection:history-sidebar:v1',
-    { claude: false, codex: false, opencode: false }
+    { claude: false, codex: false }
   )
   const [projectSidebarOpen, setProjectSidebarOpen] = usePersistentState<Record<PlatformId, boolean>>(
     'selection:project-sidebar:v1',
-    { claude: true, codex: true, opencode: true }
+    { claude: true, codex: true }
   )
   const [workspaceDockOpen, setWorkspaceDockOpen] = usePersistentState<Record<PlatformId, boolean>>(
     'selection:workspace-dock:v1',
-    { claude: false, codex: false, opencode: false }
+    { claude: false, codex: false }
   )
   const [filesPanelOpen, setFilesPanelOpen] = usePersistentState<Record<PlatformId, boolean>>(
     'selection:files-panel:v1',
-    { claude: false, codex: false, opencode: false }
+    { claude: false, codex: false }
   )
   const [panelSizes, setPanelSizes] = usePersistentState<PanelSizePreferences>(
     'selection:panel-sizes:v1',
@@ -842,38 +811,17 @@ function DashboardApp(): JSX.Element {
   )
   const [terminalDetached, setTerminalDetached] = useState<Record<PlatformId, boolean>>({
     claude: false,
-    codex: false,
-    opencode: false
+    codex: false
   })
   const [previewFollowEdits, setPreviewFollowEdits] = usePersistentState<Record<PlatformId, boolean>>(
     'selection:file-preview-follow-edits:v1',
-    { claude: true, codex: true, opencode: true }
+    { claude: true, codex: true }
   )
   const [filePreviewSelections, setFilePreviewSelections] = useState<Record<PlatformId, FilePreviewSelection | null>>({
     claude: null,
-    codex: null,
-    opencode: null
+    codex: null
   })
   const activePlatform = PLATFORM_CONFIG[platform]
-
-  useEffect(
-    () =>
-      window.dashboard.openCode.onCompanionFocus((target) => {
-        setPlatform('opencode')
-        if (target.projectId) {
-          setSelectedProjectIds((current) =>
-            current.opencode === target.projectId ? current : { ...current, opencode: target.projectId }
-          )
-        }
-        setSelectedSessionIds((current) =>
-          current.opencode === target.sessionId ? current : { ...current, opencode: target.sessionId }
-        )
-        setProjectSidebarOpen((current) =>
-          current.opencode ? current : { ...current, opencode: true }
-        )
-      }),
-    [setProjectSidebarOpen, setSelectedProjectIds, setSelectedSessionIds]
-  )
 
   // A file result from global search opens the shared preview modal at the app
   // level (decoupled from the file tree), so search can preview any project file
@@ -1165,7 +1113,6 @@ function DashboardApp(): JSX.Element {
         onSearchActivate={handleSearchActivate}
       />
       <SettingsModal open={settingsOpen} onClose={closeSettings} />
-      <OpenCodeSlimUpdateBanner />
       {memoryOpen ? (
         <MemoryView
           platform={platform}
@@ -1266,19 +1213,18 @@ function DetachedTerminalWindow({ platform }: { platform: PlatformId }): JSX.Ele
   const platformConfig = PLATFORM_CONFIG[platform]
   const [selectedSessionIds, setSelectedSessionIds] = usePersistentState<Record<PlatformId, string | null>>(
     'selection:sessions:v1',
-    { claude: null, codex: null, opencode: null },
+    { claude: null, codex: null },
     undefined,
     // Load-only (see the main window's copy): strip a stale pending selection on
     // first mount, but let a live pending selection sync in from the main window.
     (value) => ({
       claude: isPendingSessionId(value.claude) ? null : value.claude,
-      codex: isPendingSessionId(value.codex) ? null : value.codex,
-      opencode: isPendingSessionId(value.opencode) ? null : value.opencode
+      codex: isPendingSessionId(value.codex) ? null : value.codex
     })
   )
   const [selectedProjectIds, setSelectedProjectIds] = usePersistentState<Record<PlatformId, string | null>>(
     'selection:projects:v1',
-    { claude: null, codex: null, opencode: null }
+    { claude: null, codex: null }
   )
   const selectSession = useCallback(
     (sessionId: string | null) => {
@@ -1731,17 +1677,14 @@ function usePersistentState<T extends object>(
 function usePlanUsagePolling(connectedPlatforms: PlatformId[] | null): PlanUsageStates {
   const [states, setStates] = useState<PlanUsageStates>({
     claude: { planUsage: null, planError: null, refreshing: false },
-    codex: { planUsage: null, planError: null, refreshing: false },
-    opencode: { planUsage: null, planError: null, refreshing: false }
+    codex: { planUsage: null, planError: null, refreshing: false }
   })
 
   const fetchPlan = useCallback((platform: PlatformId) => {
     const loader: (() => Promise<PlanUsageDisplay>) | undefined =
       platform === 'claude'
         ? window.dashboard?.usage?.getClaudePlanUsage
-        : platform === 'codex'
-          ? window.dashboard?.usage?.getCodexPlanUsage
-          : window.dashboard?.usage?.getOpenCodePlanUsage
+        : window.dashboard?.usage?.getCodexPlanUsage
 
     if (!loader) {
       setStates((current) => ({
@@ -2390,24 +2333,6 @@ function ProviderWorkspace({
   const panelResize = usePanelResizeHandlers(panelSizes, onPanelResize)
   const newSession = isPendingSessionId(selectedSessionId)
   const selectedProject = sessionBrowser.selectedProject
-  useEffect(() => {
-    if (platform !== 'opencode' || sessionBrowser.loading) return
-    window.dashboard.openCode
-      .setCompanionTarget({
-        sessionId: newSession ? null : selectedSessionId,
-        projectId: selectedProject?.id ?? null,
-        projectName: selectedProject?.name ?? sessionBrowser.selectedSession?.project ?? null
-      })
-      .catch(() => undefined)
-  }, [
-    newSession,
-    platform,
-    sessionBrowser.loading,
-    selectedProject?.id,
-    selectedProject?.name,
-    selectedSessionId,
-    sessionBrowser.selectedSession?.project
-  ])
   const watchRoot = useMemo<ProjectFileWatchRequest | null>(
     () =>
       selectedProject?.path
@@ -2486,7 +2411,6 @@ function ProviderWorkspace({
           planUsage={planUsage}
           planError={planError}
           loadingLabel={`Fetching ${platformConfig.label} usage`}
-          spend={platform === 'opencode' ? openCodeSpend(planUsage) : null}
         />
 
         <div
@@ -2542,14 +2466,6 @@ function ProviderWorkspace({
                 onDetach={onDetachTerminals}
               />
             )}
-            {platform === 'opencode' ? (
-              <OpenCodeActivityPanel
-                sessionId={newSession ? null : selectedSessionId}
-                projectPath={sessionBrowser.selectedProject?.path ?? null}
-                wslDistro={sessionBrowser.selectedProject?.origin?.distro ?? null}
-                onOpenFile={onOpenTerminalFile}
-              />
-            ) : null}
             <ProjectWorkspaceDock
               projectId={sessionBrowser.selectedProject?.id ?? null}
               projectName={sessionBrowser.selectedProject?.name ?? null}
@@ -2582,15 +2498,11 @@ function ProviderWorkspace({
 function UsageStrip({
   planUsage,
   planError,
-  loadingLabel,
-  spend
+  loadingLabel
 }: {
   planUsage: PlanUsageDisplay | null
   planError: string | null
   loadingLabel: string
-  // Present only for OpenCode, whose figures are metered spend rather than a
-  // quota — see OpenCodeUsageStrip.
-  spend?: OpenCodeSpend | null
 }): JSX.Element {
   const refreshLabel = planUsage ? usageRefreshLabel(planUsage, planError) : null
   const refreshTitle = planUsage ? planError ?? planUsage.refresh?.message ?? undefined : undefined
@@ -2598,8 +2510,6 @@ function UsageStrip({
     planError ??
     (planUsage?.refresh?.state === 'rate_limited' ? refreshLabel : planUsage?.refresh?.message) ??
     loadingLabel
-
-  if (spend) return <OpenCodeUsageStrip spend={spend} planError={planError} />
 
   return (
     <div className="usage-strip">
@@ -2665,65 +2575,6 @@ function formatUsageFetchedAt(value: string): string {
     hour: '2-digit',
     minute: '2-digit'
   }).format(date)
-}
-
-type OpenCodeSpend = {
-  limit: OpenCodePlanLimit | null
-  sevenDayCost: number
-  monthlyCost: number
-}
-
-// Null until the first poll lands, so the strip shows its loading state rather
-// than an authoritative-looking $0.00.
-function openCodeSpend(planUsage: PlanUsageDisplay | null): OpenCodeSpend | null {
-  if (!planUsage || !('monthlyCost' in planUsage)) return null
-  const usage = planUsage as OpenCodePlanUsage
-  return {
-    limit: usage.limit ?? null,
-    sevenDayCost: usage.sevenDayCost,
-    monthlyCost: usage.monthlyCost
-  }
-}
-
-function formatSpend(cost: number): string {
-  return `$${cost.toFixed(2)}`
-}
-
-// OpenCode's plan quota is enforced by the provider and readable nowhere: there is
-// no usage endpoint, and plan-included models report zero cost, so a percentage
-// bar could only ever sit at 0% however hard the plan is worked. Rather than show
-// a gauge that is confidently wrong, this mirrors the context gauge's rule — never
-// render a misleading empty gauge — and shows only what is actually known: the
-// provider's own limit report when it exists, and real metered spend otherwise.
-function OpenCodeUsageStrip({
-  spend,
-  planError
-}: {
-  spend: OpenCodeSpend
-  planError: string | null
-}): JSX.Element {
-  const { limit } = spend
-  const meteredNote = 'Metered spend only — plan models are not billed per use'
-
-  return (
-    <div className="usage-strip">
-      {limit ? (
-        // A reached limit is the one hard fact available, so it takes the leading
-        // slot at full bar: barTier() puts 100% in the critical tier already.
-        <UsageBar
-          label={`${limit.limitName} limit reached`}
-          utilization={100}
-          resetsAt={limit.resetsAt}
-          refreshLabel="Reported by OpenCode"
-          refreshTitle={limit.detail ?? undefined}
-        />
-      ) : (
-        <UsageBarPlaceholder label="Plan limit" message={planError ?? 'No limit reported by OpenCode'} />
-      )}
-      <UsageBarPlaceholder label="Weekly spend" message={`${formatSpend(spend.sevenDayCost)} · ${meteredNote}`} />
-      <UsageBarPlaceholder label="Monthly spend" message={`${formatSpend(spend.monthlyCost)} · ${meteredNote}`} />
-    </div>
-  )
 }
 
 function UsageBarPlaceholder({ label, message }: { label: string; message: string }): JSX.Element {

@@ -1,9 +1,7 @@
-# Managed workflow scripts must stay LF in the working tree.
+# The canonical vault save engine must stay LF in the working tree.
 #
-# These files are shipped to the OpenCode profile LF-normalized, and one of them
-# is imported directly by the test suite. Under core.autocrlf they check out as
-# CRLF, and a CRLF shebang line breaks Vite's module transform — the suite fails
-# to load on any Windows checkout while passing on the author's machine, because
-# freshly written files have not yet round-tripped through git.
-src/main/opencode/managed-workflow/scripts/*.mjs text eol=lf
-src/main/opencode/managed-workflow/scripts/*.sh text eol=lf
+# These files are imported directly by the test suite. Under core.autocrlf they
+# check out as CRLF, and a CRLF shebang line breaks Vite's module transform —
+# the suite fails to load on any Windows checkout while passing on the author's
+# machine, because freshly written files have not yet round-tripped through git.
+src/main/vault-save/*.mjs text eol=lf

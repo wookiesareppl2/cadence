@@ -46,9 +46,9 @@ function windowsNodePath(): string | null {
 
 // The general-purpose worker Node. MUST stay ABI-compatible with the host
 // platform: the terminal pty host loads `node-pty`, a native module built for
-// this platform, and the OpenCode WSL bridge runs here too. Never return a
-// Windows node.exe from a Linux/WSL process — it cannot dlopen a Linux-built
-// native module, and it cannot read /mnt-style worker paths.
+// this platform. Never return a Windows node.exe from a Linux/WSL process — it
+// cannot dlopen a Linux-built native module, and it cannot read /mnt-style
+// worker paths.
 export function nodeExecutable(): string {
   if (cached) return cached
   const bundled = bundledNodePath()

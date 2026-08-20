@@ -62,13 +62,7 @@ import {
 import { searchWorkspace } from './search/search-service'
 import type { SearchQuery } from '@shared/search'
 import { getProjectMemory, readMemoryFile, writeMemoryFile } from './memory/memory-service'
-import {
-  configurePlatform,
-  disconnectPlatform,
-  getSetupCommand,
-  getSetupStatus,
-  selectOpenCodeDistro
-} from './setup/setup-service'
+import { disconnectPlatform, getSetupCommand, getSetupStatus } from './setup/setup-service'
 import type { SetupAction } from '@shared/setup'
 import type {
   GitHubContextStatusRequest,
@@ -89,41 +83,12 @@ import {
   TERMINAL_DETACHED_CLOSED_CHANNEL,
   type TerminalDetachedEvent
 } from '@shared/terminal'
-import { getOpenCodePlanUsage } from './opencode/opencode-usage-service'
-import { getOpenCodeActivity } from './opencode/opencode-session-service'
-import { stopOpenCodeRuntime } from './opencode/opencode-runtime'
-import {
-  readOpenCodeCompanionPreferences,
-  writeOpenCodeCompanionPreferences
-} from './opencode/opencode-companion-state'
 import { normalizeExternalHttpUrl, type ExternalLinkOpenResult } from '@shared/external-links'
-import {
-  OPENCODE_COMPANION_FOCUS_CHANNEL,
-  OPENCODE_COMPANION_STATE_CHANNEL,
-  parseOpenCodeCompanionPreferences,
-  type OpenCodeCompanionPreferences,
-  type OpenCodeCompanionState
-} from '@shared/opencode'
-import {
-  OPENCODE_SLIM_UPDATE_STATUS_CHANNEL,
-  type OpenCodeSlimUpdateStatus
-} from '@shared/opencode-slim-updates'
-import {
-  getOpenCodeSlimUpdateStatus,
-  initOpenCodeSlimUpdateChecks,
-  installOpenCodeSlimMajorUpdate,
-  subscribeOpenCodeSlimUpdates
-} from './opencode/opencode-slim-update-service'
 
 let restoreBounds: Rectangle | null = null
 const UI_ZOOM_FACTOR = 1.1
 let dashboardWindow: BrowserWindow | null = null
 const detachedTerminalWindows: Partial<Record<PlatformId, BrowserWindow>> = {}
-let openCodeCompanionWindow: BrowserWindow | null = null
-let openCodeCompanionPreferences: OpenCodeCompanionPreferences | null = null
-let openCodeCompanionWriteTimer: NodeJS.Timeout | null = null
-let stopOpenCodeSlimUpdateChecks: (() => void) | null = null
-let unsubscribeOpenCodeSlimUpdates: (() => void) | null = null
 const PACKAGED_APP_USER_MODEL_ID = 'dev.cadence.app'
 const DEV_APP_USER_MODEL_ID = 'dev.cadence.app.dev'
 
@@ -210,7 +175,6 @@ function createMainWindow(): BrowserWindow {
 
   mainWindow.on('close', () => {
     closeDetachedTerminalWindows({ force: true })
-    closeOpenCodeCompanionWindow()
   })
 
   mainWindow.on('closed', () => {
@@ -314,194 +278,6 @@ function hardenWindow(window: BrowserWindow): void {
     }
     event.preventDefault()
   })
-}
-
-function companionPreferences(): OpenCodeCompanionPreferences {
-  if (!openCodeCompanionPreferences) {
-    openCodeCompanionPreferences = readOpenCodeCompanionPreferences()
-  }
-  return openCodeCompanionPreferences
-}
-
-function companionState(): OpenCodeCompanionState {
-  const preferences = companionPreferences()
-  return {
-    enabled: preferences.enabled,
-    target: { ...preferences.target }
-  }
-}
-
-function broadcastOpenCodeCompanionState(): void {
-  const state = companionState()
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send(OPENCODE_COMPANION_STATE_CHANNEL, state)
-  }
-}
-
-function clearCompanionPreferenceWrite(): void {
-  if (!openCodeCompanionWriteTimer) return
-  clearTimeout(openCodeCompanionWriteTimer)
-  openCodeCompanionWriteTimer = null
-}
-
-function persistCompanionPreferencesNow(): void {
-  clearCompanionPreferenceWrite()
-  writeOpenCodeCompanionPreferences(companionPreferences())
-}
-
-function persistCompanionPreferencesSoon(): void {
-  clearCompanionPreferenceWrite()
-  openCodeCompanionWriteTimer = setTimeout(() => {
-    openCodeCompanionWriteTimer = null
-    writeOpenCodeCompanionPreferences(companionPreferences())
-  }, 250)
-}
-
-function companionBoundsAreVisible(bounds: Rectangle): boolean {
-  return screen.getAllDisplays().some(({ workArea }) => {
-    const width = Math.min(bounds.x + bounds.width, workArea.x + workArea.width) - Math.max(bounds.x, workArea.x)
-    const height = Math.min(bounds.y + bounds.height, workArea.y + workArea.height) - Math.max(bounds.y, workArea.y)
-    return width >= 80 && height >= 80
-  })
-}
-
-function initialCompanionBounds(): Rectangle {
-  const saved = companionPreferences().bounds
-  if (saved && companionBoundsAreVisible(saved)) return saved
-
-  const owner = dashboardWindow && !dashboardWindow.isDestroyed() ? dashboardWindow : BrowserWindow.getFocusedWindow()
-  const workArea = (owner ? screen.getDisplayMatching(owner.getBounds()) : screen.getPrimaryDisplay()).workArea
-  const width = 360
-  const height = 280
-  return {
-    x: workArea.x + workArea.width - width - 20,
-    y: workArea.y + 52,
-    width,
-    height
-  }
-}
-
-function closeOpenCodeCompanionWindow(): void {
-  const window = openCodeCompanionWindow
-  if (!window || window.isDestroyed()) return
-  window.destroy()
-}
-
-function openOpenCodeCompanionWindow(): BrowserWindow {
-  const existing = openCodeCompanionWindow
-  if (existing && !existing.isDestroyed()) {
-    if (existing.isMinimized()) existing.restore()
-    existing.show()
-    return existing
-  }
-
-  const companionWindow = new BrowserWindow({
-    ...initialCompanionBounds(),
-    minWidth: 300,
-    minHeight: 180,
-    maxWidth: 640,
-    maxHeight: 720,
-    show: false,
-    frame: false,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    resizable: true,
-    maximizable: false,
-    minimizable: false,
-    fullscreenable: false,
-    backgroundColor: '#1e1b19',
-    title: `${APP_NAME} OpenCode Companion`,
-    icon: is.dev ? join(app.getAppPath(), 'build', 'icon.png') : undefined,
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.mjs'),
-      sandbox: false,
-      contextIsolation: true,
-      nodeIntegration: false,
-      disableBlinkFeatures: 'Auxclick'
-    }
-  })
-
-  openCodeCompanionWindow = companionWindow
-  hardenWindow(companionWindow)
-
-  companionWindow.on('ready-to-show', () => companionWindow.show())
-  companionWindow.on('move', () => {
-    if (companionWindow.isDestroyed()) return
-    openCodeCompanionPreferences = {
-      ...companionPreferences(),
-      bounds: companionWindow.getBounds()
-    }
-    persistCompanionPreferencesSoon()
-  })
-  companionWindow.on('resize', () => {
-    if (companionWindow.isDestroyed()) return
-    openCodeCompanionPreferences = {
-      ...companionPreferences(),
-      bounds: companionWindow.getBounds()
-    }
-    persistCompanionPreferencesSoon()
-  })
-  companionWindow.on('close', persistCompanionPreferencesNow)
-  companionWindow.on('closed', () => {
-    if (openCodeCompanionWindow === companionWindow) openCodeCompanionWindow = null
-  })
-  companionWindow.webContents.on('console-message', (details) => {
-    if (!shouldForwardRendererConsole(details)) return
-    console.log(`[companion:${details.level}] ${details.message} (${details.sourceId}:${details.lineNumber})`)
-  })
-
-  loadRenderer(companionWindow, { view: 'opencode-companion' })
-  return companionWindow
-}
-
-function setOpenCodeCompanionEnabled(enabled: boolean): OpenCodeCompanionState {
-  const current = companionPreferences()
-  openCodeCompanionPreferences = { ...current, enabled }
-  persistCompanionPreferencesNow()
-
-  if (enabled) {
-    openOpenCodeCompanionWindow()
-  } else {
-    const closingWindow = openCodeCompanionWindow
-    setTimeout(() => {
-      if (!companionPreferences().enabled && openCodeCompanionWindow === closingWindow) {
-        closeOpenCodeCompanionWindow()
-      }
-    }, 0)
-  }
-
-  broadcastOpenCodeCompanionState()
-  return companionState()
-}
-
-function setOpenCodeCompanionTarget(target: unknown): OpenCodeCompanionState {
-  const current = companionPreferences()
-  const nextTarget = parseOpenCodeCompanionPreferences({ target }).target
-  const sameSelection =
-    current.target.sessionId === nextTarget.sessionId && current.target.projectId === nextTarget.projectId
-  openCodeCompanionPreferences = {
-    ...current,
-    target: {
-      sessionId: nextTarget.sessionId,
-      projectId: nextTarget.projectId,
-      projectName: nextTarget.projectName ?? (sameSelection ? current.target.projectName : null)
-    }
-  }
-  persistCompanionPreferencesNow()
-  broadcastOpenCodeCompanionState()
-  return companionState()
-}
-
-function focusOpenCodeCompanionTarget(): void {
-  const mainWindow = focusExistingWindow()
-  if (!mainWindow || mainWindow.isDestroyed()) return
-  mainWindow.webContents.send(OPENCODE_COMPANION_FOCUS_CHANNEL, companionState().target)
-}
-
-function broadcastOpenCodeSlimUpdateStatus(status: OpenCodeSlimUpdateStatus): void {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send(OPENCODE_SLIM_UPDATE_STATUS_CHANNEL, status)
-  }
 }
 
 function openDetachedTerminalWindow(platform: PlatformId): boolean {
@@ -653,10 +429,6 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   ipcMain.on('window:close', (event) => {
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window) return
-    if (window === openCodeCompanionWindow) {
-      setOpenCodeCompanionEnabled(false)
-      return
-    }
     if (window === dashboardWindow) closeDetachedTerminalWindows({ force: true })
     window.close()
   })
@@ -722,14 +494,8 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     notifyUsageThresholds('codex', usage.fiveHour, usage.sevenDay)
     return usage
   })
-  ipcMain.handle('usage:opencode-plan', async () => {
-    const usage = await getOpenCodePlanUsage()
-    notifyUsageThresholds('opencode', usage.fiveHour, usage.sevenDay)
-    return usage
-  })
   ipcMain.handle('sessions:claude', (event) => scanSessions('claude', event.sender))
   ipcMain.handle('sessions:codex', (event) => scanSessions('codex', event.sender))
-  ipcMain.handle('sessions:opencode', (event) => scanSessions('opencode', event.sender))
   ipcMain.handle('sessions:history', (_event, platform: PlatformId, sessionId: string) => getSessionHistory(platform, sessionId))
   ipcMain.handle('sessions:title-generation-status', () => getSessionTitleGenerationStatus())
   ipcMain.handle('sessions:metadata', () => getSessionMetadata())
@@ -766,21 +532,6 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     getSetupCommand(platform, action)
   )
   ipcMain.handle('setup:disconnect', (_event, platform: PlatformId) => disconnectPlatform(platform))
-  ipcMain.handle('setup:configure', (_event, platform: PlatformId) => configurePlatform(platform))
-  ipcMain.handle('setup:opencode-distro', (_event, distro: string) => selectOpenCodeDistro(distro))
-  ipcMain.handle('opencode:activity', (_event, sessionId: string) => getOpenCodeActivity(sessionId))
-  ipcMain.handle('opencode:companion-state', () => companionState())
-  ipcMain.handle('opencode:companion-enabled', (_event, enabled: boolean) =>
-    setOpenCodeCompanionEnabled(enabled === true)
-  )
-  ipcMain.handle('opencode:companion-target', (_event, target: unknown) =>
-    setOpenCodeCompanionTarget(target)
-  )
-  ipcMain.on('opencode:companion-focus-cadence', focusOpenCodeCompanionTarget)
-  ipcMain.handle('opencode:slim-update-status', (_event, force?: boolean) =>
-    getOpenCodeSlimUpdateStatus(force === true)
-  )
-  ipcMain.handle('opencode:slim-update-install-major', () => installOpenCodeSlimMajorUpdate())
 
   ipcMain.handle('workspaces:list', () => listWorkspaces())
   ipcMain.handle('workspaces:attach', (event) => attachWorkspace(BrowserWindow.fromWebContents(event.sender)))
@@ -837,24 +588,9 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   ipcMain.handle('project-files:delete', (_event, req: FileRequest) => deleteEntry(req))
   ipcMain.handle('project-files:reveal', (_event, req: FileRequest) => revealInExplorer(req))
   ipcMain.handle('project-files:open', (_event, req: FileRequest) => openExternally(req))
-  ipcMain.handle('terminal:start', (
-    event,
-    terminalId: string,
-    platform: string,
-    cwd?: string,
-    wslDistro?: string,
-    managed?: boolean
-  ) =>
+  ipcMain.handle('terminal:start', (event, terminalId: string, platform: string, cwd?: string, wslDistro?: string) =>
     readAppSettings().then((settings) =>
-      startTerminal(
-        terminalId,
-        platform,
-        event.sender,
-        cwd,
-        wslDistro,
-        managed,
-        settings.mergeReviewEnabled
-      )
+      startTerminal(terminalId, platform, event.sender, cwd, wslDistro, settings.mergeReviewEnabled)
     )
   )
   ipcMain.handle('terminal:open-detached', (_event, platform: PlatformId) => {
@@ -884,16 +620,12 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
       return undefined
     })
     .catch((error) => console.error('Could not install the managed merge-review workflow', error))
-  if (companionPreferences().enabled) openOpenCodeCompanionWindow()
-  unsubscribeOpenCodeSlimUpdates = subscribeOpenCodeSlimUpdates(broadcastOpenCodeSlimUpdateStatus)
-  stopOpenCodeSlimUpdateChecks = initOpenCodeSlimUpdateChecks(() => focusExistingWindow())
 
   // Background auto-update — only meaningful in a packaged build.
   if (app.isPackaged) initAutoUpdates()
 
   app.on('activate', () => {
     if (!dashboardWindow || dashboardWindow.isDestroyed()) createMainWindow()
-    if (companionPreferences().enabled) openOpenCodeCompanionWindow()
   })
 })
 
@@ -902,12 +634,6 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
-  stopOpenCodeSlimUpdateChecks?.()
-  stopOpenCodeSlimUpdateChecks = null
-  unsubscribeOpenCodeSlimUpdates?.()
-  unsubscribeOpenCodeSlimUpdates = null
-  persistCompanionPreferencesNow()
   closeAllTerminals()
-  void stopOpenCodeRuntime()
   closeClaudeUsageStore()
 })

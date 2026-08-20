@@ -1,4 +1,4 @@
-export const PLATFORM_IDS = ['claude', 'codex', 'opencode'] as const
+export const PLATFORM_IDS = ['claude', 'codex'] as const
 
 export type PlatformId = (typeof PLATFORM_IDS)[number]
 
@@ -27,14 +27,6 @@ export const PLATFORM_CONFIG: Record<PlatformId, PlatformConfig> = {
     accent: '#81B29A',
     accentDim: '#81B29A22',
     accentHover: '#6d9e86'
-  },
-  opencode: {
-    id: 'opencode',
-    label: 'OpenCode',
-    shortLabel: 'OpenCode',
-    accent: '#6FA8DC',
-    accentDim: '#6FA8DC22',
-    accentHover: '#5d94c4'
   }
 }
 

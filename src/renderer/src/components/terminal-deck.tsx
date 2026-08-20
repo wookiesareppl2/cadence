@@ -95,12 +95,6 @@ const QUICK_LAUNCH: Record<TerminalPlatform, { label: string; command: string; s
     skipLabel: 'Codex (yolo)',
     skipCommand: 'codex --dangerously-bypass-approvals-and-sandbox'
   },
-  opencode: {
-    label: 'Launch OpenCode',
-    command: 'opencode',
-    skipLabel: 'OpenCode (auto)',
-    skipCommand: 'opencode --auto'
-  }
 }
 
 // The prompt-newline shortcut differs per CLI: Codex uses Shift+Enter, Claude uses
@@ -564,7 +558,6 @@ export function TerminalPane({
   onClose,
   onOpenFile,
   initialInput,
-  managed = true,
   headerMeta,
   statusLabel,
   closeOnUnmount = false,
@@ -581,10 +574,8 @@ export function TerminalPane({
   // install / sign-in command this way). Sent only on a fresh start, never on a
   // reconnect that replays existing scrollback.
   initialInput?: string
-  // Setup terminals must run the real CLI instead of attaching to Cadence's server.
-  managed?: boolean
   // Agent panes use the same terminal surface but replace shell metadata/status
-  // with the child agent's task, model, and live OpenCode status.
+  // with the child agent's task, model, and live status.
   headerMeta?: string
   statusLabel?: string
   // Normal deck terminals survive renderer remounts. Ephemeral viewers such as
@@ -811,7 +802,7 @@ export function TerminalPane({
     observer.observe(hostRef.current)
     window.requestAnimationFrame(fitTerminal)
     window.dashboard.terminal
-      .start(terminalId, platform, cwd ?? undefined, wslDistro ?? undefined, managed)
+      .start(terminalId, platform, cwd ?? undefined, wslDistro ?? undefined)
       .then((result) => {
         if (disposed) {
           if (closeOnUnmount) window.dashboard.terminal.close(terminalId)
@@ -847,7 +838,7 @@ export function TerminalPane({
       terminalRef.current = null
       fitAddonRef.current = null
     }
-  }, [terminalId, platform, cwd, wslDistro, managed, closeOnUnmount, fitTerminal, scheduleResizeFit, pasteClipboardText, copySelection])
+  }, [terminalId, platform, cwd, wslDistro, closeOnUnmount, fitTerminal, scheduleResizeFit, pasteClipboardText, copySelection])
 
   const shellLabel = session ? `${session.shell} pid ${session.pid}` : 'starting'
   const effectiveStatus = error ? 'error' : statusLabel ?? (session ? 'ready' : 'starting')

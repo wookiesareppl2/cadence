@@ -537,8 +537,7 @@ const prewarmInFlight = new Set<PlatformId>()
 
 function getSessionsLoader(platform: PlatformId): (() => Promise<AssistantSession[]>) | undefined {
   if (platform === 'claude') return window.dashboard?.sessions?.getClaudeSessions
-  if (platform === 'codex') return window.dashboard?.sessions?.getCodexSessions
-  return window.dashboard?.sessions?.getOpenCodeSessions
+  return window.dashboard?.sessions?.getCodexSessions
 }
 
 // Fetch the inactive platform's sessions once in the background to prime its cache,

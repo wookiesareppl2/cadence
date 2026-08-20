@@ -3,7 +3,7 @@ import { normalizeExternalHttpUrl } from '../src/shared/external-links'
 
 describe('normalizeExternalHttpUrl', () => {
   it('accepts and normalizes HTTP and HTTPS URLs', () => {
-    expect(normalizeExternalHttpUrl('https://opencode.ai/go')).toBe('https://opencode.ai/go')
+    expect(normalizeExternalHttpUrl('https://claude.ai/code')).toBe('https://claude.ai/code')
     expect(normalizeExternalHttpUrl('http://localhost:5173/path')).toBe('http://localhost:5173/path')
   })
 

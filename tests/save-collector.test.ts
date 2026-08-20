@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 const COLLECTOR = join(
   __dirname,
   '..',
-  'src/main/opencode/managed-workflow/scripts/collect-vault-save.mjs'
+  'src/main/vault-save/collect-vault-save.mjs'
 )
 
 const today = new Intl.DateTimeFormat('en-CA', {

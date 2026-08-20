@@ -267,77 +267,24 @@ vs. `Select a project to open a terminal` when none is picked.
   Do not use xterm's `paste('\n')` helper for either (it normalizes LF to CR and
   submits).
 
-### OpenCode agent panes
+### Vault save engine
 
-- The OpenCode Agent Activity panel has `Activity` and `Live panes` views using the
-  standard segmented-toggle treatment. Activity remains the compact scanning view;
-  Live panes attaches real terminal viewers to OpenCode child sessions.
-- Live panes support `Tiled`, `Rows`, and `Columns` layouts. Tiles have stable minimum
-  dimensions and scroll inside the activity panel so adding an agent never resizes
-  neighbouring terminal controls.
-- Opening a row action shows that agent alone; `Show all` restores every child session.
-  New agents appear automatically while Live panes is selected.
-- Closing or collapsing an agent pane closes only its viewer PTY. It must never cancel,
-  delete, or otherwise change the underlying OpenCode child session.
-- Agent tiles reuse `TerminalPane`, `.terminal-tile`, and `.terminal-action`; do not
-  introduce a second xterm theme or terminal-header pattern for child agents.
+The `start` / `save` skills that Claude Code and Codex run share one canonical engine in
+`src/main/vault-save/`. The rules below are properties of that engine, not of any one
+provider, and each exists because its absence shipped a real defect.
 
-### OpenCode Companion
-
-- Companion is an optional Cadence-owned, always-on-top Electron window. Its On/Off
-  control is a labelled binary switch at the right edge of the Agent Activity toolbar;
-  use `role="switch"` with `aria-checked`, a 28x16px track, and a 10px circular thumb.
-- The window is a compact operational surface, not a decorative card: one draggable
-  title band, one project context band, a scrollable agent list, and a footer command.
-  It uses the OpenCode accent and the standard surface, border, text, and status tokens.
-- Each agent row shows status, agent, task title, model, and state. Busy and retry rows
-  sort ahead of idle rows, while all text remains single-line with ellipsis so resizing
-  the window never causes horizontal layout shifts.
-- The close action turns Companion off. Normal Cadence shutdown preserves the enabled
-  state, last OpenCode target, size, and screen position so the window can return on the
-  next launch. Clicking an agent row or `Open in Cadence` focuses that exact project and
-  session in the main window.
-- Companion does not start, stop, or mutate agents. It reads the same activity snapshot
-  as the in-app panel and only controls its own visibility and Cadence focus.
-
-### OpenCode Slim updates
-
-- Major Slim releases surface as a full-width operational band directly below the
-  titlebar. It is not a modal and does not block Claude or Codex work. Use the OpenCode
-  accent for an available/installing update, `--success` after validation, and
-  `--caution` only when validation failed or a Cadence update is required.
-- The band contains one compact title, one single-line detail, and right-aligned actions.
-  `Validate & install` is the only primary command; dismissal uses the standard 15px
-  stroked close icon. During validation the action is replaced by quiet mono progress.
-- Compatible patch/minor releases update in the background and do not create a band.
-  A major is promoted only after the isolated OpenCode configuration registers every
-  Cadence-required agent. A failed candidate is rolled back before the band reports the
-  failure; never ask the user to run the compatibility checks manually.
-- `Cadence update required` means the current Slim version remains active. Persist this
-  result per Cadence app version so the same incompatible major is not offered repeatedly,
-  while a newer Cadence build automatically gets a fresh validation opportunity.
-
-### OpenCode session workflow
-
-- Cadence's isolated OpenCode profile owns one canonical `start` / `save` skill pair and
-  matching `/start` / `/save` commands. Keep them in the managed profile instead of copying
-  them into each project, so Claude Code, Codex, and OpenCode continue to share the same
-  project `.claude/` Memory Bank without duplicate command entries.
-- Each skill uses exactly one synchronous `deep-fixer` task with
-  `run_in_background=false`. The parent supplies only command fidelity and known session
-  facts, then relays the result; every project read, git/port check, pin review, and Memory
-  Bank write stays inside that worker. Fail closed when the worker cannot start.
 - `/start` defaults to targeted high-fidelity loading and accepts `max`. `/save` defaults
   to an incremental checkpoint and accepts exactly one other fidelity, `max`, with automatic
   escalation when targeted reads cannot prove safety. There are only these two save
   fidelities — the former `full`/`audit` synonyms were removed, and the collector now
   rejects any other value rather than silently saving less than was asked for. The mode is
   passed once, when the manifest is created, and both the apply and validate steps read it
-  from there so they cannot disagree.
+  from there so they cannot disagree. Validate accepts a stamped mode at least as thorough
+  as the one requested, because the skill may escalate mid-run; escalation is one-directional.
 - **The save manifest accumulates checkpoints; it never rewrites the first one.** `memoryFiles`
   is pre-save state and stays untouched, because validate diffs against it to derive the change
   set. `apply` additionally records `appliedFiles` (what it wrote) and `patch` records
-  `projectedFiles` (what it expects the harness's `apply_patch` to produce). The tamper guard
+  `projectedFiles` (what it expects a harness patch helper to produce). The tamper guard
   passes if memory matches **any** of them. That is what makes the Step 6 recovery path
   executable: a corrective re-apply after a failed validate is measured against the post-write
   state instead of pre-save state, while an outside edit still matches no checkpoint. Accepting
@@ -351,45 +298,11 @@ vs. `Select a project to open a terminal` when none is picked.
   outside the reader's window and failed validation with an error pointing nowhere near the
   cause. Appends anchor on the last dated line in the section, or on the heading when the log
   is empty, and a missing heading is a hard error rather than a silent end-of-file append.
-- **Shadowed skills get their own caution block, and Cadence never deletes them.** OpenCode
-  resolves skills from `~/.agents/skills/` and `~/.claude/skills/` *before* the managed profile,
-  so a user-level `start`/`save` of the same name silently replaces Cadence's — installing a file
-  proves delivery, never execution. The OpenCode setup card shows `.setup-card-warning` listing
-  the exact overriding paths whenever any are found. Deliberately **not** folded into `detail` or
-  the connected/error state: the connection genuinely works, so failing the card would strand the
-  user, and a grey detail line cannot carry "your skills are installed but not running". The
-  probed names derive from the shipped file list, so a newly managed skill is covered the day it
-  is added. Resolution stays manual — those directories may hold skills the user relies on
-  elsewhere, and deleting another tool's files is not Cadence's call.
-- Routing setup, profile maintenance, and runtime startup all install or repair these four
-  managed resources. Existing Ready connections therefore gain workflow updates after a
-  Cadence app update without reconnecting or reapplying routing.
-
-### OpenCode usage strip
-
-OpenCode is the one platform whose usage strip shows **no percentage bars**, because
-no honest percentage exists. Its plan quota is enforced by the provider and exposed
-nowhere — no usage/quota/balance endpoint, and no rate-limit headers on successful
-responses — while plan-included models bill nothing, so a cost-derived gauge sits at
-0% no matter how heavily the plan is used. This follows the context gauge's rule:
-never render a gauge that is confidently wrong.
-
-It reuses `UsageBar` / `UsageBarPlaceholder` unchanged — no new card, no new CSS:
-
-- **Leading slot — the provider's own report.** The only hard fact available arrives
-  as a `429` when a prompt is refused: `retry-after` gives an exact reset and the body
-  names the limit (`"limitName": "5 hour"`). Rendered as a full `UsageBar` at 100%, so
-  `barTier()` already places it in the `critical` tier and the standard countdown runs
-  off `resetsAt`. Footer reads `Reported by OpenCode`; the provider's message is the
-  `title`. With nothing reported, a placeholder reads `No limit reported by OpenCode`.
-- **Weekly / Monthly spend.** Placeholders carrying the real metered figure
-  (`$0.96 · Metered spend only — plan models are not billed per use`). Deliberately
-  not bars: the dollar total is real, but the limit it would be drawn against is not.
-
-The limit is observed by subscribing to the OpenCode server's event stream and
-watching `session.error` for an `APIError` with `statusCode 429`. Prompts are sent by
-the `opencode` TUI in the terminal rather than by Cadence's own client, so watching
-our own API calls would never see one; the event stream is instance-wide and does.
+- **Derive, never restate.** One fact, one source. Every shipped defect in this path came from
+  restating a single value for two consumers — a fidelity held in two places, a changed-file set
+  computed twice, a hand-written `.d.mts` declaring a module's exports a second time. The scripts
+  are LF-pinned in `.gitattributes` because the test suite imports them directly and a CRLF
+  shebang breaks Vite's module transform on a fresh Windows checkout.
 
 ## Context-usage gauge
 

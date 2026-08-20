@@ -7,7 +7,6 @@ import { nodeExecutable } from '../node-runtime'
 import type { PlatformId } from '@shared/platform'
 import type { TerminalPlatform, TerminalStartResult } from '@shared/terminal'
 import { PLATFORM_IDS } from '@shared/platform'
-import { getOpenCodeTerminalRuntime, windowsPathToWsl } from '../opencode/opencode-runtime'
 
 type WorkerRequest = {
   requestId?: number
@@ -16,9 +15,6 @@ type WorkerRequest = {
   platform?: TerminalPlatform
   cwd?: string
   wslDistro?: string
-  // `endpointFile` names this instance's endpoint file; the wrapper resolves the
-  // live URL + password from it at launch time (see bashGuard in terminal-worker.cjs).
-  openCodeRuntime?: { baseUrl: string; password: string; endpointFile: string }
   mergeReviewEnabled?: boolean
   data?: string
   cols?: number
@@ -177,32 +173,20 @@ export async function startTerminal(
   webContents: WebContents,
   cwd?: string,
   wslDistro?: string,
-  managed = true,
   mergeReviewEnabled = false
 ): Promise<TerminalStartResult> {
   assertTerminalId(terminalId)
   assertPlatform(platform)
   subscribe(webContents)
 
-  let distro = typeof wslDistro === 'string' && wslDistro.trim() ? wslDistro.trim() : undefined
-  let openCodeRuntime: WorkerRequest['openCodeRuntime']
-
-  if (platform === 'opencode' && managed) {
-    const runtime = await getOpenCodeTerminalRuntime()
-    distro = runtime.distro
-    openCodeRuntime = {
-      baseUrl: runtime.baseUrl,
-      password: runtime.password,
-      endpointFile: runtime.endpointFile
-    }
-  }
+  const distro = typeof wslDistro === 'string' && wslDistro.trim() ? wslDistro.trim() : undefined
 
   let workspaceCwd: string | undefined
   if (typeof cwd === 'string' && cwd.trim()) {
     // A WSL cwd is a POSIX path that won't exist on the Windows side; let
     // `wsl --cd` validate it. Only existence-check native Windows folders.
     if (!distro && !existsSync(cwd)) throw new Error(`Workspace folder not found: ${cwd}`)
-    workspaceCwd = platform === 'opencode' && managed ? windowsPathToWsl(cwd) : cwd
+    workspaceCwd = cwd
   }
 
   return sendWorkerRequest({
@@ -211,7 +195,6 @@ export async function startTerminal(
     platform,
     cwd: workspaceCwd,
     wslDistro: distro,
-    openCodeRuntime,
     mergeReviewEnabled
   })
 }

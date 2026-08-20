@@ -62,11 +62,10 @@ function terminalCwd() {
 // from being launched there by mistake, every shell starts with a guard that
 // shadows the foreign command name and refuses to run it.
 const FOREIGN_CLIS = {
-  claude: ['codex', 'opencode'],
-  codex: ['claude', 'opencode'],
-  opencode: ['claude', 'codex']
+  claude: ['codex'],
+  codex: ['claude']
 }
-const CLI_LABEL = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' }
+const CLI_LABEL = { claude: 'Claude', codex: 'Codex' }
 
 function guardTarget(platform) {
   const blocked = FOREIGN_CLIS[platform]
@@ -105,7 +104,7 @@ function shellSingleQuote(value) {
   return `'${String(value).replace(/'/g, `'"'"'`)}'`
 }
 
-function bashGuard(platform, openCodeRuntime, mergeReviewEnabled) {
+function bashGuard(platform, mergeReviewEnabled) {
   const commands = []
   for (const target of guardTarget(platform)) {
     const line1 = `Blocked: ${target.blockedLabel} cannot be run in the ${target.thisLabel} tab.`
@@ -120,34 +119,6 @@ function bashGuard(platform, openCodeRuntime, mergeReviewEnabled) {
     `export CADENCE_PLATFORM=${shellSingleQuote(platform)}`,
     `export CADENCE_MERGE_REVIEW_ENABLED=${mergeReviewEnabled ? '1' : '0'}`
   )
-  if (platform === 'opencode' && openCodeRuntime) {
-    // Resolve the server URL + password at call time from the endpoint file
-    // Cadence rewrites on every server (re)start — never bake a concrete port into
-    // the wrapper. A baked port strands the terminal the instant the server moves
-    // (a health restart, or a second Cadence instance), which shows up as an
-    // `opencode` session whose spinner never resolves and whose interrupt never
-    // lands. Reading the file fresh each launch means the next run self-heals onto
-    // the current server.
-    //
-    // The filename is per-instance and comes from the launching Cadence
-    // (serverEndpointFile in opencode-runtime.ts) — never hard-code it here. A
-    // shared name let a second instance's server address land in this terminal,
-    // and let that instance's shutdown delete the file this one depends on.
-    commands.push(
-      `export OPENCODE_CONFIG_DIR="$HOME/.config/cadence/opencode"`,
-      `export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true`,
-      `opencode() { ` +
-        `local __ep="$OPENCODE_CONFIG_DIR/"${shellSingleQuote(openCodeRuntime.endpointFile)}; ` +
-        `if [ ! -r "$__ep" ]; then printf '%s\\n' "Cadence: the OpenCode server is not available (missing $__ep)." "Open a new OpenCode terminal from Cadence to start it." >&2; return 1; fi; ` +
-        `local __url __pw; ` +
-        `__url="$(sed -n 's/^CADENCE_OPENCODE_URL=//p' "$__ep" | head -n1)"; ` +
-        `__pw="$(sed -n 's/^CADENCE_OPENCODE_PASSWORD=//p' "$__ep" | head -n1)"; ` +
-        `if [ -z "$__url" ]; then printf '%s\\n' "Cadence: the OpenCode endpoint file is malformed ($__ep)." >&2; return 1; fi; ` +
-        `OPENCODE_SERVER_PASSWORD="$__pw" command opencode attach "$__url" --dir "$PWD" "$@"; ` +
-      `}`,
-      `export -f opencode`
-    )
-  }
   commands.push('exec bash -li')
   return commands.join('; ')
 }
@@ -169,15 +140,15 @@ function shellCommand(platform, mergeReviewEnabled) {
 //
 // `--exec` (NOT bare `--`) is required: `wsl -- bash -c <guard>` runs the guard
 // through WSL's *default login shell* first, which pre-expands the guard's `$`
-// references before `bash -c` ever parses it. For OpenCode that corrupted the
-// `opencode` wrapper — `CADENCE_OPENCODE_URL` is exported *inside* the guard, so
-// it was still empty during that premature pass, baking `attach ""` (no server
-// URL) into the function and making every `opencode` invocation print help.
-// `--exec` bypasses the default shell and hands the guard to bash verbatim.
-function wslCommand(distro, posixCwd, platform, openCodeRuntime, mergeReviewEnabled) {
+// references before `bash -c` ever parses it — so anything the guard exports and
+// then reads back is silently empty by the time bash parses it. That produced a
+// wrapper baked with an empty value and no error, which is the worst shape of
+// bug to chase. `--exec` bypasses the default shell and hands the guard to bash
+// verbatim. Do not "simplify" this back to `--`.
+function wslCommand(distro, posixCwd, platform, mergeReviewEnabled) {
   const args = ['-d', distro]
   if (posixCwd) args.push('--cd', posixCwd)
-  const guard = bashGuard(platform, openCodeRuntime, mergeReviewEnabled)
+  const guard = bashGuard(platform, mergeReviewEnabled)
   if (guard) args.push('--exec', 'bash', '-c', guard)
   return { file: 'wsl.exe', args, label: `wsl:${distro}` }
 }
@@ -196,11 +167,11 @@ function rememberOutput(session, data) {
   }
 }
 
-function createSession(terminalId, platform, requestedCwd, wslDistro, openCodeRuntime, mergeReviewEnabled) {
+function createSession(terminalId, platform, requestedCwd, wslDistro, mergeReviewEnabled) {
   // For WSL, wsl.exe runs from a valid Windows cwd and `--cd` handles the Linux
   // dir; otherwise the native shell starts directly in the requested folder.
   const shell = wslDistro
-    ? wslCommand(wslDistro, requestedCwd, platform, openCodeRuntime, mergeReviewEnabled)
+    ? wslCommand(wslDistro, requestedCwd, platform, mergeReviewEnabled)
     : shellCommand(platform, mergeReviewEnabled)
   const spawnCwd = wslDistro ? terminalCwd() : requestedCwd || terminalCwd()
   const terminal = pty.spawn(shell.file, shell.args, {
@@ -222,7 +193,6 @@ function createSession(terminalId, platform, requestedCwd, wslDistro, openCodeRu
     pty: terminal,
     cwd: wslDistro ? requestedCwd || null : spawnCwd,
     wslDistro: wslDistro || null,
-    openCodeRuntime: openCodeRuntime || null,
     mergeReviewEnabled: mergeReviewEnabled === true,
     shell: shell.label || basename(shell.file),
     buffer: [],
@@ -254,7 +224,7 @@ function createSession(terminalId, platform, requestedCwd, wslDistro, openCodeRu
   return session
 }
 
-function start(requestId, terminalId, platform, requestedCwd, wslDistro, openCodeRuntime, mergeReviewEnabled) {
+function start(requestId, terminalId, platform, requestedCwd, wslDistro, mergeReviewEnabled) {
   if (typeof terminalId !== 'string' || !terminalId) {
     send({ type: 'error', requestId, message: 'Missing terminal id' })
     return
@@ -270,7 +240,6 @@ function start(requestId, terminalId, platform, requestedCwd, wslDistro, openCod
       platform,
       requestedCwd,
       wslDistro,
-      openCodeRuntime,
       mergeReviewEnabled === true
     )
   }
@@ -294,13 +263,12 @@ function restart(requestId, terminalId, mergeReviewEnabled) {
   const platform = existing ? existing.platform : undefined
   const cwd = existing ? existing.cwd : undefined
   const wslDistro = existing ? existing.wslDistro : undefined
-  const openCodeRuntime = existing ? existing.openCodeRuntime : undefined
   if (existing) {
     existing.closed = true
     existing.pty.kill()
     sessions.delete(terminalId)
   }
-  start(requestId, terminalId, platform, cwd, wslDistro, openCodeRuntime, mergeReviewEnabled === true)
+  start(requestId, terminalId, platform, cwd, wslDistro, mergeReviewEnabled === true)
 }
 
 function write(terminalId, data) {
@@ -384,7 +352,6 @@ process.on('message', (message) => {
         message.platform,
         message.cwd,
         message.wslDistro,
-        message.openCodeRuntime,
         message.mergeReviewEnabled
       )
     if (message.type === 'restart') restart(message.requestId, message.terminalId, message.mergeReviewEnabled)

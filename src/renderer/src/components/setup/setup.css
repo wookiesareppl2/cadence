@@ -124,67 +124,6 @@
   line-height: 1.4;
 }
 
-/* Shadowed managed skills. Uses --caution rather than an error colour: nothing is
-   broken or lost, but the profile the user thinks is running is not the one that
-   is, and that never surfaces anywhere else. Matches the caution treatment used
-   by the terminal error strip. */
-.setup-card-warning {
-  display: grid;
-  gap: 6px;
-  padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--caution) 45%, var(--border));
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--caution) 8%, transparent);
-  color: var(--text-2);
-  font-size: 11px;
-  line-height: 1.45;
-}
-
-.setup-card-warning p {
-  margin: 0;
-}
-
-.setup-card-warning strong {
-  color: var(--caution);
-}
-
-.setup-card-warning ul {
-  margin: 0;
-  padding-left: 16px;
-  display: grid;
-  gap: 2px;
-}
-
-.setup-card-warning code {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  word-break: break-all;
-}
-
-.setup-distro-field {
-  display: grid;
-  gap: 4px;
-  color: var(--text-3);
-  font-size: 10px;
-  font-weight: 600;
-}
-
-.setup-distro-field select {
-  min-width: 0;
-  height: 28px;
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface-1);
-  color: var(--text-1);
-  font-size: 11px;
-}
-
-.setup-distro-field select:focus-visible {
-  outline: 1px solid var(--accent);
-  outline-offset: 2px;
-}
-
 .setup-card-action {
   margin-top: auto;
 }

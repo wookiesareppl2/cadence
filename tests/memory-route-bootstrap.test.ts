@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   listVaultAreas,
   proposeMemoryHome
-} from '../src/main/opencode/managed-workflow/scripts/resolve-memory-route.mjs'
+} from '../src/main/vault-save/resolve-memory-route.mjs'
 
 // A hardcoded default area silently filed a client project under personal
 // projects on its first save, and nothing surfaced the choice. The vault's shape

@@ -52,20 +52,8 @@ import {
 import type { ClaudeUsageSummary } from '@shared/usage'
 import type { Workspace } from '@shared/workspaces'
 import type { ProjectCatalogEntry } from '@shared/project-catalog'
-import {
-  OPENCODE_COMPANION_FOCUS_CHANNEL,
-  OPENCODE_COMPANION_STATE_CHANNEL,
-  type OpenCodeActivitySnapshot,
-  type OpenCodeCompanionState,
-  type OpenCodeCompanionTarget,
-  type OpenCodePlanUsage
-} from '@shared/opencode'
 import type { ExternalLinkOpenResult } from '@shared/external-links'
 import type { AppSettings, AppSettingsUpdate } from '@shared/app-settings'
-import {
-  OPENCODE_SLIM_UPDATE_STATUS_CHANNEL,
-  type OpenCodeSlimUpdateStatus
-} from '@shared/opencode-slim-updates'
 
 const api = {
   window: {
@@ -95,13 +83,11 @@ const api = {
   usage: {
     getClaudeSummary: (): Promise<ClaudeUsageSummary> => ipcRenderer.invoke('usage:claude-summary'),
     getClaudePlanUsage: (): Promise<ClaudePlanUsage> => ipcRenderer.invoke('usage:claude-plan'),
-    getCodexPlanUsage: (): Promise<CodexPlanUsage> => ipcRenderer.invoke('usage:codex-plan'),
-    getOpenCodePlanUsage: (): Promise<OpenCodePlanUsage> => ipcRenderer.invoke('usage:opencode-plan')
+    getCodexPlanUsage: (): Promise<CodexPlanUsage> => ipcRenderer.invoke('usage:codex-plan')
   },
   sessions: {
     getClaudeSessions: (): Promise<AssistantSession[]> => ipcRenderer.invoke('sessions:claude'),
     getCodexSessions: (): Promise<AssistantSession[]> => ipcRenderer.invoke('sessions:codex'),
-    getOpenCodeSessions: (): Promise<AssistantSession[]> => ipcRenderer.invoke('sessions:opencode'),
     getSessionHistory: (platform: PlatformId, sessionId: string): Promise<AssistantSessionHistory> =>
       ipcRenderer.invoke('sessions:history', platform, sessionId),
     getTitleGenerationStatus: (): Promise<SessionTitleGenerationStatus> =>
@@ -132,41 +118,7 @@ const api = {
     getCommand: (platform: PlatformId, action: SetupAction): Promise<SetupCommand> =>
       ipcRenderer.invoke('setup:command', platform, action),
     disconnect: (platform: PlatformId): Promise<{ ok: boolean }> =>
-      ipcRenderer.invoke('setup:disconnect', platform),
-    configure: (platform: PlatformId): Promise<{ ok: boolean }> =>
-      ipcRenderer.invoke('setup:configure', platform),
-    selectOpenCodeDistro: (distro: string): Promise<{ ok: boolean }> =>
-      ipcRenderer.invoke('setup:opencode-distro', distro)
-  },
-  openCode: {
-    getActivity: (sessionId: string): Promise<OpenCodeActivitySnapshot> =>
-      ipcRenderer.invoke('opencode:activity', sessionId),
-    getCompanionState: (): Promise<OpenCodeCompanionState> =>
-      ipcRenderer.invoke('opencode:companion-state'),
-    setCompanionEnabled: (enabled: boolean): Promise<OpenCodeCompanionState> =>
-      ipcRenderer.invoke('opencode:companion-enabled', enabled),
-    setCompanionTarget: (target: OpenCodeCompanionTarget): Promise<OpenCodeCompanionState> =>
-      ipcRenderer.invoke('opencode:companion-target', target),
-    focusCompanionTarget: (): void => ipcRenderer.send('opencode:companion-focus-cadence'),
-    onCompanionStateChanged: (callback: (state: OpenCodeCompanionState) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, state: OpenCodeCompanionState): void => callback(state)
-      ipcRenderer.on(OPENCODE_COMPANION_STATE_CHANNEL, listener)
-      return () => ipcRenderer.removeListener(OPENCODE_COMPANION_STATE_CHANNEL, listener)
-    },
-    onCompanionFocus: (callback: (target: OpenCodeCompanionTarget) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, target: OpenCodeCompanionTarget): void => callback(target)
-      ipcRenderer.on(OPENCODE_COMPANION_FOCUS_CHANNEL, listener)
-      return () => ipcRenderer.removeListener(OPENCODE_COMPANION_FOCUS_CHANNEL, listener)
-    },
-    getSlimUpdateStatus: (force = false): Promise<OpenCodeSlimUpdateStatus> =>
-      ipcRenderer.invoke('opencode:slim-update-status', force),
-    installSlimMajorUpdate: (): Promise<OpenCodeSlimUpdateStatus> =>
-      ipcRenderer.invoke('opencode:slim-update-install-major'),
-    onSlimUpdateStatusChanged: (callback: (status: OpenCodeSlimUpdateStatus) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, status: OpenCodeSlimUpdateStatus): void => callback(status)
-      ipcRenderer.on(OPENCODE_SLIM_UPDATE_STATUS_CHANNEL, listener)
-      return () => ipcRenderer.removeListener(OPENCODE_SLIM_UPDATE_STATUS_CHANNEL, listener)
-    }
+      ipcRenderer.invoke('setup:disconnect', platform)
   },
   memory: {
     list: (platform: PlatformId, projectId: string | null): Promise<ProjectMemory> =>
@@ -275,10 +227,9 @@ const api = {
       terminalId: string,
       platform: TerminalPlatform,
       cwd?: string,
-      wslDistro?: string,
-      managed?: boolean
+      wslDistro?: string
     ): Promise<TerminalStartResult> =>
-      ipcRenderer.invoke('terminal:start', terminalId, platform, cwd, wslDistro, managed),
+      ipcRenderer.invoke('terminal:start', terminalId, platform, cwd, wslDistro),
     restart: (terminalId: string): Promise<TerminalStartResult> => ipcRenderer.invoke('terminal:restart', terminalId),
     input: (terminalId: string, data: string): void => ipcRenderer.send('terminal:input', terminalId, data),
     resize: (terminalId: string, cols: number, rows: number): void => {

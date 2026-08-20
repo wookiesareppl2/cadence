@@ -4,21 +4,17 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
-  installManagedOpenCodeMemoryBankWorkflow,
-  MANAGED_OPENCODE_WORKFLOW_FILES
-} from '../src/main/opencode/opencode-memory-bank-workflow'
-import {
   findProjectRoot,
   PROJECT_IDENTITY_FILES,
   resolveRoute,
   stripFences
-} from '../src/main/opencode/managed-workflow/scripts/resolve-memory-route.mjs'
-import { bootstrap } from '../src/main/opencode/managed-workflow/scripts/bootstrap-vault-memory.mjs'
+} from '../src/main/vault-save/resolve-memory-route.mjs'
+import { bootstrap } from '../src/main/vault-save/bootstrap-vault-memory.mjs'
 // The collector's REAL helpers. The bootstrap skeleton and its archived legacy
 // bank are checked against these rather than against rules re-stated in tests —
 // re-stated rules are how a self-confirming suite passes while the thing it
 // describes is broken.
-import { danglingReferences } from '../src/main/opencode/managed-workflow/scripts/collect-vault-save.mjs'
+import { danglingReferences } from '../src/main/vault-save/collect-vault-save.mjs'
 
 // Mirrors the collector's own frontmatter predicate so the bootstrap skeleton is
 // judged by the same rule that will judge the first real save.
@@ -29,21 +25,9 @@ function hasFrontmatter(text: string): boolean {
 const temporaryDirectories: string[] = []
 
 async function temporaryDirectory(): Promise<string> {
-  const path = await mkdtemp(join(tmpdir(), 'cadence-opencode-workflow-'))
+  const path = await mkdtemp(join(tmpdir(), 'cadence-vault-save-'))
   temporaryDirectories.push(path)
   return path
-}
-
-function portable(path: string): string {
-  return path.replace(/\\/g, '/')
-}
-
-function managedContent(relativePath: string): string {
-  const match = MANAGED_OPENCODE_WORKFLOW_FILES.find(
-    (file) => portable(file.relativePath) === relativePath
-  )
-  if (!match) throw new Error(`Missing managed workflow resource: ${relativePath}`)
-  return match.content
 }
 
 afterEach(async () => {
@@ -129,145 +113,7 @@ async function tree(
   return dir
 }
 
-describe('Cadence-managed OpenCode workflow', () => {
-  it('bundles the canonical memory commands and merge-review gate', () => {
-    expect(MANAGED_OPENCODE_WORKFLOW_FILES.map((file) => portable(file.relativePath))).toEqual([
-      'skills/start/SKILL.md',
-      'skills/save/SKILL.md',
-      'commands/start.md',
-      'commands/save.md',
-      'skills/cadence-merge-review/SKILL.md',
-      'scripts/collect-vault-save.mjs',
-      'scripts/resolve-memory-route.mjs',
-      'scripts/bootstrap-vault-memory.mjs',
-      'scripts/route.sh'
-    ])
-
-    const startSkill = managedContent('skills/start/SKILL.md')
-    const saveSkill = managedContent('skills/save/SKILL.md')
-    expect(startSkill).toMatch(/^---\nname: start\n/)
-    expect(saveSkill).toMatch(/^---\nname: save\n/)
-    expect(startSkill).toContain('subagent_type="deep-fixer"')
-    expect(saveSkill).toContain('subagent_type="deep-fixer"')
-    expect(startSkill).toContain('run_in_background=false')
-    expect(saveSkill).toContain('run_in_background=false')
-    expect(startSkill).toContain('load_skills=[]')
-    expect(saveSkill).toContain('load_skills=[]')
-    expect(startSkill).not.toContain('run_in_background=true')
-    expect(saveSkill).not.toContain('run_in_background=true')
-    expect(startSkill).toContain('START_ABORTED_NO_WORKER')
-    expect(saveSkill).toContain('SAVE_ABORTED_NO_WORKER')
-
-    expect(managedContent('commands/start.md')).toContain('`start` skill')
-    expect(managedContent('commands/save.md')).toContain('`save` skill')
-    expect(managedContent('commands/start.md')).toContain('$ARGUMENTS')
-    expect(managedContent('commands/save.md')).toContain('$ARGUMENTS')
-    expect(managedContent('skills/cadence-merge-review/SKILL.md')).toContain(
-      'CADENCE_MERGE_REVIEW_ENABLED'
-    )
-  })
-
-  it('routes start and save to the Felix vault memory home, not the frozen .claude bank', () => {
-    const startSkill = managedContent('skills/start/SKILL.md')
-    const saveSkill = managedContent('skills/save/SKILL.md')
-
-    // Routing must be COMPUTED, not inferred. A model running these skills once
-    // skipped the marker check, tested `.claude/HANDOFF.md` first, and routed to
-    // Legacy Bank Mode on a vault project — which on a save would write this
-    // session's memory into the frozen bank. The route is therefore emitted by a
-    // mandatory first command whose output the worker must use verbatim.
-    for (const skill of [startSkill, saveSkill]) {
-      expect(skill).toContain('<MEMORY_HOME>')
-      expect(skill).toContain('MEMORY_ROUTE=vault')
-      expect(skill).toContain('MEMORY_ROUTE=abort')
-      // The vault route must point work at the resolved memory home, positively
-      // stated. (The old assertion here pinned the phrase "is **forbidden** in
-      // this case" — wording that named the wrong action, which is exactly what
-      // the models then performed.)
-      expect(skill).toContain('the resolver has already accounted')
-      // The contract must be copied, not remembered. Paraphrasing it is how the
-      // forbidden port-3000 fallback reappeared in a delegated worker prompt.
-      expect(skill).toContain('verbatim')
-      expect(skill).toContain('do not paraphrase')
-      // Routing is delegated to the shipped wrapper, and the instruction to run
-      // it is a single short line — the node-resolution boilerplate that used to
-      // sit here read as configuration rather than as an action.
-      expect(skill).toContain('scripts/route.sh')
-      expect(skill).toContain('Run this now')
-
-      // THE LESSON THIS SUITE EXISTS TO KEEP: never name the wrong action.
-      //
-      // The skills used to say "do NOT test for `.claude/HANDOFF.md`,
-      // `.Codex/HANDOFF.md` ... before running it". Two model families then did
-      // exactly that instead of running the resolver — checking those two paths
-      // and nothing else, and writing `.Codex` with the same capital C used in
-      // the prohibition, though the directory on disk is `.codex`. The models
-      // were not reasoning about the filesystem; they were echoing the string
-      // from the sentence that forbade it. A prohibition that names a concrete
-      // wrong action reads as an instruction to perform it.
-      //
-      // So the routing section states only what to do. If a future edit
-      // reintroduces a forbidden-path list here, this fails.
-      const routingSection = skill.slice(0, skill.indexOf('## ', skill.indexOf('Step 1')))
-      // Self-check the slice: if a heading rename ever collapsed this to nothing,
-      // the three guards below would silently pass against an empty string.
-      expect(routingSection.length).toBeGreaterThan(500)
-      expect(routingSection).toContain('route.sh')
-      expect(routingSection).not.toMatch(/\.Codex/)
-      expect(routingSection).not.toMatch(/do \*\*not\*\* test for/i)
-      expect(routingSection).not.toMatch(/claude\/HANDOFF\.md/)
-    }
-
-    // The same priming, one layer earlier: a command description and the skill's
-    // own frontmatter reach the model BEFORE the skill body. They named "legacy
-    // Memory Bank", and the v0.1.30 model's own words were "Memory Bank Mode
-    // with .claude". No path to echo, but the same expectation-setting — and
-    // leaving it would muddy attribution on the next test.
-    expect(managedContent('commands/start.md')).not.toMatch(/Memory Bank/)
-    expect(managedContent('commands/save.md')).not.toMatch(/Memory Bank/)
-    expect(startSkill.slice(0, startSkill.indexOf('---', 4))).not.toMatch(/Memory Bank/)
-    expect(saveSkill.slice(0, saveSkill.indexOf('---', 4))).not.toMatch(/Memory Bank/)
-
-    expect(startSkill).toContain('START_ABORTED_BAD_ROUTE')
-    expect(saveSkill).toContain('SAVE_ABORTED_BAD_ROUTE')
-
-    // Start may READ legacy memory — reading a legacy bank is safe and useful.
-    expect(startSkill).toContain('MEMORY_ROUTE=legacy-bank')
-    expect(startSkill).toContain('MEMORY_ROUTE=legacy-root')
-
-    // Save must have exactly ONE write destination. The legacy write modes are
-    // gone: a mis-resolved route used to be able to write a session's memory
-    // into a frozen bank, and removing the mode removes the destination. An
-    // unmigrated project is handled by creating its memory home, not by writing
-    // to its bank.
-    expect(saveSkill).toContain('exactly one write destination')
-    expect(saveSkill).toContain('There is no legacy write mode')
-    expect(saveSkill).toContain('BOOTSTRAP=required')
-    expect(saveSkill).toContain('bootstrap-vault-memory.mjs')
-    // Stated positively: one destination, named. The prior assertion pinned
-    // "never write to it", which named the wrong action next to the routing
-    // decision — the pattern the models copied.
-    expect(saveSkill).toContain('exactly one write destination')
-    expect(saveSkill).toContain('Every write goes')
-    expect(saveSkill).not.toContain('## Legacy Bank Mode')
-    expect(saveSkill).not.toContain('## Legacy Root Mode')
-
-    // Fidelity resolves to exactly two values. `high` is an input alias only and
-    // must never be reported back, which a shipped build did on every run.
-    expect(startSkill).toContain('Resolved fidelity')
-    expect(startSkill).toContain('deprecated alias')
-    expect(startSkill).toContain('report the fidelity as `high`')
-    expect(startSkill).toContain('`lean` and `max` are the only two resolved values')
-
-    // Save must drive the shared collector engine end to end and never hand-edit.
-    expect(saveSkill).toContain('scripts/collect-vault-save.mjs')
-    expect(saveSkill).toContain('--mode state')
-    expect(saveSkill).toContain('--mode apply')
-    expect(saveSkill).toContain('--mode validate')
-    expect(saveSkill).toContain('SAVE_VALIDATION=PASS')
-    expect(saveSkill).toContain('NEVER hand-edits')
-  })
-
+describe('Cadence vault save engine', () => {
   it('never adopts an ancestor project as its memory home', async () => {
     const root = await temporaryDirectory()
 
@@ -615,47 +461,20 @@ describe('Cadence-managed OpenCode workflow', () => {
     expect(stripFences('a\n~~~\nx\n```\ny').unbalanced).toBe(true)
   })
 
-  it('ships the canonical vault save collector as pure LF, content intact', async () => {
-    const managed = managedContent('scripts/collect-vault-save.mjs')
-    const source = await readFile(
-      join(__dirname, '..', 'src', 'main', 'opencode', 'managed-workflow', 'scripts', 'collect-vault-save.mjs'),
-      'utf-8'
-    )
-    // Git checks this out with CRLF under core.autocrlf, so assert the delivered
-    // file is pure LF with content otherwise intact. That is what keeps the
-    // installed collector byte-identical to the Claude and Codex copies.
-    expect(managed).not.toContain('\r')
-    expect(managed.endsWith('\n')).toBe(true)
-    expect(managed).toBe(`${source.replace(/\r\n/g, '\n').trimEnd()}\n`)
-    // Spot-check the engine surface the save skill depends on.
-    expect(managed).toContain("mode === 'apply'")
-    expect(managed).toContain("mode === 'validate'")
-    expect(managed).toContain('APPLIED_CHANGED=')
-  })
-
-  it('installs, leaves current resources untouched, and repairs stale resources', async () => {
-    const configDir = await temporaryDirectory()
-    const first = await installManagedOpenCodeMemoryBankWorkflow(configDir)
-    expect(first.changed.map(portable)).toEqual([
-      'skills/start/SKILL.md',
-      'skills/save/SKILL.md',
-      'commands/start.md',
-      'commands/save.md',
-      'skills/cadence-merge-review/SKILL.md',
-      'scripts/collect-vault-save.mjs',
-      'scripts/resolve-memory-route.mjs',
-      'scripts/bootstrap-vault-memory.mjs',
-      'scripts/route.sh'
-    ])
-
-    const second = await installManagedOpenCodeMemoryBankWorkflow(configDir)
-    expect(second.changed).toEqual([])
-
-    const startCommandPath = join(configDir, 'commands', 'start.md')
-    await writeFile(startCommandPath, 'stale\n', 'utf-8')
-    const repaired = await installManagedOpenCodeMemoryBankWorkflow(configDir)
-    expect(repaired.changed.map(portable)).toEqual(['commands/start.md'])
-    expect(await readFile(startCommandPath, 'utf-8')).toBe(managedContent('commands/start.md'))
+  it('keeps the canonical engine pure LF so the suite can import it on Windows', async () => {
+    // These files are imported directly by this suite. Under core.autocrlf they
+    // would check out as CRLF, and a CRLF shebang line breaks Vite's module
+    // transform — the suite fails to load on any fresh Windows checkout while
+    // passing on the author's machine. .gitattributes pins them to LF; this is
+    // the assertion that notices when that pin is lost.
+    for (const file of [
+      'collect-vault-save.mjs',
+      'resolve-memory-route.mjs',
+      'bootstrap-vault-memory.mjs'
+    ]) {
+      const source = await readFile(join(__dirname, '..', 'src', 'main', 'vault-save', file), 'utf-8')
+      expect(source).not.toContain('\r')
+      expect(source.endsWith('\n')).toBe(true)
+    }
   })
 })
-

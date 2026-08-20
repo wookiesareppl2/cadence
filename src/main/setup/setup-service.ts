@@ -6,12 +6,6 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { PlatformId } from '@shared/platform'
 import type { PlatformSetup, SetupAction, SetupCommand, SetupStatus } from '@shared/setup'
-import { configureOpenCodeForCadence, disconnectOpenCodeGo } from '../opencode/opencode-config-service'
-import {
-  detectOpenCodeRuntime,
-  setPreferredOpenCodeDistro,
-  stopOpenCodeRuntime
-} from '../opencode/opencode-runtime'
 
 // Drives the first-run onboarding: detect whether each CLI is installed and signed
 // in, and hand the renderer the official command to run for install / sign-in. The
@@ -54,7 +48,6 @@ function nonEmptyString(value: unknown): boolean {
 // files. Disconnecting trashes the file (recoverable) the way the CLIs' own logout
 // just clears local credentials.
 function credentialPath(platform: PlatformId): string {
-  if (platform === 'opencode') throw new Error('OpenCode credentials are owned by its WSL runtime')
   return platform === 'claude'
     ? join(app.getPath('home'), '.claude', '.credentials.json')
     : join(app.getPath('home'), '.codex', 'auth.json')
@@ -91,38 +84,17 @@ async function platformSetup(cli: string, connected: () => Promise<boolean>): Pr
 }
 
 export async function getSetupStatus(): Promise<SetupStatus> {
-  const [claude, codex, openCodeRuntime] = await Promise.all([
+  const [claude, codex] = await Promise.all([
     platformSetup('claude', claudeConnected),
-    platformSetup('codex', codexConnected),
-    detectOpenCodeRuntime()
+    platformSetup('codex', codexConnected)
   ])
-  const opencode: PlatformSetup = {
-    installed: openCodeRuntime.installed,
-    version: openCodeRuntime.version,
-    compatible: openCodeRuntime.compatible,
-    authenticated: openCodeRuntime.connected,
-    // Deliberately NOT gated on shadowSkills. A shadowed profile is still a
-    // working OpenCode connection — blocking it would strand the user with no
-    // way in, when what they need is to be told what is overriding it.
-    connected:
-      openCodeRuntime.installed &&
-      openCodeRuntime.compatible &&
-      openCodeRuntime.connected &&
-      openCodeRuntime.configured,
-    configured: openCodeRuntime.configured,
-    shadowSkills: openCodeRuntime.shadowSkills,
-    runtime: 'wsl',
-    wslDistro: openCodeRuntime.distro,
-    availableWslDistros: openCodeRuntime.availableDistros,
-    detail: openCodeRuntime.detail
-  }
-  return { claude, codex, opencode }
+  return { claude, codex }
 }
 
 // Official commands, run in the onboarding's embedded terminal so the user can see
 // progress and complete the browser sign-in. Windows-only today (the install
 // scripts are the native PowerShell installers — no Node required for the CLIs).
-const COMMANDS: Record<'claude' | 'codex', Record<'install' | 'connect', SetupCommand>> = {
+const COMMANDS: Record<PlatformId, Record<SetupAction, SetupCommand>> = {
   claude: {
     install: { command: 'irm https://claude.ai/install.ps1 | iex', label: 'Installing Claude Code…' },
     connect: { command: 'claude /login', label: 'Signing in to Claude…' }
@@ -134,48 +106,13 @@ const COMMANDS: Record<'claude' | 'codex', Record<'install' | 'connect', SetupCo
 }
 
 export async function getSetupCommand(platform: PlatformId, action: SetupAction): Promise<SetupCommand> {
-  if (action === 'configure') throw new Error('Configuration is managed directly by Cadence')
-  if (platform !== 'opencode') return COMMANDS[platform][action]
-
-  const runtime = await detectOpenCodeRuntime()
-  if (!runtime.distro) {
-    if (action === 'connect') throw new Error('Install an Ubuntu WSL distribution first')
-    return {
-      command: "Start-Process -FilePath wsl.exe -Verb RunAs -ArgumentList @('--install','-d','Ubuntu') -Wait",
-      label: 'Installing Ubuntu for OpenCode...',
-      wslDistro: null
-    }
-  }
-  return action === 'install'
-    ? {
-        command: 'curl -fsSL https://opencode.ai/install | bash',
-        label: `Installing OpenCode in ${runtime.distro}...`,
-        wslDistro: runtime.distro
-      }
-    : {
-        command: 'opencode auth login --provider opencode-go',
-        label: 'Connecting OpenCode Go...',
-        wslDistro: runtime.distro
-      }
-}
-
-export async function configurePlatform(platform: PlatformId): Promise<{ ok: boolean }> {
-  if (platform !== 'opencode') throw new Error(`${platform} has no Cadence-managed configuration`)
-  await stopOpenCodeRuntime()
-  await configureOpenCodeForCadence()
-  return { ok: true }
-}
-
-export async function selectOpenCodeDistro(distro: string): Promise<{ ok: boolean }> {
-  await setPreferredOpenCodeDistro(distro)
-  return { ok: true }
+  return COMMANDS[platform][action]
 }
 
 // Disconnect = local credential cleanup (the CLIs' own logout does only this). Send
 // the credential file to the OS trash so it's recoverable; the next status check
 // then reports the platform disconnected. A missing file already counts as done.
 export async function disconnectPlatform(platform: PlatformId): Promise<{ ok: boolean }> {
-  if (platform === 'opencode') return disconnectOpenCodeGo()
   const path = credentialPath(platform)
   if (!existsSync(path)) return { ok: true }
   try {

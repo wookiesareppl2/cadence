@@ -1,7 +1,6 @@
 import type { WebContents } from 'electron'
 import { PLATFORM_IDS, type PlatformId } from '@shared/platform'
 import type { ProjectCatalogEntry } from '@shared/project-catalog'
-import { detectOpenCodeRuntime } from '../opencode/opencode-runtime'
 import { scanSessions } from '../sessions/session-scan'
 import { listWorkspaces } from '../workspaces/workspace-service'
 import { buildProjectCatalog, type ProjectCatalogSessionSet } from './project-catalog'
@@ -24,16 +23,7 @@ export async function listProjectCatalog(
   targetPlatform: PlatformId,
   sender: WebContents
 ): Promise<ProjectCatalogEntry[]> {
-  const [sessionSets, workspaces, openCodeRuntime] = await Promise.all([
-    scanAvailableSessions(sender),
-    listWorkspaces(),
-    targetPlatform === 'opencode' ? detectOpenCodeRuntime().catch(() => null) : Promise.resolve(null)
-  ])
+  const [sessionSets, workspaces] = await Promise.all([scanAvailableSessions(sender), listWorkspaces()])
 
-  return buildProjectCatalog({
-    targetPlatform,
-    sessionSets,
-    workspaces,
-    openCodeDistro: openCodeRuntime?.distro ?? null
-  })
+  return buildProjectCatalog({ targetPlatform, sessionSets, workspaces })
 }

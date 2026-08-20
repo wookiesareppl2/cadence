@@ -14,7 +14,6 @@ type BuildProjectCatalogOptions = {
   targetPlatform: PlatformId
   sessionSets: ProjectCatalogSessionSet[]
   workspaces: Workspace[]
-  openCodeDistro?: string | null
 }
 
 function catalogProjectId(platform: PlatformId, path: string, origin: SessionOrigin): string {
@@ -34,31 +33,17 @@ function timestamp(value: string | null): number {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-function isUsableInTarget(
-  targetPlatform: PlatformId,
-  origin: SessionOrigin,
-  openCodeDistro: string | null | undefined
-): boolean {
-  // Managed OpenCode always runs in its configured distro. A POSIX folder from a
-  // different distro could point at an unrelated or nonexistent path there.
-  if (targetPlatform === 'opencode' && origin.kind === 'wsl') {
-    return Boolean(openCodeDistro && origin.distro === openCodeDistro)
-  }
-  return true
-}
-
 export function buildProjectCatalog({
   targetPlatform,
   sessionSets,
-  workspaces,
-  openCodeDistro
+  workspaces
 }: BuildProjectCatalogOptions): ProjectCatalogEntry[] {
   const byId = new Map<string, ProjectCatalogEntry>()
 
   for (const { sessions } of sessionSets) {
     for (const session of sessions) {
       const path = session.projectPath?.trim()
-      if (!path || !isUsableInTarget(targetPlatform, session.origin, openCodeDistro)) continue
+      if (!path) continue
 
       const id = catalogProjectId(targetPlatform, path, session.origin)
       const existing = byId.get(id)

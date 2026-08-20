@@ -101,7 +101,7 @@ export function extractWslPath(line) {
 
 /**
  * A marker declares the same memory home twice, once per platform. Return both,
- * WSL first: OpenCode runs under WSL, but the resolver must also work when run
+ * WSL first: the resolver may run under WSL, but it must also work when run
  * on Windows, and picking a form that does not resolve on the current platform
  * would abort on a perfectly valid marker.
  */

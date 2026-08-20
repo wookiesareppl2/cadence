@@ -3,7 +3,6 @@ import type { PlatformId } from '@shared/platform'
 import type { AssistantSession, SessionsUpdatedPayload } from '@shared/sessions'
 import { getSessionOrigins, type SessionOriginRoot } from './session-origins'
 import { getClaudeSessionsForOrigins, getCodexSessionsForOrigins } from './session-service'
-import { getOpenCodeSessions } from '../opencode/opencode-session-service'
 
 // Channel the main process uses to push a completed full scan to the renderer
 // after the fast (Windows-only) first paint. Kept here so the IPC wiring and the
@@ -94,12 +93,6 @@ function runFullScan(
 export async function scanSessions(platform: PlatformId, sender: WebContents): Promise<AssistantSession[]> {
   const cached = cache.get(platform)
   if (cached && cached.expiresAt > Date.now()) return cached.sessions
-
-  if (platform === 'opencode') {
-    const sessions = await getOpenCodeSessions()
-    cacheFull(platform, sessions)
-    return sessions
-  }
 
   const origins = await getSessionOrigins()
   const windowsOrigins = origins.filter((origin) => origin.kind === 'windows')
