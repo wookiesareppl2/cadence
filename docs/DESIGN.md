@@ -298,11 +298,33 @@ provider, and each exists because its absence shipped a real defect.
   outside the reader's window and failed validation with an error pointing nowhere near the
   cause. Appends anchor on the last dated line in the section, or on the heading when the log
   is empty, and a missing heading is a hard error rather than a silent end-of-file append.
+- **A DNO must state its authority.** Every new or replaced `DNO-` entry must carry
+  `**Authority:** Explicit user approval — <evidence>` or `**Authority:** Authoritative project
+  decision — <file and heading>`; the collector refuses the write otherwise. DNOs are the one
+  entry class later sessions are told not to re-litigate, so a DNO minted from the engine's own
+  inference — "the code does X, therefore X is a rule" — converts an implementation accident into
+  a permanent constraint that nothing downstream will question. The guard lives in the shared hunk
+  builder, so the `apply` and `patch` front ends inherit it identically.
+- **Bootstrap verifies its own writes.** It reports success from having checked the result, not
+  from having run the steps: the skeleton files, the `Archive/` directory, exactly one live memory
+  marker, and the three hot-layer `@` imports, or it throws. The marker only tells a session where
+  memory lives; the imports are what actually load it, so a bootstrap that wrote the marker alone
+  produced a project that looked correctly wired and silently began every session with no memory.
+  Import paths normalise separators and escape spaces — vault paths contain them — and a path with
+  a newline is refused rather than written as two broken imports.
 - **Derive, never restate.** One fact, one source. Every shipped defect in this path came from
   restating a single value for two consumers — a fidelity held in two places, a changed-file set
   computed twice, a hand-written `.d.mts` declaring a module's exports a second time. The scripts
   are LF-pinned in `.gitattributes` because the test suite imports them directly and a CRLF
   shebang breaks Vite's module transform on a fresh Windows checkout.
+- **The repo copy is canonical; the installed copies must match it byte for byte.** No app code
+  imports these scripts — they run from `~/.claude/skills/save/scripts/` and
+  `~/.codex/skills/save/scripts/`, so the repo copy exists to be the tested source of truth. When
+  an installed copy drifts, the suite guards an engine nobody runs while the one that runs is
+  unguarded: Claude's copy gained the two rules above, Codex's did not, and the two providers ran
+  different save engines for three weeks with a green suite throughout. A test now compares the
+  installed copies against the repo copy, skipping only where none is installed. Change the repo
+  copy first, then sync outward.
 
 ## Context-usage gauge
 

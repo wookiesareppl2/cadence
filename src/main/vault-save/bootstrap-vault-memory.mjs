@@ -34,6 +34,17 @@ export function toWslPath(p) {
   return `/mnt/${match[1].toLowerCase()}/${match[2].split('\\').join('/')}`
 }
 
+export function toClaudeImportPath(p) {
+  if (/[\r\n]/.test(p)) throw new Error(`Cannot import a path containing a newline: ${p}`)
+  return p.replaceAll('\\', '/').replaceAll(' ', '\\ ')
+}
+
+export function hotLayerImportLines(memoryDir) {
+  return ['_Index.md', 'HANDOFF.md', 'Pins.md']
+    .map((file) => `@${toClaudeImportPath(path.join(memoryDir, file))}`)
+    .join('\n')
+}
+
 export function markerLine(memoryDir) {
   const windows = toWindowsPath(memoryDir)
   const wsl = toWslPath(memoryDir)
@@ -228,6 +239,7 @@ function copyLegacyBank(workspace, memoryDir, log) {
 function writeMarker(workspace, memoryDir, log) {
   const baseline = path.join(workspace, 'CLAUDE.md')
   const line = markerLine(memoryDir)
+  const imports = hotLayerImportLines(memoryDir)
   let text = ''
   try {
     text = fs.readFileSync(baseline, 'utf-8')
@@ -246,12 +258,37 @@ function writeMarker(workspace, memoryDir, log) {
   }
   const block =
     `\n## Project memory — Felix vault\n\n` +
-    `This project's memory lives in Sheldon's Obsidian vault. Load the hot layer ` +
-    `(\`_Index.md\`, \`HANDOFF.md\`, \`Pins.md\`) at session start.\n\n` +
+    `This project's memory lives in Sheldon's Obsidian vault. The three imports below load ` +
+    `the complete hot layer automatically at session start. Claude Code asks for one-time ` +
+    `approval because the files are outside the project.\n\n` +
+    `${imports}\n\n` +
     `${line}\n`
   fs.writeFileSync(baseline, text ? `${text.replace(/\s*$/, '')}\n${block}` : `# Project\n${block}`, 'utf-8')
   log.push(text ? '  appended memory-home marker to CLAUDE.md' : '  created CLAUDE.md with memory-home marker')
   return true
+}
+
+function validateBootstrapWrite(workspace, memoryDir, expectedFiles) {
+  const errors = []
+  for (const [relative, expected] of Object.entries(expectedFiles)) {
+    const target = path.join(memoryDir, relative)
+    if (!fs.existsSync(target)) {
+      errors.push(`missing ${relative}`)
+      continue
+    }
+    if (fs.readFileSync(target, 'utf-8') !== expected) errors.push(`content mismatch in ${relative}`)
+  }
+  if (!fs.existsSync(path.join(memoryDir, 'Archive'))) errors.push('missing Archive directory')
+
+  const baseline = path.join(workspace, 'CLAUDE.md')
+  const baselineText = fs.existsSync(baseline) ? fs.readFileSync(baseline, 'utf-8') : ''
+  const markerMatches = findMarkerLines(stripFences(baselineText).stripped)
+  if (markerMatches.length !== 1) errors.push(`expected one live memory marker, found ${markerMatches.length}`)
+  for (const line of hotLayerImportLines(memoryDir).split('\n')) {
+    if (!baselineText.includes(line)) errors.push(`missing hot-layer import: ${line}`)
+  }
+
+  if (errors.length > 0) throw new Error(`Bootstrap validation failed: ${errors.join('; ')}`)
 }
 
 export function bootstrap({ workspace, memory, project, today, dryRun = false }) {
@@ -275,7 +312,14 @@ export function bootstrap({ workspace, memory, project, today, dryRun = false })
   const name = project || path.basename(workspace)
   const files = skeletonFiles(name, today)
   if (dryRun) {
-    return { created: Object.keys(files), archived: 0, marker: false, log: ['dry run — nothing written'] }
+    return {
+      created: Object.keys(files),
+      archived: 0,
+      marker: false,
+      imports: 3,
+      validated: true,
+      log: ['dry run — validation describes the generated shape; nothing written']
+    }
   }
   fs.mkdirSync(path.join(memory, 'Archive'), { recursive: true })
   for (const [relative, body] of Object.entries(files)) {
@@ -284,7 +328,8 @@ export function bootstrap({ workspace, memory, project, today, dryRun = false })
   }
   const archived = copyLegacyBank(workspace, memory, log)
   const marker = writeMarker(workspace, memory, log)
-  return { created: Object.keys(files), archived, marker, log }
+  validateBootstrapWrite(workspace, memory, files)
+  return { created: Object.keys(files), archived, marker, imports: 3, validated: true, log }
 }
 
 function required(parsed, key) {
@@ -333,6 +378,8 @@ if (invokedDirectly) {
         `FILES_CREATED=${result.created.length}`,
         `LEGACY_ARCHIVED=${result.archived}`,
         `MARKER_WRITTEN=${result.marker}`,
+        `HOT_IMPORTS_WRITTEN=${result.imports}`,
+        `BOOTSTRAP_VALIDATION=${result.validated ? 'PASS' : 'FAIL'}`,
         ...result.log,
         ''
       ].join('\n')

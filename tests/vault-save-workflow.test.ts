@@ -9,7 +9,11 @@ import {
   resolveRoute,
   stripFences
 } from '../src/main/vault-save/resolve-memory-route.mjs'
-import { bootstrap } from '../src/main/vault-save/bootstrap-vault-memory.mjs'
+import {
+  bootstrap,
+  hotLayerImportLines,
+  toClaudeImportPath
+} from '../src/main/vault-save/bootstrap-vault-memory.mjs'
 // The collector's REAL helpers. The bootstrap skeleton and its archived legacy
 // bank are checked against these rather than against rules re-stated in tests —
 // re-stated rules are how a self-confirming suite passes while the thing it
@@ -339,6 +343,58 @@ describe('Cadence vault save engine', () => {
     }
   })
 
+  // The marker only TELLS a session where memory lives; the `@` imports make Claude
+  // Code actually load it. A bootstrap that writes the marker alone produces a
+  // project that looks correctly wired and silently starts every session with no
+  // memory loaded — the failure is invisible precisely because nothing errors.
+  it('writes hot-layer imports the marker alone would not load', async () => {
+    const root = await temporaryDirectory()
+    const workspace = await tree(root, 'imported', { 'CLAUDE.md': '# Imported\n' })
+    const memory = join(root, 'vault', 'imported', 'memory')
+    const result = bootstrap({ workspace, memory, project: 'Imported', today: '2026-08-29' })
+
+    expect(result.imports).toBe(3)
+    expect(result.validated).toBe(true)
+
+    const baseline = readFileSync(join(workspace, 'CLAUDE.md'), 'utf-8')
+    for (const file of ['_Index.md', 'HANDOFF.md', 'Pins.md']) {
+      expect(baseline).toContain(`@${toClaudeImportPath(join(memory, file))}`)
+    }
+    // Every import must name a file the bootstrap actually created, or the session
+    // opens with an unresolvable import instead of the hot layer.
+    for (const line of hotLayerImportLines(memory).split('\n')) {
+      expect(existsSync(line.slice(1).replaceAll('\\ ', ' '))).toBe(true)
+    }
+  })
+
+  // Claude Code splits an import path on whitespace, so an unescaped space
+  // truncates it. Vault paths live under "…/04 - Personal Projects/…", which
+  // contains three — the common case, not an exotic one.
+  it('escapes spaces and normalises separators in an import path', () => {
+    expect(toClaudeImportPath('C:\\Users\\a b\\Brain\\04 - Projects\\memory')).toBe(
+      'C:/Users/a\\ b/Brain/04\\ -\\ Projects/memory'
+    )
+    // A newline cannot be escaped into one line at all, so refuse rather than
+    // write an import that silently reads as two broken ones.
+    expect(() => toClaudeImportPath('C:\\a\nb')).toThrow(/newline/)
+  })
+
+  // Bootstrap reports success from having run its steps, not from having verified
+  // them. The post-write check is what makes the returned result evidence.
+  it('fails loudly when the marker it needs cannot be written', async () => {
+    const root = await temporaryDirectory()
+    // A CLAUDE.md that already declares a DIFFERENT live memory home: writeMarker
+    // correctly declines to add a second, so the imports never land and the home
+    // this run just created is unreachable. Silence here is the unsaveable state.
+    const workspace = await tree(root, 'claimed', {
+      'CLAUDE.md': `# Claimed\n\n${marker('/mnt/c/elsewhere')}`
+    })
+    const memory = join(root, 'vault', 'claimed', 'memory')
+    expect(() => bootstrap({ workspace, memory, project: 'Claimed', today: '2026-08-29' })).toThrow(
+      /Bootstrap validation failed.*missing hot-layer import/s
+    )
+  })
+
   it('archives a legacy bank where the collector will not scan it as live memory', async () => {
     const root = await temporaryDirectory()
     // A REAL legacy bank cites entries that no longer exist — superseded, or
@@ -476,5 +532,41 @@ describe('Cadence vault save engine', () => {
       expect(source).not.toContain('\r')
       expect(source.endsWith('\n')).toBe(true)
     }
+  })
+
+  // Nothing in the app imports these scripts any more — they run from the
+  // installed skill directories. The repo copy is the TESTED one, so if an
+  // installed copy drifts, this suite is guarding an engine nobody runs while the
+  // engine that is running is unguarded. That is what happened: Claude's copy
+  // gained DNO-authority and hot-import behaviour, Codex's did not, and the two
+  // providers quietly ran different save engines for three weeks with a green
+  // suite throughout. The declaration files already state byte-identity as the
+  // invariant; this is the assertion that makes the statement enforceable.
+  //
+  // The skill directories are machine-local, so absence is skipped rather than
+  // failed — a fresh clone or CI has no installed copy and must still pass.
+  it('keeps the installed skill copies byte-identical to the tested one', async () => {
+    const home = process.env.USERPROFILE ?? process.env.HOME
+    if (!home) return
+    const files = ['collect-vault-save.mjs', 'resolve-memory-route.mjs', 'bootstrap-vault-memory.mjs']
+    const drifted: string[] = []
+    let compared = 0
+
+    for (const platform of ['.claude', '.codex']) {
+      for (const file of files) {
+        const installed = join(home, platform, 'skills', 'save', 'scripts', file)
+        if (!existsSync(installed)) continue
+        compared += 1
+        const canonical = await readFile(
+          join(__dirname, '..', 'src', 'main', 'vault-save', file),
+          'utf-8'
+        )
+        if ((await readFile(installed, 'utf-8')) !== canonical) drifted.push(`${platform}/${file}`)
+      }
+    }
+
+    // No installed copy to compare against (fresh clone, CI, another machine).
+    if (compared === 0) return
+    expect(drifted, 'installed save-engine copies have drifted from the tested source').toEqual([])
   })
 })

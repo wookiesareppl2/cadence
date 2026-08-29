@@ -619,6 +619,7 @@ function emitPlanProtocolPacket() {
     '}',
     'PLAN_SCHEMA_END',
     'COLLECTOR_GUARANTEES=the collector owns mechanical correctness: (1) it stamps the four _Index.md live counts to the true post-apply count (never hand-author them; put _Index.md in replace only for structure/status prose); (2) it normalizes each appended/inserted entry heading to the file canonical level; (3) it guarantees a Pin Review Log line. Take the validator --changed list from PLANNED_CHANGED (it may list _Index.md or Pins-Reference.md even when your plan omitted them).',
+    'DNO_AUTHORITY=every new or replaced DNO must contain `**Authority:** Explicit user approval — <evidence>` or `**Authority:** Authoritative project decision — <file and heading>`; inferred implementation state is never authority.',
     'REFERENTIAL_INTEGRITY=every entry ID you cite in a Source/Refs field (e.g. ADR-109) must be created in this save or already exist; validation fails on any dangling reference.',
     'PLAN_RUNTIME=JSON.stringify and string methods are available; btoa, atob, TextEncoder, Buffer, --plan-base64, and shell redirection are forbidden',
     // THE COLLECTOR WRITES TO THE MEMORY HOME. The harness must not.
@@ -1013,6 +1014,36 @@ function validatePlanFileKeys(memory, plan) {
   return keys
 }
 
+function hasDnoAuthority(text) {
+  return /^\*\*Authority:\*\* (?:Explicit user approval|Authoritative project decision) — \S.+$/m.test(text)
+}
+
+function validateDnoAuthority(plan) {
+  const candidates = []
+  for (const [file, text] of Object.entries(plan.replace)) candidates.push({ file, text: String(text) })
+  for (const [file, entries] of Object.entries(plan.appendEntries)) {
+    for (const text of entries) candidates.push({ file, text: String(text) })
+  }
+  for (const [file, entries] of Object.entries(plan.replaceEntries)) {
+    for (const item of entries) candidates.push({ file, text: String(item.text) })
+  }
+  for (const [file, entries] of Object.entries(plan.insertBefore)) {
+    for (const item of entries) candidates.push({ file, text: String(item.text) })
+  }
+
+  for (const candidate of candidates) {
+    for (const entry of entriesIn(candidate.text).filter(({ id }) => id.startsWith('DNO-'))) {
+      if (!hasDnoAuthority(entry.body)) {
+        throw new Error(
+          `DNO_AUTHORITY_REQUIRED: ${entry.id} in ${candidate.file} must contain ` +
+          '`**Authority:** Explicit user approval — <evidence>` or ' +
+          '`**Authority:** Authoritative project decision — <file and heading>`'
+        )
+      }
+    }
+  }
+}
+
 function fullReplaceHunk(oldText, newText) {
   if (oldText === newText) throw new Error('Full replacement is identical to current content')
   return ['@@', ...patchLines(oldText, '-'), ...patchLines(newText, '+')]
@@ -1181,6 +1212,7 @@ function buildFileHunks(manifest, plan) {
   const memory = path.resolve(manifest.memory)
   assertUnchangedSinceManifest(manifest)
   validatePlanFileKeys(memory, plan)
+  validateDnoAuthority(plan)
   const fileHunks = new Map()
 
   function addHunk(relativePath, hunk) {

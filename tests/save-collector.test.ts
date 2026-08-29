@@ -294,6 +294,83 @@ describe('Codex patch path', () => {
   })
 })
 
+// A DNO is a do-not-optimise rule: the one entry class the save engine treats as
+// binding on every later session. The failure mode this guards is the engine
+// minting one from its own inference — "the code does X, so X must be a rule" —
+// which converts an implementation accident into a permanent constraint that no
+// later session will question, because DNOs are precisely the entries sessions
+// are told not to re-litigate. Authority must be stated, not inferred.
+describe('DNO authority', () => {
+  const AUTHORITY = '**Authority:** Explicit user approval — owner said so on 2026-08-29'
+
+  function patch(): Run {
+    return collector(['--mode', 'patch', '--manifest', manifest, '--plan', `${manifest}.plan.json`])
+  }
+
+  it('refuses a new DNO that states no authority', () => {
+    orient('incremental')
+    plan({
+      appendEntries: { 'Pins.md': ['### DNO-900: Never do the thing\n\nBecause the code does not.'] }
+    })
+    const run = apply()
+    expect(run.status).not.toBe(0)
+    expect(run.out).toContain('DNO_AUTHORITY_REQUIRED: DNO-900')
+  })
+
+  it('accepts a DNO that cites explicit user approval', () => {
+    orient('incremental')
+    plan({
+      appendEntries: { 'Pins.md': [`### DNO-900: Never do the thing\n\n${AUTHORITY}\n\nRationale.`] }
+    })
+    expect(apply().status).toBe(0)
+    expect(readFileSync(join(memory, 'Pins.md'), 'utf-8')).toContain('DNO-900')
+  })
+
+  it('accepts a DNO that cites an authoritative project decision', () => {
+    orient('incremental')
+    plan({
+      appendEntries: {
+        'Pins.md': [
+          '### DNO-900: Never do the thing\n\n' +
+            '**Authority:** Authoritative project decision — CLAUDE.md, "Stack / workflow notes"\n\nRationale.'
+        ]
+      }
+    })
+    expect(apply().status).toBe(0)
+  })
+
+  // The guard lives in the shared hunk builder, so BOTH front ends inherit it.
+  // Guarding only `apply` would leave Codex free to mint unauthorised DNOs — the
+  // exact split that makes a two-front-end engine worth having one guard for.
+  it('applies the same guard on the Codex patch path', () => {
+    orient('incremental')
+    plan({
+      appendEntries: { 'Pins.md': ['### DNO-901: Never do the other thing\n\nNo authority here.'] }
+    })
+    const run = patch()
+    expect(run.status).not.toBe(0)
+    expect(run.out).toContain('DNO_AUTHORITY_REQUIRED: DNO-901')
+  })
+
+  // A DNO arriving by wholesale file replacement is still a new DNO. Checking only
+  // the append path would let the same unauthorised rule in through the other door.
+  it('checks a DNO introduced by replacing a whole file', () => {
+    orient('incremental')
+    plan({ replace: { 'Pins.md': '# Pins\n\n### DNO-902: Smuggled in\n\nNo authority.\n' } })
+    const run = apply()
+    expect(run.status).not.toBe(0)
+    expect(run.out).toContain('DNO_AUTHORITY_REQUIRED: DNO-902')
+  })
+
+  // Only DNOs carry this requirement. Demanding it of every entry class would make
+  // ordinary pins, decisions and patterns unsaveable.
+  it('leaves non-DNO entries alone', () => {
+    orient('incremental')
+    plan({ appendEntries: { 'Pins.md': ['### PIN-900: An ordinary pin\n\nNo authority line.'] } })
+    expect(apply().status).toBe(0)
+  })
+})
+
 describe('changed-set reporting', () => {
   // A correction that restores a file to its original content genuinely leaves
   // it unchanged, so claiming it changed produces "Expected file did not change".
