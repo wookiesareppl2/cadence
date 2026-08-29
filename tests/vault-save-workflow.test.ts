@@ -4,8 +4,11 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  expandMarkerPath,
   findProjectRoot,
+  markerPathCandidates,
   PROJECT_IDENTITY_FILES,
+  rehomeMarkerPaths,
   resolveRoute,
   stripFences
 } from '../src/main/vault-save/resolve-memory-route.mjs'
@@ -77,8 +80,9 @@ function fsHelpers() {
 
 function routeFrom(
   cwd: string,
-  homeDir?: string
-): { route: string; home?: string; workspaceRoot: string } {
+  homeDir?: string,
+  portability?: { env?: Record<string, string | undefined>; listDirectory?: (p: string) => string[] }
+): { route: string; home?: string; reason?: string; workspaceRoot: string } {
   const helpers = fsHelpers()
   const root = findProjectRoot(cwd, {
     gitTopLevel: gitTopLevelOf(cwd),
@@ -86,8 +90,8 @@ function routeFrom(
     hasIdentity: (dir: string) =>
       PROJECT_IDENTITY_FILES.some((f: string) => helpers.fileExists(join(dir, f)))
   })
-  const result = resolveRoute({ root, ...helpers })
-  return { route: result.route, home: result.home, workspaceRoot: root }
+  const result = resolveRoute({ root, ...helpers, ...portability })
+  return { route: result.route, home: result.home, reason: result.reason, workspaceRoot: root }
 }
 
 function gitTopLevelOf(cwd: string): string | null {
@@ -515,6 +519,111 @@ describe('Cadence vault save engine', () => {
     expect(stripFences('a\nb').unbalanced).toBe(false)
     // A tilde fence is not closed by backticks.
     expect(stripFences('a\n~~~\nx\n```\ny').unbalanced).toBe(true)
+  })
+
+  // A marker records ONE machine's literal path. The vault itself reaches a
+  // second machine through OneDrive, so every segment matches there except the
+  // account name — and the project was unusable on that machine purely because
+  // the marker said `sheld`. These pin the widened resolution.
+  it('resolves a marker recorded under another account on this machine', async () => {
+    const root = await temporaryDirectory()
+    // The vault as it exists HERE, under the account running now.
+    const home = join(root, 'Users', 'current')
+    const memory = join(home, 'OneDrive', 'Brain', '04 - Personal Projects', 'Proj', 'memory')
+    await mkdir(memory, { recursive: true })
+
+    // The marker as the OTHER machine wrote it: same shape, different account.
+    const recorded = join(root, 'Users', 'sheld', 'OneDrive', 'Brain', '04 - Personal Projects', 'Proj', 'memory')
+    const workspace = await tree(root, 'proj', {
+      'CLAUDE.md': `# Proj\n\nFelix memory home — Windows: \`${recorded}\`\n`
+    })
+
+    expect(routeFrom(workspace, undefined, { env: { USERPROFILE: home } })).toMatchObject({
+      route: 'vault',
+      home: memory
+    })
+  })
+
+  // The machine that WROTE the marker must be unaffected. Re-homing is a
+  // fallback, never a redirect: if the recorded path exists, it wins.
+  it('prefers the recorded path over a re-homed one when both exist', async () => {
+    const root = await temporaryDirectory()
+    const recordedHome = join(root, 'Users', 'sheld')
+    const otherHome = join(root, 'Users', 'current')
+    const tail = join('OneDrive', 'Brain', 'Proj', 'memory')
+    await mkdir(join(recordedHome, tail), { recursive: true })
+    await mkdir(join(otherHome, tail), { recursive: true })
+
+    const workspace = await tree(root, 'proj', {
+      'CLAUDE.md': `# Proj\n\nFelix memory home — Windows: \`${join(recordedHome, tail)}\`\n`
+    })
+
+    expect(routeFrom(workspace, undefined, { env: { USERPROFILE: otherHome } })).toMatchObject({
+      route: 'vault',
+      home: join(recordedHome, tail)
+    })
+  })
+
+  it('resolves a marker written with an environment variable', async () => {
+    const root = await temporaryDirectory()
+    const home = join(root, 'Users', 'anyone')
+    const memory = join(home, 'OneDrive', 'Brain', 'Proj', 'memory')
+    await mkdir(memory, { recursive: true })
+    const workspace = await tree(root, 'proj', {
+      'CLAUDE.md': '# Proj\n\nFelix memory home — Windows: `%USERPROFILE%\\OneDrive\\Brain\\Proj\\memory`\n'
+    })
+
+    expect(routeFrom(workspace, undefined, { env: { USERPROFILE: home } })).toMatchObject({
+      route: 'vault',
+      home: memory
+    })
+  })
+
+  // An unset variable must not expand to nothing. `%NOPE%\OneDrive\…` becoming
+  // `\OneDrive\…` is still a path: it would be tested as a real location, and on
+  // some machine such a directory exists. Refusing is the only safe answer.
+  it('refuses to expand a marker naming an unset variable', () => {
+    expect(expandMarkerPath('%NOPE%\\OneDrive\\Brain\\memory', {})).toBeNull()
+    expect(expandMarkerPath('C:\\Users\\a\\memory', {})).toBe('C:\\Users\\a\\memory')
+    // A `$` that is not a variable reference is left alone.
+    expect(expandMarkerPath('C:\\Users\\a\\budget$2026\\memory', {})).toBe(
+      'C:\\Users\\a\\budget$2026\\memory'
+    )
+    expect(expandMarkerPath('~/Brain/memory', { HOME: '/home/x' })).toBe('/home/x/Brain/memory')
+  })
+
+  it('offers the Windows accounts present when resolving a WSL marker', () => {
+    const candidates = rehomeMarkerPaths('/mnt/c/Users/sheld/OneDrive/Brain/Proj/memory', {
+      env: {},
+      listDirectory: () => ['Public', 'sam', 'sheld']
+    })
+    // The recorded account is not re-offered, and every other account is.
+    expect(candidates).toEqual([
+      '/mnt/c/Users/Public/OneDrive/Brain/Proj/memory',
+      '/mnt/c/Users/sam/OneDrive/Brain/Proj/memory'
+    ])
+  })
+
+  // Only the account segment may vary. If the whole tail had to be re-derived
+  // this would be a search, and a search can find a DIFFERENT project's memory.
+  it('never re-homes a path that is not under a user directory', () => {
+    expect(rehomeMarkerPaths('D:\\Vaults\\Brain\\memory', { env: { USERPROFILE: 'C:\\Users\\x' } })).toEqual([])
+    expect(markerPathCandidates('D:\\Vaults\\Brain\\memory', { env: { USERPROFILE: 'C:\\Users\\x' } })).toEqual([
+      'D:\\Vaults\\Brain\\memory'
+    ])
+  })
+
+  // The abort message is the only thing a stuck user has to act on. Naming just
+  // the recorded path sends them to fix a path that was never the problem.
+  it('reports every location it tried when none resolves', async () => {
+    const root = await temporaryDirectory()
+    const workspace = await tree(root, 'proj', {
+      'CLAUDE.md': '# Proj\n\nFelix memory home — Windows: `C:\\Users\\sheld\\Brain\\Proj\\memory`\n'
+    })
+    const result = routeFrom(workspace, undefined, { env: { USERPROFILE: 'C:\\Users\\other' } })
+    expect(result.route).toBe('abort')
+    expect(result.reason).toContain('C:\\Users\\sheld\\Brain\\Proj\\memory')
+    expect(result.reason).toContain('C:\\Users\\other\\Brain\\Proj\\memory')
   })
 
   it('keeps the canonical engine pure LF so the suite can import it on Windows', async () => {

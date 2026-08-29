@@ -10,6 +10,24 @@ export declare function isMarkerShaped(line: string): boolean
 export declare function findMarkerLines(text: string): string[]
 export declare function findNearMissLines(text: string): string[]
 export declare function extractWslPath(line: string): string | null
+export declare function extractMarkerPaths(line: string): string[]
+
+export type MarkerPathOptions = {
+  env?: Record<string, string | undefined>
+  /** Directory names under `path`; returns [] rather than throwing. */
+  listDirectory?: (path: string) => string[]
+}
+
+/** Null when the path names an environment variable that is not set. */
+export declare function expandMarkerPath(
+  p: string | null,
+  env?: Record<string, string | undefined>
+): string | null
+
+export declare function rehomeMarkerPaths(p: string | null, options?: MarkerPathOptions): string[]
+
+/** Recorded form first, then expanded, then re-homed; de-duplicated. */
+export declare function markerPathCandidates(p: string, options?: MarkerPathOptions): string[]
 
 export declare function findProjectRoot(
   startDir: string,
@@ -27,6 +45,8 @@ export declare function resolveRoute(options: {
   readFileSafe: (path: string) => string | null
   isDirectory: (path: string) => boolean
   fileExists: (path: string) => boolean
+  env?: Record<string, string | undefined>
+  listDirectory?: (path: string) => string[]
 }): { route: MemoryRoute; home?: string; reason?: string }
 
 export declare function findBrainRoot(options: {

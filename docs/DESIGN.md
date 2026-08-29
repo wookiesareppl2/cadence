@@ -298,6 +298,22 @@ provider, and each exists because its absence shipped a real defect.
   outside the reader's window and failed validation with an error pointing nowhere near the
   cause. Appends anchor on the last dated line in the section, or on the heading when the log
   is empty, and a missing heading is a hard error rather than a silent end-of-file append.
+- **A memory-home marker is resolved, not merely read.** The marker records one machine's
+  literal path, but the vault reaches other machines through OneDrive, where every segment
+  matches except the account name. So each recorded path stands for several locations it could
+  mean here, tried in order: exactly as written, then with `%VAR%` / `${VAR}` / `$VAR` / `~`
+  expanded, then re-homed onto the current account. The recorded form is always tried first, so
+  the machine that wrote the marker resolves exactly as before. A candidate is only ever accepted
+  by `isDirectory`, so this can widen where a memory home is *found* but can never invent one —
+  and the whole tail below the account segment must still match, down to the project's own
+  `memory` folder. An unset variable makes the path resolve to nothing rather than expanding to
+  empty, because `%NOPE%\OneDrive\…` collapsing to `\OneDrive\…` is still a path and would be
+  tested as a real location. The accounts root is derived from `USERPROFILE`, never assumed to be
+  `<drive>:\Users` — that assumption mis-slices any path with an earlier `Users` segment. Under
+  WSL there is no `USERPROFILE`, so the accounts present under `/mnt/<drive>/Users` are offered
+  instead. When nothing resolves, the abort message lists every location tried, not just the one
+  written: on a second machine those differ, and naming only the recorded path sends the reader to
+  fix something that was never the problem.
 - **A DNO must state its authority.** Every new or replaced `DNO-` entry must carry
   `**Authority:** Explicit user approval — <evidence>` or `**Authority:** Authoritative project
   decision — <file and heading>`; the collector refuses the write otherwise. DNOs are the one

@@ -3,6 +3,37 @@
 Status: **banked / postponed** (2026-07-16). This document preserves the design and
 implementation record, but cross-device sync is not part of the current release prototype.
 
+## Re-read this before resuming (2026-08-29)
+
+The premise below has shifted, and three statements in this document are now wrong. Resuming
+from the banked plan without reading this section will build for a layout that no longer exists.
+
+1. **Project memory left the project.** Five days after this was banked, memory moved into the
+   Felix Obsidian vault (`…/Felix/Brain/<area>/<project>/memory`), outside the project folder.
+   `buildContextBundle` collects `CLAUDE.md`/`AGENTS.md`, `.claude/`, `.codex/`, Claude's central
+   memory, and the project workspace — **it does not collect the vault memory home.** So the
+   feature as built would sync the marker that points at memory without syncing the memory. Any
+   Phase 3 work must settle that first; it is a design question, not an implementation detail.
+2. **OneDrive already does most of this.** The vault lives under OneDrive, so the memory itself is
+   cross-device today on Windows. What is genuinely unsynced is Cadence's own project workspace
+   (notes/tasks, local database only) and the git-ignored instruction files. That is a much
+   smaller problem than the one this document was written to solve.
+3. **Two "why it never worked" reasons are fixed.** The missing OAuth client ID (reason 2) shipped
+   in `72e24ea`; a built-in device-flow client ID is present. The repo-keying hazard was fixed in
+   `28626b9` — sync keys by the project's own remote, so a caller-supplied repo can no longer
+   point one project's sync at another project's vault. Reasons 1 (manual/opt-in) and 3
+   (GitHub-repo-only) still stand.
+
+**Phase 3 was never built** — no auto-restore, no auto-save, no conflict UI. `syncProjectContextToVault`
+has exactly one caller: an IPC handler behind a button in the import modal. That, not the feature
+gate, is why the vault repo is still empty.
+
+Separately, marker paths are no longer machine-specific: the resolver expands environment
+variables and re-homes a path recorded under another account (see `docs/DESIGN.md`, "A
+memory-home marker is resolved, not merely read"). The `@` hot-layer imports written into
+`CLAUDE.md` remain literal absolute paths — Claude Code reads those, not our resolver, so their
+portability is unverified.
+
 ## Banked behaviour
 
 `CONTEXT_VAULT_SYNC_ENABLED` in `src/shared/context-vault-feature.ts` is the single

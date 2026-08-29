@@ -111,6 +111,136 @@ export function extractMarkerPaths(line) {
   return [wsl, windows ? windows[1] : null].filter(Boolean)
 }
 
+// ── Portable marker resolution ───────────────────────────────────────────────
+//
+// A marker records ONE machine's literal path. The same vault reaches a second
+// machine through OneDrive, where every segment matches except the account name
+// in the middle — so a perfectly valid, fully-synced vault was unreachable there
+// purely because the marker said `sheld` and the machine said something else.
+// The resolver aborts loudly in that case, which is safe but leaves the project
+// unusable until someone hand-edits the marker on every device.
+//
+// Rather than rewrite markers, widen what a marker RESOLVES to. Both helpers
+// below only ever propose candidates; a candidate is accepted solely by
+// `isDirectory`, so nothing here can invent a memory home that does not exist.
+
+const WSL_USER_PATH = /^\/mnt\/([A-Za-z])\/Users\/([^/]+)\/(.+)$/
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/** Split `…/parent/name` into its parts; null when there is no separator. */
+function splitTrailingSegment(p) {
+  const match = /^(.*)[\\/]([^\\/]+)$/.exec(p)
+  return match ? { parent: match[1], name: match[2] } : null
+}
+
+/**
+ * Expand `%VAR%`, `${VAR}`, `$VAR` and a leading `~` against the environment,
+ * so a marker can be written portably by hand.
+ *
+ * Returns null when the path names a variable the environment does not set.
+ * Substituting empty string would leave a half-formed path (`\OneDrive\...`),
+ * and a half-formed path is still a path: it would be tested as a real location
+ * and could, on some machine where such a directory happens to exist, resolve
+ * to somebody else's memory. Refusing is the only safe answer.
+ */
+export function expandMarkerPath(p, env = process.env) {
+  if (!p) return null
+  let missing = false
+  const lookup = (name) => {
+    const value = env[name]
+    if (value === undefined || value === '') {
+      missing = true
+      return ''
+    }
+    return value
+  }
+  let out = p
+    .replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (_, name) => lookup(name))
+    .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, name) => lookup(name))
+    // `$` followed by a letter only, so a literal path like `budget$2026` is
+    // left alone rather than read as a variable reference.
+    .replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (_, name) => lookup(name))
+  if (/^~(?=[\\/]|$)/.test(out)) {
+    const home = env.USERPROFILE || env.HOME
+    if (home) out = home.replace(/[\\/]+$/, '') + out.slice(1)
+    else missing = true
+  }
+  return missing ? null : out
+}
+
+/**
+ * Propose the same path under the account running now.
+ *
+ * Only the account segment is replaced; the entire tail — the OneDrive folder,
+ * the vault, the area, the project, its `memory` directory — must still exist
+ * exactly as recorded for the candidate to be accepted. A false match would
+ * require a second account on the same machine holding an identically-shaped
+ * vault down to the project name, and even then it would be a real memory home
+ * rather than a fabricated one.
+ *
+ * The accounts root is derived from `USERPROFILE` rather than assumed to be
+ * `<drive>:\Users`. Hardcoding that layout looks right and quietly mis-slices
+ * any path where a `Users` segment appears earlier than the real one, producing
+ * a candidate built from the wrong tail. Taking the parent of the CURRENT home
+ * cannot disagree with the machine it is running on.
+ *
+ * WSL has no `USERPROFILE` (its `HOME` is the Linux account, not the Windows
+ * one), so there the accounts present under `/mnt/<drive>/Users` are offered
+ * instead — a short, local list.
+ */
+export function rehomeMarkerPaths(p, { env = process.env, listDirectory } = {}) {
+  if (!p) return []
+  const out = []
+
+  const home = env.USERPROFILE ? env.USERPROFILE.replace(/[\\/]+$/, '') : null
+  const homeParts = home ? splitTrailingSegment(home) : null
+  if (homeParts) {
+    const sameRoot = new RegExp(`^${escapeRegExp(homeParts.parent)}[\\\\/]([^\\\\/]+)[\\\\/](.+)$`, 'i')
+    const match = sameRoot.exec(p)
+    if (match && match[1].toLowerCase() !== homeParts.name.toLowerCase()) {
+      out.push(`${home}\\${match[2].split('/').join('\\')}`)
+    }
+  }
+
+  const wsl = WSL_USER_PATH.exec(p)
+  if (wsl && listDirectory) {
+    const [, drive, recorded, tail] = wsl
+    for (const account of listDirectory(`/mnt/${drive}/Users`)) {
+      if (account.toLowerCase() === recorded.toLowerCase()) continue
+      out.push(`/mnt/${drive}/Users/${account}/${tail}`)
+    }
+  }
+
+  return out
+}
+
+/**
+ * Every location one marker path could legitimately mean, most literal first:
+ * exactly what was written, then its environment-expanded form, then the same
+ * path re-homed onto the current account. Order matters — the recorded path
+ * wins whenever it exists, so nothing changes on the machine that wrote it.
+ */
+export function markerPathCandidates(p, options = {}) {
+  const seen = new Set()
+  const out = []
+  const add = (candidate) => {
+    if (!candidate) return
+    const key = candidate.toLowerCase()
+    if (seen.has(key)) return
+    seen.add(key)
+    out.push(candidate)
+  }
+
+  add(p)
+  const expanded = expandMarkerPath(p, options.env ?? process.env)
+  add(expanded)
+  for (const candidate of rehomeMarkerPaths(expanded ?? p, options)) add(candidate)
+  return out
+}
+
 /**
  * Walk upward for the project's own root.
  *
@@ -144,7 +274,7 @@ export function findProjectRoot(startDir, { gitTopLevel, homeDir, hasIdentity } 
   return start
 }
 
-export function resolveRoute({ root, readFileSafe, isDirectory, fileExists }) {
+export function resolveRoute({ root, readFileSafe, isDirectory, fileExists, env, listDirectory }) {
   let raw = ''
   let stripped = ''
   let unbalanced = false
@@ -166,9 +296,17 @@ export function resolveRoute({ root, readFileSafe, isDirectory, fileExists }) {
       unresolved.push('<no WSL: or Windows: path on marker line>')
       continue
     }
-    const found = paths.find((candidate) => isDirectory(candidate))
+    // Each recorded path stands for several locations it could legitimately
+    // mean on THIS machine (see markerPathCandidates). The recorded form is
+    // tried first, so the machine that wrote the marker resolves exactly as
+    // before and only a machine where that path is absent looks further.
+    const tried = paths.flatMap((path) => markerPathCandidates(path, { env, listDirectory }))
+    const found = tried.find((candidate) => isDirectory(candidate))
     if (found) return { route: 'vault', home: found }
-    unresolved.push(paths.join(' | '))
+    // Report what was actually tried, not merely what was written: on a second
+    // machine the two differ, and a message naming only the recorded path sends
+    // the reader to fix a path that was never the problem.
+    unresolved.push(tried.join(' | '))
   }
 
   if (candidates.length > 0) {
@@ -295,6 +433,17 @@ function fileExists(path) {
   }
 }
 
+/** Directory names only, and never a throw: an unreadable path simply offers nothing. */
+function listDirectory(path) {
+  try {
+    return readdirSync(path, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+  } catch {
+    return []
+  }
+}
+
 function gitTopLevel(cwd) {
   try {
     // Resolved without spawning git: walk up for a .git entry.
@@ -316,7 +465,14 @@ export function main(cwd = process.cwd()) {
     homeDir: process.env.HOME || process.env.USERPROFILE || null,
     hasIdentity: (dir) => PROJECT_IDENTITY_FILES.some((f) => fileExists(join(dir, f)))
   })
-  const result = resolveRoute({ root, readFileSafe, isDirectory, fileExists })
+  const result = resolveRoute({
+    root,
+    readFileSafe,
+    isDirectory,
+    fileExists,
+    env: process.env,
+    listDirectory
+  })
   const lines = [`MEMORY_ROUTE=${result.route}`]
   if (result.home) lines.push(`MEMORY_HOME=${result.home}`)
   lines.push(`WORKSPACE_ROOT=${root}`)
