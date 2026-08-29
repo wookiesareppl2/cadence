@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   defaultGitHubDirectoryName,
+  formatGitError,
   normalizedGitHubCloneUrl,
   parseGitHubRepository
 } from '../src/shared/github-import'
@@ -48,5 +49,43 @@ describe('normalizedGitHubCloneUrl', () => {
 
   it('keeps SSH clone URLs unchanged', () => {
     expect(normalizedGitHubCloneUrl('git@github.com:openai/codex.git')).toBe('git@github.com:openai/codex.git')
+  })
+})
+
+// Git is the one external program Cadence needs but does not bundle, so this is
+// the message a user on a clean Windows PC sees. It cannot be reached by testing
+// on a machine that HAS git, which is exactly why it is pinned here.
+describe('formatGitError', () => {
+  it('names Git and the fix when the binary is missing', () => {
+    const enoent = Object.assign(new Error('spawn git ENOENT'), { code: 'ENOENT' })
+    const message = formatGitError(enoent, 'Could not sync the context vault.')
+    expect(message).toContain('Git is not installed')
+    // The raw spawn text must not survive — it is what made the old message useless.
+    expect(message).not.toContain('ENOENT')
+    expect(message).not.toContain('spawn')
+  })
+
+  // A command that RAN and failed carries the only text that explains why. Treating
+  // every failure as "git is missing" would hide "repository not found" behind advice
+  // to install software the user already has.
+  it('passes through the real stderr of a command that ran and failed', () => {
+    const failed = Object.assign(new Error('Command failed'), {
+      code: 128,
+      stderr: 'remote: Repository not found.'
+    })
+    const message = formatGitError(failed, 'Could not clone.')
+    expect(message).toBe('Could not clone. remote: Repository not found.')
+  })
+
+  it('falls back to the caller message when there is no detail', () => {
+    expect(formatGitError({}, 'Could not clone.')).toBe('Could not clone.')
+    expect(formatGitError(null, 'Could not clone.')).toBe('Could not clone.')
+  })
+
+  // An exit code that merely stringifies to ENOENT-ish must not be mistaken for a
+  // missing binary; only the exact string code means the spawn itself failed.
+  it('does not treat a numeric exit code as a missing binary', () => {
+    const message = formatGitError({ code: 127, stderr: 'git: command failed' }, 'Could not clone.')
+    expect(message).toBe('Could not clone. git: command failed')
   })
 })

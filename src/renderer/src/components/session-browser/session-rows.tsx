@@ -324,6 +324,7 @@ export function ProjectList({
   loading,
   error,
   emptyLabel,
+  emptyBody,
   selectedProjectId,
   onSelectProject,
   onRenameProject,
@@ -333,6 +334,11 @@ export function ProjectList({
   loading: boolean
   error: string | null
   emptyLabel: string
+  // Shown instead of the bare label when the user has NO projects at all, as
+  // opposed to a filter that matched none. A first-run list that only says "none
+  // found" is a dead end: projects appear here by being worked in, so someone who
+  // has just installed both CLIs has nothing and no stated way to get something.
+  emptyBody?: JSX.Element | null
   selectedProjectId: string | null
   onSelectProject: (projectId: string) => void
   onRenameProject: (projectId: string, name: string | null) => Promise<void>
@@ -340,7 +346,8 @@ export function ProjectList({
 }): JSX.Element {
   if (loading) return <div className="session-placeholder">Scanning projects...</div>
   if (error) return <div className="session-placeholder error">{error}</div>
-  if (projects.length === 0) return <div className="session-placeholder">{emptyLabel}</div>
+  if (projects.length === 0)
+    return emptyBody ?? <div className="session-placeholder">{emptyLabel}</div>
 
   return (
     <>

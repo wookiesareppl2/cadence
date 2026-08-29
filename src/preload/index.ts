@@ -22,7 +22,7 @@ import type {
   ProjectFileWatchResult
 } from '@shared/project-files'
 import type { SearchQuery, SearchResults } from '@shared/search'
-import type { SetupAction, SetupCommand, SetupStatus } from '@shared/setup'
+import type { GitSetup, SetupAction, SetupCommand, SetupStatus } from '@shared/setup'
 import type { MemoryFileContent, MemoryWriteResult, ProjectMemory } from '@shared/memory'
 import { CONTEXT_VAULT_BANKED_REASON, CONTEXT_VAULT_SYNC_ENABLED } from '@shared/context-vault-feature'
 import type {
@@ -118,7 +118,8 @@ const api = {
     getCommand: (platform: PlatformId, action: SetupAction): Promise<SetupCommand> =>
       ipcRenderer.invoke('setup:command', platform, action),
     disconnect: (platform: PlatformId): Promise<{ ok: boolean }> =>
-      ipcRenderer.invoke('setup:disconnect', platform)
+      ipcRenderer.invoke('setup:disconnect', platform),
+    getGit: (): Promise<GitSetup> => ipcRenderer.invoke('setup:git')
   },
   memory: {
     list: (platform: PlatformId, projectId: string | null): Promise<ProjectMemory> =>

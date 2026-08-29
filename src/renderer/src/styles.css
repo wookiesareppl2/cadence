@@ -816,6 +816,62 @@ button {
   border-color: color-mix(in srgb, var(--caution) 45%, var(--border));
 }
 
+/* First-run empty state: same frame as .session-placeholder, but prose rather than
+   the mono status voice, because this one is read by someone who has just installed
+   the app and needs a next step — not a terse status line. */
+.project-empty-first-run {
+  margin: 8px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--surface-0);
+  font-family: var(--font-ui);
+}
+
+.project-empty-title {
+  margin: 0 0 6px;
+  color: var(--text-1);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.project-empty-body {
+  margin: 0 0 10px;
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.project-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Accent buttons, per the design system's primary/create style. */
+.project-empty-actions button {
+  padding: 4px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--accent);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background var(--motion-sidebar) var(--ease-out-expo),
+    color var(--motion-sidebar) var(--ease-out-expo);
+}
+
+.project-empty-actions button:hover {
+  background: var(--accent);
+  color: var(--surface-0);
+}
+
+.project-empty-actions button:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .session-item {
   width: 100%;
   display: grid;

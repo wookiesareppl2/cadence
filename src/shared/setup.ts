@@ -24,3 +24,12 @@ export type SetupCommand = {
   command: string
   label: string
 }
+
+// Git is a prerequisite for importing a repository, NOT a platform — deliberately
+// outside PlatformId and SetupStatus so no platform-keyed surface inherits it.
+// Unlike the Node runtime it is not bundled, so it has to be detected and offered.
+export type GitSetup = {
+  installed: boolean
+  version: string | null
+  installCommand: SetupCommand
+}

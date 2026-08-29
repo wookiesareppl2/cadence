@@ -10,6 +10,7 @@ import {
   type GitHubRepositorySummary
 } from '@shared/github-import'
 import { CONTEXT_VAULT_SYNC_ENABLED } from '@shared/context-vault-feature'
+import type { GitSetup } from '@shared/setup'
 import type { ProjectSessionBrowserState } from './use-session-browser'
 
 const CLIENT_ID_KEY = 'cadence.github.oauthClientId'
@@ -37,6 +38,7 @@ export function GitHubImportModal({
   const [targetDirectoryName, setTargetDirectoryName] = useState('')
   const [restoreContext, setRestoreContext] = useState(true)
   const [vaultRepositoryUrl, setVaultRepositoryUrl] = useState(() => localStorage.getItem(VAULT_URL_KEY) ?? '')
+  const [git, setGit] = useState<GitSetup | null>(null)
   const [busy, setBusy] = useState<BusyAction>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -78,6 +80,26 @@ export function GitHubImportModal({
   useEffect(() => {
     void refreshAuth()
   }, [refreshAuth])
+
+  // Every path in this modal shells out to git, which Cadence does not bundle.
+  // Check once on open so a machine without it says so up front, instead of the
+  // user filling the form and getting a spawn failure at the end.
+  useEffect(() => {
+    let cancelled = false
+    void window.dashboard.setup
+      .getGit()
+      .then((next) => {
+        if (!cancelled) setGit(next)
+      })
+      .catch(() => {
+        // Leave it unknown rather than claim git is missing on a probe failure —
+        // blocking the modal on our own error would be worse than letting the
+        // real command report what went wrong.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (auth?.authenticated) void refreshRepos()
@@ -290,6 +312,16 @@ export function GitHubImportModal({
         </div>
 
         <div className="github-import-body">
+          {git && !git.installed ? (
+            <div className="github-import-prereq" role="alert">
+              <p>
+                <strong>Git isn’t installed.</strong> Cadence uses Git to clone and update
+                repositories, so importing needs it. Install it, then reopen this window.
+              </p>
+              <code>{git.installCommand.command}</code>
+            </div>
+          ) : null}
+
           <div className="github-import-tabs" role="tablist" aria-label="GitHub import mode">
             <button
               type="button"

@@ -637,6 +637,36 @@
   outline-offset: 2px;
 }
 
+/* Missing prerequisite (Git). Uses the caution treatment of .github-import-status
+   rather than its own colour, because it is the same class of message: something
+   the user must resolve before this modal can do anything. */
+.github-import-prereq {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--caution) 42%, var(--border));
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--caution) 10%, var(--surface-0));
+  color: var(--text-1);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.github-import-prereq p {
+  margin: 0 0 6px;
+}
+
+.github-import-prereq code {
+  display: block;
+  padding: 5px 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--surface-0);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-x: auto;
+  white-space: pre;
+}
+
 .github-import-status {
   padding: 8px 10px;
   border: 1px solid color-mix(in srgb, var(--success) 42%, var(--border));

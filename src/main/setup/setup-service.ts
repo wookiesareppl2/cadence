@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { PlatformId } from '@shared/platform'
-import type { PlatformSetup, SetupAction, SetupCommand, SetupStatus } from '@shared/setup'
+import type { GitSetup, PlatformSetup, SetupAction, SetupCommand, SetupStatus } from '@shared/setup'
 
 // Drives the first-run onboarding: detect whether each CLI is installed and signed
 // in, and hand the renderer the official command to run for install / sign-in. The
@@ -107,6 +107,24 @@ const COMMANDS: Record<PlatformId, Record<SetupAction, SetupCommand>> = {
 
 export async function getSetupCommand(platform: PlatformId, action: SetupAction): Promise<SetupCommand> {
   return COMMANDS[platform][action]
+}
+
+// Git is a prerequisite, not a platform: nothing in Cadence signs in to it, and it
+// backs one feature (importing a repository) rather than a provider. Keeping it out
+// of PLATFORM_CONFIG is deliberate — a third card in the platform row would read as
+// a third assistant, and every platform-keyed surface in the app would inherit it.
+//
+// It is detected because it is NOT bundled, unlike the Node runtime. On a clean
+// Windows PC the import path failed with a raw `spawn git ENOENT` surfaced through
+// a generic message, which tells a non-technical user nothing about what to install.
+export const GIT_INSTALL_COMMAND: SetupCommand = {
+  command: 'winget install --id Git.Git -e --source winget',
+  label: 'Installing Git…'
+}
+
+export async function getGitStatus(): Promise<GitSetup> {
+  const version = await detectVersion('git')
+  return { installed: version !== null, version, installCommand: GIT_INSTALL_COMMAND }
 }
 
 // Disconnect = local credential cleanup (the CLIs' own logout does only this). Send

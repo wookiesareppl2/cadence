@@ -282,3 +282,32 @@ export function normalizedGitHubCloneUrl(repositoryUrl: string): string | null {
   if (/^(git@github\.com:|ssh:\/\/git@github\.com\/)/i.test(value)) return value
   return `https://github.com/${repo.owner}/${repo.repo}.git`
 }
+
+/**
+ * Turn a failed git invocation into something a non-technical user can act on.
+ *
+ * Git is NOT bundled the way the Node runtime is, so on a clean Windows PC every
+ * git call fails identically — ENOENT from the spawn — and the raw text surfaced
+ * as "Could not sync the context vault. spawn git ENOENT". That names neither the
+ * missing program nor the fix. The translation lives here, in the one place all
+ * four call sites share, so none of them can drift back to the raw message.
+ *
+ * Only a spawn failure is rewritten. A git command that RAN and failed has real
+ * stderr worth showing verbatim: "repository not found" and "authentication
+ * failed" are the messages that actually tell the user what went wrong.
+ */
+export function formatGitError(error: unknown, fallback: string): string {
+  // execFile reports a missing binary as the string 'ENOENT'; a command that ran
+  // and exited non-zero reports a NUMBER, so this cannot swallow a real failure.
+  if (error && typeof error === 'object' && (error as { code?: unknown }).code === 'ENOENT') {
+    return 'Git is not installed, so Cadence cannot work with repositories. Install Git and try again.'
+  }
+  const detail =
+    error && typeof error === 'object'
+      ? ((error as { stderr?: unknown }).stderr as string | undefined) ||
+        ((error as { stdout?: unknown }).stdout as string | undefined) ||
+        ((error as { message?: unknown }).message as string | undefined)
+      : null
+  const text = typeof detail === 'string' ? detail.trim() : ''
+  return text ? `${fallback} ${text}` : fallback
+}

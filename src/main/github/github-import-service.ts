@@ -7,6 +7,7 @@ import type { PlatformId } from '@shared/platform'
 import { centralSlug } from '@shared/memory'
 import { toNativeRoot } from '@shared/project-files'
 import {
+  formatGitError,
   GITHUB_CONTEXT_VAULT_REPO_NAME,
   normalizedGitHubCloneUrl,
   parseGitHubRepository,
@@ -603,17 +604,6 @@ function runGitWithEnv(
       }
     )
   })
-}
-
-function formatGitError(error: unknown, fallback: string): string {
-  const detail =
-    error && typeof error === 'object'
-      ? ((error as { stderr?: unknown }).stderr as string | undefined) ||
-        ((error as { stdout?: unknown }).stdout as string | undefined) ||
-        ((error as { message?: unknown }).message as string | undefined)
-      : null
-  const text = typeof detail === 'string' ? detail.trim() : ''
-  return text ? `${fallback} ${text}` : fallback
 }
 
 async function inferGithubRemote(location: ProjectLocation): Promise<string | null> {

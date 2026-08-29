@@ -62,7 +62,7 @@ import {
 import { searchWorkspace } from './search/search-service'
 import type { SearchQuery } from '@shared/search'
 import { getProjectMemory, readMemoryFile, writeMemoryFile } from './memory/memory-service'
-import { disconnectPlatform, getSetupCommand, getSetupStatus } from './setup/setup-service'
+import { disconnectPlatform, getGitStatus, getSetupCommand, getSetupStatus } from './setup/setup-service'
 import type { SetupAction } from '@shared/setup'
 import type {
   GitHubContextStatusRequest,
@@ -532,6 +532,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     getSetupCommand(platform, action)
   )
   ipcMain.handle('setup:disconnect', (_event, platform: PlatformId) => disconnectPlatform(platform))
+  ipcMain.handle('setup:git', () => getGitStatus())
 
   ipcMain.handle('workspaces:list', () => listWorkspaces())
   ipcMain.handle('workspaces:attach', (event) => attachWorkspace(BrowserWindow.fromWebContents(event.sender)))

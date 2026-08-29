@@ -98,6 +98,11 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
   const [vaultManagerOpen, setVaultManagerOpen] = useState(false)
   const projectEmptyMessage =
     browser.projects.length > 0 && browser.filteredProjects.length === 0 ? 'No matching projects' : emptyLabel
+  // A genuinely empty catalog, not a filter that matched nothing — only the former
+  // deserves first-run guidance, and offering "open a folder" to someone whose
+  // search simply missed would read as if their projects had disappeared.
+  const hasNoProjectsAtAll =
+    !browser.loading && !browser.error && browser.projects.length === 0 && browser.query.trim() === ''
   const selectedProject = browser.selectedProject
   const canStartSession = Boolean(selectedProject?.path)
 
@@ -183,6 +188,25 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
               loading={browser.loading}
               error={browser.error}
               emptyLabel={projectEmptyMessage}
+              emptyBody={
+                hasNoProjectsAtAll ? (
+                  <div className="project-empty-first-run">
+                    <p className="project-empty-title">No projects yet</p>
+                    <p className="project-empty-body">
+                      Projects appear here once you’ve worked in a folder with Claude or Codex.
+                      To add one now, open a folder on this PC or import a repository.
+                    </p>
+                    <div className="project-empty-actions">
+                      <button type="button" onClick={() => browser.attachWorkspace()}>
+                        Open a folder…
+                      </button>
+                      <button type="button" onClick={() => setGithubImportOpen(true)}>
+                        Import from GitHub
+                      </button>
+                    </div>
+                  </div>
+                ) : null
+              }
               selectedProjectId={selectedProject?.id ?? null}
               onSelectProject={browser.selectProject}
               onRenameProject={browser.renameProject}

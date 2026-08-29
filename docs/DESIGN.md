@@ -138,6 +138,30 @@ conflict-status controls. The patterns below remain the preserved design for lat
   must prefer the managed private `cadence-context-vault` repo.
 - **Security messaging:** UI may show high-level states (`encrypted`, `memory`,
   `private`) but must not display tokens, raw auth headers, or decrypted context.
+- **Missing prerequisite:** when the flow needs a program Cadence does not bundle,
+  say so on open rather than at failure. `.github-import-prereq` sits at the top of
+  the modal body using the caution treatment of `.github-import-status` — same class
+  of message, so the same colour — with one plain sentence and the install command in
+  a `<code>` block. Never leave the user to discover it by filling the form and
+  hitting a spawn error. Detect on open, and on a probe failure leave the state
+  unknown rather than claiming the tool is missing.
+
+## Empty states
+
+An empty list must say what would fill it. `.session-placeholder` is the terse mono
+status voice — right for "No matching projects" or "Scanning…", where the user already
+knows the context. It is wrong for a first run.
+
+When a surface is empty because the user has *nothing yet*, use the
+`.project-empty-first-run` pattern: the same frame as `.session-placeholder` but
+`--font-ui` prose — a short `--text-1` title, a `--text-3` sentence explaining how
+entries get here, and accent buttons for the ways to add one. Projects appear in
+Cadence by being worked in with a provider CLI, so a new user has none and a bare
+"No projects found" is a dead end with no stated way out.
+
+Distinguish *empty* from *filtered to nothing*. Offer first-run actions only when the
+underlying collection is genuinely empty and no query is active; showing "open a
+folder" to someone whose search simply missed reads as though their work vanished.
 
 ## Splash / loading screen
 
