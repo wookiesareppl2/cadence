@@ -365,9 +365,12 @@ describe('Cadence vault save engine', () => {
       expect(baseline).toContain(`@${toClaudeImportPath(join(memory, file))}`)
     }
     // Every import must name a file the bootstrap actually created, or the session
-    // opens with an unresolvable import instead of the hot layer.
+    // opens with an unresolvable import instead of the hot layer. The tilde is
+    // expanded the way Claude Code expands it, so this checks the real target.
+    const home = (process.env.USERPROFILE ?? process.env.HOME ?? '').replaceAll('\\', '/')
     for (const line of hotLayerImportLines(memory).split('\n')) {
-      expect(existsSync(line.slice(1).replaceAll('\\ ', ' '))).toBe(true)
+      const written = line.slice(1).replaceAll('\\ ', ' ')
+      expect(existsSync(written.startsWith('~/') ? home + written.slice(1) : written)).toBe(true)
     }
   })
 
@@ -375,12 +378,34 @@ describe('Cadence vault save engine', () => {
   // truncates it. Vault paths live under "…/04 - Personal Projects/…", which
   // contains three — the common case, not an exotic one.
   it('escapes spaces and normalises separators in an import path', () => {
-    expect(toClaudeImportPath('C:\\Users\\a b\\Brain\\04 - Projects\\memory')).toBe(
-      'C:/Users/a\\ b/Brain/04\\ -\\ Projects/memory'
+    expect(toClaudeImportPath('C:\\Vaults\\a b\\Brain\\04 - Projects\\memory', {})).toBe(
+      'C:/Vaults/a\\ b/Brain/04\\ -\\ Projects/memory'
     )
     // A newline cannot be escaped into one line at all, so refuse rather than
     // write an import that silently reads as two broken ones.
-    expect(() => toClaudeImportPath('C:\\a\nb')).toThrow(/newline/)
+    expect(() => toClaudeImportPath('C:\\a\nb', {})).toThrow(/newline/)
+  })
+
+  // The import lines travel between machines inside CLAUDE.md, so a hardcoded
+  // account name is the same defect the marker had. Claude Code expands `~` —
+  // verified by running it on Windows, not assumed from the documentation.
+  it('writes an import under the home directory as a home-relative path', () => {
+    const env = { USERPROFILE: 'C:\\Users\\sheld' }
+    expect(toClaudeImportPath('C:\\Users\\sheld\\OneDrive\\Brain\\04 - P\\memory\\Pins.md', env)).toBe(
+      '~/OneDrive/Brain/04\\ -\\ P/memory/Pins.md'
+    )
+    // Case-insensitively, because Windows paths are.
+    expect(toClaudeImportPath('c:\\users\\SHELD\\OneDrive\\x.md', env)).toBe('~/OneDrive/x.md')
+    // Outside the home directory there is nothing to relativise against, so the
+    // absolute path stands — better an honest absolute path than a wrong tilde.
+    expect(toClaudeImportPath('D:\\Vaults\\Brain\\x.md', env)).toBe('D:/Vaults/Brain/x.md')
+    // A sibling account whose name merely starts with the home path must not be
+    // mistaken for being inside it.
+    expect(toClaudeImportPath('C:\\Users\\sheldon\\OneDrive\\x.md', env)).toBe(
+      'C:/Users/sheldon/OneDrive/x.md'
+    )
+    // With no home known, nothing is relativised rather than guessed.
+    expect(toClaudeImportPath('C:\\Users\\sheld\\x.md', {})).toBe('C:/Users/sheld/x.md')
   })
 
   // Bootstrap reports success from having run its steps, not from having verified

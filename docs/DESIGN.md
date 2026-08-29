@@ -327,7 +327,15 @@ provider, and each exists because its absence shipped a real defect.
   memory lives; the imports are what actually load it, so a bootstrap that wrote the marker alone
   produced a project that looked correctly wired and silently began every session with no memory.
   Import paths normalise separators and escape spaces — vault paths contain them — and a path with
-  a newline is refused rather than written as two broken imports.
+  a newline is refused rather than written as two broken imports. An import under the user's home
+  is written `~/…` rather than `C:/Users/<name>/…`, because `CLAUDE.md` travels between machines
+  and a baked-in account name is the same defect the marker had; spaces are escaped after the
+  tilde substitution, or an escaped path would never match an unescaped home. Claude Code's tilde
+  expansion was verified by running it on Windows rather than taken from the documentation.
+  These imports are always *external* — the vault sits outside the project — so Claude Code asks
+  for approval once per project. Accepting is what makes the hot layer load by itself; declining
+  disables them permanently and silently, which is why `/start` reads the same three files through
+  the marker and the imports are treated as a convenience rather than the mechanism.
 - **Derive, never restate.** One fact, one source. Every shipped defect in this path came from
   restating a single value for two consumers — a fidelity held in two places, a changed-file set
   computed twice, a hand-written `.d.mts` declaring a module's exports a second time. The scripts

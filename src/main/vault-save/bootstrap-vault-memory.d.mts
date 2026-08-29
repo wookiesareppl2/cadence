@@ -12,10 +12,21 @@ export declare function targetIsOccupied(
   exists?: (path: string) => boolean
 ): boolean
 
-/** Throws on a path containing a newline, which cannot be escaped onto one line. */
-export declare function toClaudeImportPath(p: string): string
+/**
+ * Home-relative (`~/…`) when the path is under the user's home, so the import
+ * resolves whatever the account is called. Throws on a path containing a
+ * newline, which cannot be escaped onto one line.
+ */
+export declare function toClaudeImportPath(
+  p: string,
+  env?: Record<string, string | undefined>
+): string
+
 /** The three `@`-prefixed import lines that load the hot layer, newline-joined. */
-export declare function hotLayerImportLines(memoryDir: string): string
+export declare function hotLayerImportLines(
+  memoryDir: string,
+  env?: Record<string, string | undefined>
+): string
 
 export declare function bootstrap(options: {
   workspace: string

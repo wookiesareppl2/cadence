@@ -34,14 +34,38 @@ export function toWslPath(p) {
   return `/mnt/${match[1].toLowerCase()}/${match[2].split('\\').join('/')}`
 }
 
-export function toClaudeImportPath(p) {
+/**
+ * Render a path as a Claude Code `@` import.
+ *
+ * A path under the user's home is written `~/…` rather than `C:/Users/<name>/…`.
+ * Claude Code expands the tilde (verified on Windows, not merely assumed from
+ * the docs), so the same CLAUDE.md loads its hot layer on any machine holding
+ * the same vault, whatever the account is called. Baking one account name into
+ * a file that travels between machines is the whole defect.
+ *
+ * Spaces are escaped LAST: Claude Code splits an import on whitespace, so an
+ * unescaped space truncates the path, and vault paths contain three of them in
+ * "04 - Personal Projects" alone. Escaping before the tilde substitution would
+ * mean comparing an escaped path against an unescaped home and never matching.
+ */
+export function toClaudeImportPath(p, env = process.env) {
   if (/[\r\n]/.test(p)) throw new Error(`Cannot import a path containing a newline: ${p}`)
-  return p.replaceAll('\\', '/').replaceAll(' ', '\\ ')
+  let out = p.replaceAll('\\', '/')
+  const home = env.USERPROFILE || env.HOME
+  if (home) {
+    const base = home.replaceAll('\\', '/').replace(/\/+$/, '')
+    const lower = out.toLowerCase()
+    const baseLower = base.toLowerCase()
+    if (lower === baseLower || lower.startsWith(`${baseLower}/`)) {
+      out = `~${out.slice(base.length)}`
+    }
+  }
+  return out.replaceAll(' ', '\\ ')
 }
 
-export function hotLayerImportLines(memoryDir) {
+export function hotLayerImportLines(memoryDir, env = process.env) {
   return ['_Index.md', 'HANDOFF.md', 'Pins.md']
-    .map((file) => `@${toClaudeImportPath(path.join(memoryDir, file))}`)
+    .map((file) => `@${toClaudeImportPath(path.join(memoryDir, file), env)}`)
     .join('\n')
 }
 
@@ -259,8 +283,11 @@ function writeMarker(workspace, memoryDir, log) {
   const block =
     `\n## Project memory — Felix vault\n\n` +
     `This project's memory lives in Sheldon's Obsidian vault. The three imports below load ` +
-    `the complete hot layer automatically at session start. Claude Code asks for one-time ` +
-    `approval because the files are outside the project.\n\n` +
+    `the complete hot layer automatically at session start. They are written home-relative, ` +
+    `so they resolve on any machine holding the same vault.\n\n` +
+    `Claude Code asks for approval once, because the files sit outside the project. Accepting ` +
+    `is what makes the hot layer load by itself; declining disables these imports permanently ` +
+    `and without further prompting, and \`/start\` then remains the way to load memory.\n\n` +
     `${imports}\n\n` +
     `${line}\n`
   fs.writeFileSync(baseline, text ? `${text.replace(/\s*$/, '')}\n${block}` : `# Project\n${block}`, 'utf-8')
