@@ -619,7 +619,7 @@ function emitPlanProtocolPacket() {
     '  "allowUnchanged": ["HANDOFF.md"]',
     '}',
     'PLAN_SCHEMA_END',
-    'INTENT_CHECK=every file your plan writes MUST end up different from what it held before AND different from its pre-save content. A write that lands a file back on either fails with INTENDED_WRITE_DID_NOT_LAND instead of passing silently. If you MEAN to restore a file to its pre-save state on a corrective re-apply, declare it by listing its key in allowUnchanged. Omit the key entirely otherwise — never add it to quiet a failure you have not understood.',
+    'INTENT_CHECK=every file your plan writes MUST end up different from what it held before AND different from its pre-save content. The collector checks this BEFORE writing anything: on failure it reports INTENDED_WRITE_DID_NOT_LAND, the memory home is untouched, and re-running after fixing the plan is always safe. If you MEAN to restore a file to its pre-save state on a corrective re-apply, declare it by listing its key in allowUnchanged; the key must be one the same plan writes. Omit allowUnchanged entirely otherwise — never add a key to quiet a failure you have not understood, and note that every declared key is echoed back as DECLARED_UNCHANGED for the record.',
     'COLLECTOR_GUARANTEES=the collector owns mechanical correctness: (1) it stamps the four _Index.md live counts to the true post-apply count (never hand-author them; put _Index.md in replace only for structure/status prose); (2) it normalizes each appended/inserted entry heading to the file canonical level; (3) it guarantees a Pin Review Log line. Take the validator --changed list from PLANNED_CHANGED (it may list _Index.md or Pins-Reference.md even when your plan omitted them).',
     'DNO_AUTHORITY=every new or replaced DNO must contain `**Authority:** Explicit user approval — <evidence>` or `**Authority:** Authoritative project decision — <file and heading>`; inferred implementation state is never authority.',
     'REFERENTIAL_INTEGRITY=every entry ID you cite in a Source/Refs field (e.g. ADR-109) must be created in this save or already exist; validation fails on any dangling reference.',
@@ -648,7 +648,7 @@ function emitPlanProtocolPacket() {
     'if (!changed) throw new Error("apply did not report APPLIED_CHANGED: " + applied);',
     'const validation = await tools.shell_command({ command: `node "${collector}" --mode validate --manifest "${manifest}" --memory "${memory}" --workspace "${workspace}" --changed "${changed}"`, workdir: workspace, timeout_ms: 120000 });',
     'PLAN_WRITE_JS_END',
-    'APPLY_MODE_OUTPUT=APPLIED_CHANGED=<pipe-separated> and APPLY_STATUS=WRITTEN between START_SAVE_APPLY_RESULT and END_SAVE_APPLY_RESULT. The collector has already written every file; there is no patch to apply and tools.apply_patch must NOT be used for any memory-home path.',
+    'APPLY_MODE_OUTPUT=APPLIED_CHANGED=<pipe-separated>, DECLARED_UNCHANGED=<pipe-separated or none>, and APPLY_STATUS=WRITTEN between START_SAVE_APPLY_RESULT and END_SAVE_APPLY_RESULT. The collector has already written every file; there is no patch to apply and tools.apply_patch must NOT be used for any memory-home path.',
     'VALIDATE_REQUIRED_ARGS=--manifest|--memory|--workspace|--changed',
     'CHANGED_VALUES=copy APPLIED_CHANGED verbatim; pipe-separated. Do NOT derive it from your plan keys: on a corrective re-apply the plan keys are a subset of what has actually changed since orientation, and validate rejects the difference as Unexpected changed file.',
     'SUCCESS=the same second exec runs apply then validate and returns SAVE_VALIDATION=PASS',
@@ -990,9 +990,15 @@ function unlandedIntendedWrites(intended, before, after, changedKeys, allowUncha
 function assertIntendedWritesLanded(stage, intended, before, after, changedKeys, allowUnchanged) {
   const problems = unlandedIntendedWrites(intended, before, after, changedKeys, allowUnchanged)
   if (!problems.length) return
+  // Both callers run this against a PROJECTION, before anything is written, so
+  // the promise below holds. An earlier revision checked the apply path AFTER
+  // writing, which made its own advice impossible to follow: the declared re-run
+  // then hit "Full replacement is identical to current content", because the
+  // write it was meant to authorise had already landed.
   throw new Error(
     `INTENDED_WRITE_DID_NOT_LAND (${stage}): ${problems.join('; ')}. ` +
-    'The plan asked to write these files and the write left them as they were. ' +
+    'Nothing has been written and the memory home is untouched. The plan asked ' +
+    'to write these files, and the result would leave them exactly as they are. ' +
     'Either the plan is wrong, or the restore is deliberate — if it is deliberate, ' +
     'declare it: add "allowUnchanged": ["<key>"] to the plan and re-run.'
   )
@@ -1013,7 +1019,11 @@ function recordAppliedSnapshot(manifest, manifestPath) {
 // rule as `apply`, so the two agree byte for byte. Returning the projected end
 // state lets PLANNED_CHANGED be derived from it rather than from this plan's
 // keys — which is what makes a corrective re-patch reconcile.
-function recordProjectedSnapshot(manifest, manifestPath, memory, fileHunks) {
+// What the end state WOULD be, computed without touching disk or the manifest.
+// Both write paths run the intent check against this BEFORE committing anything,
+// so a plan that would change nothing is refused while the memory home is still
+// pristine and there is nothing to unwind.
+function projectFileHunks(manifest, memory, fileHunks) {
   const files = memorySnapshot(memory)
   let daily = fileSnapshot(manifest.daily)
   for (const [key, hunks] of fileHunks) {
@@ -1024,10 +1034,14 @@ function recordProjectedSnapshot(manifest, manifestPath, memory, fileHunks) {
     if (key === '@daily') daily = snapshot
     else files[key] = snapshot
   }
-  manifest.projectedFiles = files
-  manifest.projectedDaily = daily
-  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
   return { files, daily }
+}
+
+function recordProjectedSnapshot(manifest, manifestPath, projected) {
+  manifest.projectedFiles = projected.files
+  manifest.projectedDaily = projected.daily
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+  return projected
 }
 
 function normalizePlan(plan) {
@@ -1275,11 +1289,6 @@ function buildFileHunks(manifest, plan) {
   const memory = path.resolve(manifest.memory)
   assertUnchangedSinceManifest(manifest)
   validatePlanFileKeys(memory, plan)
-  // A declaration naming a file that cannot exist is a typo, and a typo here
-  // silently disables the intent check for the file the worker meant.
-  for (const key of plan.allowUnchanged) {
-    if (key !== '@daily') assertMemoryPath(memory, key)
-  }
   validateDnoAuthority(plan)
   const fileHunks = new Map()
 
@@ -1381,6 +1390,19 @@ function buildFileHunks(manifest, plan) {
     fileHunks.set('@daily', hunks)
   }
 
+  // A declaration is only meaningful for a file this plan actually writes.
+  // Containment alone was not enough: "HANDOFFF.md" resolves inside the memory
+  // home, so it passed while declaring nothing, leaving the worker believing the
+  // check had been stood down for the file it meant. Membership catches that
+  // typo, and also the stale key left behind when a plan stops writing the file
+  // it used to restore.
+  for (const key of plan.allowUnchanged) {
+    if (key !== '@daily') assertMemoryPath(memory, key)
+    if (!fileHunks.has(key)) {
+      throw new Error(`allowUnchanged names ${key}, which this plan does not write. Declare only keys the plan writes.`)
+    }
+  }
+
   return { memory, fileHunks }
 }
 
@@ -1406,21 +1428,24 @@ function emitPatchPacket() {
     for (const hunk of hunks) patch.push(...hunk)
   }
   patch.push('*** End Patch')
-  // Record before deleting the plan: recordProjectedSnapshot re-runs the hunk
-  // applier and can throw, and losing the plan to a failure here would leave the
-  // caller with neither a patch nor the plan that produced it.
-  const projected = recordProjectedSnapshot(manifest, manifestPath, memory, fileHunks)
-  // Intent vs outcome, on the projection rather than the disk — the patch has
-  // not run yet, so a plan that would change nothing is caught before the worker
-  // is handed a patch that looks like work.
+  // Project, THEN check intent, THEN persist. Recording a projection for a plan
+  // that is about to be refused would leave manifest.projectedFiles carrying a
+  // state that never exists on disk, and assertUnchangedSinceManifest accepts
+  // ANY recorded checkpoint — so a refused plan would permanently widen the
+  // tamper guard.
+  const projected = projectFileHunks(manifest, memory, fileHunks)
+  const plannedChanged = changedAgainstOrientation(manifest, projected.files, projected.daily)
   assertIntendedWritesLanded(
     'patch',
     [...fileHunks.keys()],
     { ...beforeFiles, '@daily': beforeDaily },
     { ...projected.files, '@daily': projected.daily },
-    changedAgainstOrientation(manifest, projected.files, projected.daily),
+    plannedChanged,
     plan.allowUnchanged
   )
+  // Record before deleting the plan: losing the plan to a failure here would
+  // leave the caller with neither a patch nor the plan that produced it.
+  recordProjectedSnapshot(manifest, manifestPath, projected)
   if (boolArg('cleanup-plan')) fs.rmSync(planPath, { force: true })
   // PLANNED_CHANGED is the projected end state versus orientation, not this
   // plan's keys. A corrective re-patch after a failed validate must include what
@@ -1428,7 +1453,8 @@ function emitPatchPacket() {
   // "Unexpected changed file" — the apply path's Step 6 defect, on this path.
   process.stdout.write([
     '===== START_GENERATED_SAVE_PATCH =====',
-    `PLANNED_CHANGED=${orderedChangedList(changedAgainstOrientation(manifest, projected.files, projected.daily))}`,
+    `PLANNED_CHANGED=${orderedChangedList(plannedChanged)}`,
+    `DECLARED_UNCHANGED=${plan.allowUnchanged.join('|') || 'none'}`,
     patch.join('\n'),
     '===== END_GENERATED_SAVE_PATCH =====',
     '',
@@ -1490,6 +1516,23 @@ function emitApplyPacket() {
   if (!fileHunks.size) throw new Error('Patch plan contains no writes')
   const beforeFiles = memorySnapshot(memory)
   const beforeDaily = fileSnapshot(manifest.daily)
+  // Look before leaping. The projection is exactly what the write loop below
+  // produces, so checking intent HERE refuses a no-op plan with the memory home
+  // untouched and the manifest unmoved — the worker can fix the plan and re-run
+  // against the same state. Checking after the writes instead would leave a
+  // half-applied save, withhold the APPLIED_CHANGED that Step 6 recovery needs,
+  // and make the error's own advice unfollowable: re-running with the key
+  // declared would then hit "Full replacement is identical to current content",
+  // because the write it was meant to authorise had already landed.
+  const projected = projectFileHunks(manifest, memory, fileHunks)
+  assertIntendedWritesLanded(
+    'apply',
+    [...fileHunks.keys()],
+    { ...beforeFiles, '@daily': beforeDaily },
+    { ...projected.files, '@daily': projected.daily },
+    changedAgainstOrientation(manifest, projected.files, projected.daily),
+    plan.allowUnchanged
+  )
   for (const [key, hunks] of fileHunks) {
     const filePath = key === '@daily' ? manifest.daily : assertMemoryPath(memory, key)
     const updated = applyCollectorHunks(readText(filePath, true), hunks)
@@ -1501,21 +1544,10 @@ function emitApplyPacket() {
   // APPLIED_CHANGED is derived from the post-write state versus orientation —
   // the same computation validate performs — so the two cannot disagree.
   const applied = recordAppliedSnapshot(manifest, manifestPath)
-  const appliedChanged = changedAgainstOrientation(manifest, applied.files, applied.daily)
-  // Deliberately AFTER re-baselining: the files are already on disk, so failing
-  // before the manifest records them would leave the corrective re-apply that
-  // Step 6 prescribes blocked by the tamper guard — the TS-119 shape again.
-  assertIntendedWritesLanded(
-    'apply',
-    [...fileHunks.keys()],
-    { ...beforeFiles, '@daily': beforeDaily },
-    { ...applied.files, '@daily': applied.daily },
-    appliedChanged,
-    plan.allowUnchanged
-  )
   process.stdout.write([
     '===== START_SAVE_APPLY_RESULT =====',
-    `APPLIED_CHANGED=${orderedChangedList(appliedChanged)}`,
+    `APPLIED_CHANGED=${orderedChangedList(changedAgainstOrientation(manifest, applied.files, applied.daily))}`,
+    `DECLARED_UNCHANGED=${plan.allowUnchanged.join('|') || 'none'}`,
     'APPLY_STATUS=WRITTEN',
     '===== END_SAVE_APPLY_RESULT =====',
     '',

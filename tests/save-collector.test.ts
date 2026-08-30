@@ -469,6 +469,101 @@ describe('intent cross-check', () => {
     expect(run.out).not.toContain('START_GENERATED_SAVE_PATCH')
   })
 
+  // The recovery loop the error message actually prescribes. This is the test
+  // whose absence hid a real defect: the first version of this guard ran AFTER
+  // the write, so following its own advice led straight into "Full replacement
+  // is identical to current content" — the restore had already landed, leaving
+  // the worker with a half-applied save and no sanctioned way forward.
+  it('walks the failure-declare-rerun loop the error message prescribes', () => {
+    orient('incremental')
+    const original = readFileSync(join(memory, 'HANDOFF.md'), 'utf-8')
+    plan({ replace: { 'HANDOFF.md': '# Handoff\n\nTemporary.\n' } })
+    expect(apply().status).toBe(0)
+
+    plan({ replace: { 'HANDOFF.md': original } })
+    const refused = apply()
+    expect(refused.status).not.toBe(0)
+    expect(refused.out).toContain('INTENDED_WRITE_DID_NOT_LAND')
+    // The promise the message makes: nothing was written.
+    expect(readFileSync(join(memory, 'HANDOFF.md'), 'utf-8')).toContain('Temporary.')
+
+    plan({ replace: { 'HANDOFF.md': original }, allowUnchanged: ['HANDOFF.md'] })
+    const rerun = apply()
+    expect(rerun.status).toBe(0)
+    expect(readFileSync(join(memory, 'HANDOFF.md'), 'utf-8')).toBe(original)
+    expect(appliedChanged(rerun)).not.toContain('HANDOFF.md')
+  })
+
+  // A refused apply must leave the manifest able to accept the corrective plan,
+  // or the tamper guard turns a refusal into a dead end (the TS-119 shape).
+  it('leaves the manifest usable after refusing a plan', () => {
+    orient('incremental')
+    plan({ replace: { 'HANDOFF.md': '# Handoff\n\nFirst.\n' } })
+    expect(apply().status).toBe(0)
+
+    const original = readFileSync(join(memory, 'Patterns.md'), 'utf-8')
+    plan({ replace: { 'Patterns.md': original, 'HANDOFF.md': '# Handoff\n\nSecond.\n' } })
+    expect(apply().status).not.toBe(0)
+
+    plan({ replace: { 'HANDOFF.md': '# Handoff\n\nSecond.\n' } })
+    const recovered = apply()
+    expect(recovered.status).toBe(0)
+    expect(recovered.out).not.toContain('Memory changed after')
+  })
+
+  // Reachable only through a hunk builder with no identity guard of its own —
+  // replaceEntries has none, unlike fullReplaceHunk.
+  it('refuses an entry replacement that rewrites the entry unchanged', () => {
+    const entry = '## TS-900: Fixture\n\n- **Note:** seed.\n'
+    writeFileSync(join(memory, 'Troubleshooting.md'), `# Troubleshooting\n\n${entry}`)
+    orient('incremental')
+    plan({ replaceEntries: { 'Troubleshooting.md': [{ id: 'TS-900', text: entry }] } })
+    const run = apply()
+    expect(run.status).not.toBe(0)
+    expect(run.out).toContain('byte-identical content')
+  })
+
+  it('rejects a declaration for a file the plan does not write', () => {
+    orient('incremental')
+    plan({
+      replace: { 'HANDOFF.md': '# Handoff\n\nReal change.\n' },
+      allowUnchanged: ['Patterns.md']
+    })
+    const run = apply()
+    expect(run.status).not.toBe(0)
+    expect(run.out).toContain('which this plan does not write')
+  })
+
+  it('accepts a declaration for the daily note', () => {
+    orient('incremental')
+    const before = readFileSync(daily, 'utf-8')
+    plan({
+      replace: { 'HANDOFF.md': '# Handoff\n\nReal change.\n' },
+      daily: { indexLine: '- **Topic** — outcome.', session: '## Session 2\n\nwork\n' },
+      allowUnchanged: ['@daily']
+    })
+    const run = apply()
+    expect(run.status).toBe(0)
+    // The declaration excuses a no-op; it does not suppress a real write.
+    expect(readFileSync(daily, 'utf-8')).not.toBe(before)
+    expect(appliedChanged(run)).toContain('@daily')
+  })
+
+  it('echoes the declared keys so a stood-down check is auditable', () => {
+    orient('incremental')
+    const original = readFileSync(join(memory, 'HANDOFF.md'), 'utf-8')
+    plan({ replace: { 'HANDOFF.md': '# Handoff\n\nTemporary.\n' } })
+    expect(apply().status).toBe(0)
+    plan({ replace: { 'HANDOFF.md': original }, allowUnchanged: ['HANDOFF.md'] })
+    expect(apply().out).toContain('DECLARED_UNCHANGED=HANDOFF.md')
+  })
+
+  it('reports no declaration on an ordinary save', () => {
+    orient('incremental')
+    plan({ replace: { 'HANDOFF.md': '# Handoff\n\nReal work.\n' } })
+    expect(apply().out).toContain('DECLARED_UNCHANGED=none')
+  })
+
   // A real save must not be inconvenienced by any of this.
   it('leaves an ordinary save alone', () => {
     orient('incremental')
