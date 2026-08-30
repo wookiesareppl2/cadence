@@ -591,6 +591,29 @@ describe('intent cross-check', () => {
     expect(readFileSync(join(memory, '_Index.md'), 'utf-8')).toContain('the 0 live ADRs')
   })
 
+  // R2: the R1 fix must exclude the collector's OWN _Index.md stamp without
+  // carving the file out of the check altogether. When the worker authors an
+  // _Index.md write, it is intent like any other, and a correction that restores
+  // it has to be declared. Only `replace` skips _Index.md in the hunk builder;
+  // appendText and the rest do not, so this shape is genuinely reachable.
+  it('still holds the worker to an _Index write it authored itself', () => {
+    writeFileSync(join(memory, '_Index.md'), '# _Index\n\nCovers the 0 live ADRs.\n')
+    orient('incremental')
+    const original = readFileSync(join(memory, '_Index.md'), 'utf-8')
+    plan({ appendText: { '_Index.md': '\n## Status\n\nMigration in progress.\n' } })
+    expect(apply().status).toBe(0)
+
+    plan({ replace: { '_Index.md': original } })
+    const refused = apply()
+    expect(refused.status).not.toBe(0)
+    expect(refused.out).toContain('_Index.md')
+
+    plan({ replace: { '_Index.md': original }, allowUnchanged: ['_Index.md'] })
+    const rerun = apply()
+    expect(rerun.status).toBe(0)
+    expect(readFileSync(join(memory, '_Index.md'), 'utf-8')).toBe(original)
+  })
+
   it('refuses a declaration for a collector-owned key', () => {
     writeFileSync(join(memory, '_Index.md'), '# _Index\n\nCovers the 0 live ADRs.\n')
     orient('incremental')
@@ -600,7 +623,7 @@ describe('intent cross-check', () => {
     })
     const run = apply()
     expect(run.status).not.toBe(0)
-    expect(run.out).toContain('which the collector owns rather than this plan')
+    expect(run.out).toContain('which the collector writes on its own initiative')
   })
 
   // The auto-added Pin Review Log line is collector-injected the same way, and

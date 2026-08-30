@@ -1394,8 +1394,7 @@ function buildFileHunks(manifest, plan) {
 
   // Which of those hunks the WORKER actually asked for. Not the same as every
   // key with a hunk: D4 injects a Pin Review Log line when the worker omits one,
-  // and D1 always owns _Index.md — the worker is explicitly told the collector
-  // owns it and must never hand-author its counts.
+  // and D1 stamps _Index.md on every save whether or not the plan mentions it.
   //
   // Holding the worker to a write the COLLECTOR chose produced a false positive.
   // Concretely: append ADR-900, validate fails, submit a correction that removes
@@ -1404,7 +1403,16 @@ function buildFileHunks(manifest, plan) {
   // 101 back to 100 and lands on its pre-save bytes too. The guard then named a
   // file the worker never mentioned, in a plan it could not have written
   // differently.
-  const workerOwned = new Set([...workerKeys].filter((key) => key !== '_Index.md'))
+  //
+  // Authorship is the whole test, so deriving it from workerKeys is enough — and
+  // excluding _Index.md outright would be too much. COLLECTOR_GUARANTEES invites
+  // the worker to put _Index.md in `replace` for structure/status prose (only the
+  // four counts are collector-owned), and the other five plan shapes do not skip
+  // it at all. A blanket exclusion would leave a worker-authored _Index.md write
+  // unchecked — the very defect this guard exists to close, carved out for one
+  // file. When the worker names it, it is intent; when only D1 stamps it, it is
+  // not in workerKeys and never enters the check.
+  const workerOwned = new Set(workerKeys)
   if (plan.daily) workerOwned.add('@daily')
   const intended = [...fileHunks.keys()].filter((key) => workerOwned.has(key))
 
@@ -1413,14 +1421,14 @@ function buildFileHunks(manifest, plan) {
   // home, so it passed while declaring nothing, leaving the worker believing the
   // check had been stood down for the file it meant. Checking against `intended`
   // catches that typo, the stale key left behind when a plan stops writing the
-  // file it used to restore, and a declaration for a collector-owned key that
-  // was never going to be checked in the first place.
+  // file it used to restore, and a declaration for a collector-injected write
+  // that was never going to be checked in the first place.
   const declarable = new Set(intended)
   for (const key of plan.allowUnchanged) {
     if (key !== '@daily') assertMemoryPath(memory, key)
     if (!declarable.has(key)) {
       throw new Error(fileHunks.has(key)
-        ? `allowUnchanged names ${key}, which the collector owns rather than this plan. Collector-owned writes are never held to declared intent, so the declaration is unnecessary.`
+        ? `allowUnchanged names ${key}, which the collector writes on its own initiative rather than at this plan's request. Such writes are never held to declared intent, so the declaration is unnecessary.`
         : `allowUnchanged names ${key}, which this plan does not write. Declare only keys the plan writes.`)
     }
   }
