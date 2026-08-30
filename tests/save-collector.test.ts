@@ -374,18 +374,112 @@ describe('DNO authority', () => {
 describe('changed-set reporting', () => {
   // A correction that restores a file to its original content genuinely leaves
   // it unchanged, so claiming it changed produces "Expected file did not change".
-  it('omits a file a correction restored to its original content', () => {
+  // The restore has to be DECLARED, though — see the intent cross-check below.
+  it('omits a file a declared correction restored to its original content', () => {
     orient('incremental')
     const original = readFileSync(join(memory, 'HANDOFF.md'), 'utf-8')
     plan({ replace: { 'HANDOFF.md': '# Handoff\n\nTemporary.\n' } })
     apply()
-    plan({ replace: { 'HANDOFF.md': original } })
-    const reverted = appliedChanged(apply())
+    plan({ replace: { 'HANDOFF.md': original }, allowUnchanged: ['HANDOFF.md'] })
+    const run = apply()
+    expect(run.status).toBe(0)
+    const reverted = appliedChanged(run)
     expect(reverted).not.toContain('HANDOFF.md')
 
     const out = validate(reverted).out
     expect(out).not.toContain('Expected file did not change')
     expect(out).not.toContain('Unexpected changed file')
+  })
+})
+
+// The intent-vs-outcome cross-check. Deriving the changed set from disk state is
+// right, but on its own it made a write that changed nothing indistinguishable
+// from one that worked: validate only ever sees the end state, and the end state
+// of a botched regeneration and of a deliberate restore are the same file. The
+// plan is the worker's declaration of intent, so the collector holds it to it.
+describe('intent cross-check', () => {
+  it('refuses a correction that silently restores a file to its pre-save content', () => {
+    orient('incremental')
+    const original = readFileSync(join(memory, 'HANDOFF.md'), 'utf-8')
+    plan({ replace: { 'HANDOFF.md': '# Handoff\n\nTemporary.\n' } })
+    expect(apply().status).toBe(0)
+
+    plan({ replace: { 'HANDOFF.md': original } })
+    const run = apply()
+    expect(run.status).not.toBe(0)
+    expect(run.out).toContain('INTENDED_WRITE_DID_NOT_LAND')
+    expect(run.out).toContain('restored it to its pre-save content')
+    expect(run.out).toContain('allowUnchanged')
+  })
+
+  // A full replacement identical to what is already there never reaches the
+  // intent check — the hunk builder has always refused it outright. Pinned here
+  // so the two guards are not mistaken for one.
+  it('refuses a full replacement identical to current content', () => {
+    orient('incremental')
+    const original = readFileSync(join(memory, 'Troubleshooting.md'), 'utf-8')
+    plan({ replace: { 'Troubleshooting.md': original } })
+    const run = apply()
+    expect(run.status).not.toBe(0)
+    expect(run.out).toContain('identical to current content')
+  })
+
+  // The declaration cannot be a wholesale opt-out: naming one file leaves every
+  // other file in the same plan checked.
+  it('stands the check down for the declared key only', () => {
+    orient('incremental')
+    const handoff = readFileSync(join(memory, 'HANDOFF.md'), 'utf-8')
+    const patterns = readFileSync(join(memory, 'Patterns.md'), 'utf-8')
+    plan({
+      replace: { 'HANDOFF.md': '# Handoff\n\nTemporary.\n', 'Patterns.md': '# Patterns\n\nTemporary.\n' }
+    })
+    expect(apply().status).toBe(0)
+
+    plan({
+      replace: { 'HANDOFF.md': handoff, 'Patterns.md': patterns },
+      allowUnchanged: ['HANDOFF.md']
+    })
+    const run = apply()
+    expect(run.status).not.toBe(0)
+    expect(run.out).toContain('Patterns.md (the plan restored it')
+    expect(run.out).not.toContain('HANDOFF.md (')
+  })
+
+  it('rejects a declaration naming a file outside the memory home', () => {
+    orient('incremental')
+    plan({
+      replace: { 'HANDOFF.md': '# Handoff\n\nReal change.\n' },
+      allowUnchanged: ['../escape.md']
+    })
+    expect(apply().status).not.toBe(0)
+  })
+
+  // Codex never calls apply, so the same defect had to be closed on its path —
+  // and there it is worth catching BEFORE the patch is handed over.
+  it('catches a restoring plan on the Codex patch path before emitting a patch', () => {
+    orient('incremental')
+    const original = readFileSync(join(memory, 'HANDOFF.md'), 'utf-8')
+    plan({ replace: { 'HANDOFF.md': '# Handoff\n\nTemporary.\n' } })
+    expect(apply().status).toBe(0)
+
+    plan({ replace: { 'HANDOFF.md': original } })
+    const run = collector(['--mode', 'patch', '--manifest', manifest, '--plan', `${manifest}.plan.json`])
+    expect(run.status).not.toBe(0)
+    expect(run.out).toContain('INTENDED_WRITE_DID_NOT_LAND')
+    expect(run.out).not.toContain('START_GENERATED_SAVE_PATCH')
+  })
+
+  // A real save must not be inconvenienced by any of this.
+  it('leaves an ordinary save alone', () => {
+    orient('incremental')
+    plan({
+      replace: { 'HANDOFF.md': '# Handoff\n\nReal work.\n' },
+      appendText: { 'Pins-Reference.md': reviewLine('incremental') },
+      daily: { indexLine: '- **Topic** — outcome.', session: '## Session 2\n\nwork\n' }
+    })
+    const run = apply()
+    expect(run.status).toBe(0)
+    expect(appliedChanged(run)).toContain('HANDOFF.md')
   })
 })
 
