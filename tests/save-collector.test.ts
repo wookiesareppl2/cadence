@@ -614,7 +614,7 @@ describe('intent cross-check', () => {
     expect(readFileSync(join(memory, '_Index.md'), 'utf-8')).toBe(original)
   })
 
-  it('refuses a declaration for a collector-owned key', () => {
+  it('refuses a declaration for a write the collector initiates itself', () => {
     writeFileSync(join(memory, '_Index.md'), '# _Index\n\nCovers the 0 live ADRs.\n')
     orient('incremental')
     plan({
