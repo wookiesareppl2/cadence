@@ -195,6 +195,44 @@ describe('legacy-root project', () => {
   })
 })
 
+// Resolving the route reads files synchronously on the main thread — the engine's
+// callback interface is sync by design — so for a WSL project it stats a UNC path
+// and can stall the window. Opening the viewer and clicking files asks the same
+// question repeatedly, so the answer is cached briefly. What must NOT be cached is
+// the decision that gates writing.
+describe('route caching', () => {
+  it('does not let a cached route decide that a locked file is writable', async () => {
+    writeFileSync(join(projectDir, 'CLAUDE.md'), '# Project\n\nNo marker yet.\n')
+    // Warm the cache while the project is still unmigrated and its bank editable.
+    const before = await getProjectMemory('claude', 'p1', sender)
+    expect(before.groups.find((group) => group.id === 'working')?.readOnly).toBe(false)
+
+    // The project migrates. A cached answer would still call the bank editable.
+    writeFileSync(join(projectDir, 'CLAUDE.md'), `# Project\n\n${marker(vaultHome)}\n`)
+    const result = await writeMemoryFile('claude', 'p1', 'working:HANDOFF.md', '# Tampered\n', sender)
+    expect(result.ok).toBe(false)
+    expect(readFileSync(join(projectDir, '.claude', 'HANDOFF.md'), 'utf-8')).toBe('# Old handoff\n')
+  })
+
+  it('stops showing the old routing once the marker file itself is edited', async () => {
+    writeFileSync(join(projectDir, 'CLAUDE.md'), '# Project\n\nNo marker yet.\n')
+    await getProjectMemory('claude', 'p1', sender) // warm
+
+    // Edit CLAUDE.md through the viewer, which is how a marker would be added.
+    const write = await writeMemoryFile(
+      'claude',
+      'p1',
+      'instructions:CLAUDE.md',
+      `# Project\n\n${marker(vaultHome)}\n`,
+      sender
+    )
+    expect(write.ok).toBe(true)
+
+    const after = await getProjectMemory('claude', 'p1', sender)
+    expect(groupIds(after.groups)).toContain('vault-hot')
+  })
+})
+
 describe('project that has not migrated', () => {
   it('behaves exactly as before: live bank, editable, no vault groups', async () => {
     writeFileSync(join(projectDir, 'CLAUDE.md'), '# Project\n\nNo marker here.\n')

@@ -409,6 +409,14 @@ here — see the vault save engine section.
   the frozen bank back under its ordinary heading, editable, with nothing on screen to
   say the live memory is missing — which is the defect this section exists to prevent,
   and it is reachable in ordinary multi-machine use.
+- **Cache the routing for display; never for a rule.** Resolving where memory lives
+  reads files synchronously — the engine's callback interface is sync so one function
+  can serve both the CLI workflows and this process — and for a WSL project that means
+  stat/readdir over a `\wsl.localhost\…` UNC path on the main thread. Browsing the
+  viewer asks the same question repeatedly, so the answer is cached for a few seconds.
+  The write path deliberately does not use it: a stale answer costs an out-of-date file
+  list, but on the write path it could decide a locked file is editable. Editing the
+  project's `CLAUDE.md` drops the entry, since that file carries the marker.
 - **Read-only is a main-process rule, not a hidden button.** The service decides
   read-only state and `writeMemoryFile` refuses on the same rule independently. The
   renderer's flag shapes the UI only; a write path that trusts the renderer to have
