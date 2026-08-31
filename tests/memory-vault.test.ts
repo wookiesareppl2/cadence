@@ -214,6 +214,61 @@ describe('route caching', () => {
     expect(readFileSync(join(projectDir, '.claude', 'HANDOFF.md'), 'utf-8')).toBe('# Old handoff\n')
   })
 
+  // Finding A. The marker is read from BOTH CLAUDE.md and .claude/CLAUDE.md, and
+  // the second is an ordinary editable file in the `other` group. Invalidating only
+  // on the `instructions` group left this write changing the routing without
+  // clearing the answer — so the viewer kept showing the old routing afterwards.
+  it('stops showing the old routing after any write that changes it', async () => {
+    writeFileSync(join(projectDir, 'CLAUDE.md'), '# Project\n\nNo marker yet.\n')
+    await getProjectMemory('claude', 'p1', sender) // warm the cache
+
+    const write = await writeMemoryFile(
+      'claude',
+      'p1',
+      'other:CLAUDE.md',
+      `# Baseline\n\n${marker(vaultHome)}\n`,
+      sender
+    )
+    expect(write.ok).toBe(true)
+
+    const after = await getProjectMemory('claude', 'p1', sender)
+    expect(groupIds(after.groups)).toContain('vault-hot')
+  })
+
+  // Finding B. The TTL must be measured on a monotonic clock: a backwards
+  // wall-clock jump makes a Date-based age negative, so the entry never looks
+  // expired and stays pinned until the clock catches up.
+  it('expires on schedule even when the wall clock jumps backwards', async () => {
+    writeFileSync(join(projectDir, 'CLAUDE.md'), '# Project\n\nNo marker yet.\n')
+    vi.useFakeTimers()
+    try {
+      await getProjectMemory('claude', 'p1', sender) // warm
+
+      // The project migrates, and the machine's clock is corrected backwards by an
+      // hour. Under Date.now() the cached entry would now look an hour from expiry.
+      writeFileSync(join(projectDir, 'CLAUDE.md'), `# Project\n\n${marker(vaultHome)}\n`)
+      vi.setSystemTime(new Date(Date.now() - 60 * 60 * 1000))
+      vi.advanceTimersByTime(6_000)
+
+      const after = await getProjectMemory('claude', 'p1', sender)
+      expect(groupIds(after.groups)).toContain('vault-hot')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('still serves a warm read without re-resolving', async () => {
+    writeFileSync(join(projectDir, 'CLAUDE.md'), `# Project\n\n${marker(vaultHome)}\n`)
+    const first = await getProjectMemory('claude', 'p1', sender)
+    expect(groupIds(first.groups)).toContain('vault-hot')
+
+    // Remove the marker WITHOUT going through the service, so nothing invalidates.
+    // Within the TTL the viewer should still show the routing it last resolved.
+    writeFileSync(join(projectDir, 'CLAUDE.md'), '# Project\n\nMarker removed.\n')
+    const second = await getProjectMemory('claude', 'p1', sender)
+    expect(groupIds(second.groups)).toContain('vault-hot')
+  })
+
   it('stops showing the old routing once the marker file itself is edited', async () => {
     writeFileSync(join(projectDir, 'CLAUDE.md'), '# Project\n\nNo marker yet.\n')
     await getProjectMemory('claude', 'p1', sender) // warm

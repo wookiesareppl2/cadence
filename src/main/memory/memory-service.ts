@@ -68,8 +68,14 @@ function meta(group: MemoryGroupId, file: FoundFile): MemoryFileMeta {
 // times in this codebase: the viewer would drift from the engine and start showing
 // a different memory home than the one being written to. This is the first app-code
 // import of the shared engine; see docs/DESIGN.md.
+// Only what turning an id into a path actually needs. It used to hold the whole
+// ProjectLocation, which carries that project's entire session array — and since
+// cached entries are only ever overwritten, never evicted, every project the user
+// had ever viewed kept its sessions alive for the life of the process.
 type MemoryLayout = {
-  location: ProjectLocation
+  root: string // the project's native root, already WSL-resolved
+  projectPath: string // the location's own path, for the central-store slug
+  distro: string | null
   // The engine's verdict, kept whole. Reducing it to "did we get a home?" is what
   // made `abort` indistinguishable from "never migrated" — see resolveLayout.
   route: MemoryRoute
@@ -120,7 +126,9 @@ function resolveLayout(location: ProjectLocation): MemoryLayout {
     listDirectory: listDirectorySync
   })
   return {
-    location,
+    root,
+    projectPath: location.path,
+    distro: location.distro,
     route: resolved.route,
     vaultHome: resolved.route === 'vault' && resolved.home ? resolved.home : null,
     reason: resolved.reason ?? null
@@ -131,39 +139,48 @@ function resolveLayout(location: ProjectLocation): MemoryLayout {
 // callbacks so the same function serves the CLI workflows and this process — so
 // resolving reads files on the main thread. For a WSL project that means sync
 // stat/readdir over a `\wsl.localhost\…` UNC path, which can block the event
-// loop, and therefore every IPC channel and the window, for a noticeable
-// interval. Opening the viewer and clicking through files asks the same question
-// many times over, so the repetition is the part worth removing.
+// loop, and therefore every IPC channel and the window. Opening the viewer and
+// clicking through files asks the same question many times over, so the
+// repetition is the part worth removing.
 //
-// The cache is deliberately short and deliberately not used for writes: see
-// layoutForWrite. A stale answer here costs at most a few seconds of an outdated
-// file list; a stale answer on the write path could decide that a locked file is
-// editable, which is a rule and not a display detail.
+// Reads only. The write path never consults this: a stale answer here costs at
+// most a few seconds of an outdated file list, but on the write path it could
+// decide that a locked file is editable, which is a rule and not a display
+// detail.
 const LAYOUT_TTL_MS = 5_000
 const layoutCache = new Map<string, { layout: MemoryLayout; at: number }>()
+
+// Monotonic, unlike Date.now(). A backwards wall-clock jump — an NTP correction,
+// a manual clock change — makes a Date-based age negative, so the entry never
+// looks expired and stays pinned until the clock catches up.
+function now(): number {
+  return performance.now()
+}
 
 function layoutForRead(location: ProjectLocation): MemoryLayout {
   const key = toNativeRoot(location.path, location.distro)
   const hit = layoutCache.get(key)
-  if (hit && Date.now() - hit.at < LAYOUT_TTL_MS) return hit.layout
+  if (hit && now() - hit.at < LAYOUT_TTL_MS) return hit.layout
   const layout = resolveLayout(location)
-  layoutCache.set(key, { layout, at: Date.now() })
+  // Evict on write rather than on a timer: entries are only ever replaced, so
+  // without this the map keeps one row per project ever viewed, for the life of
+  // the process. Bounded work — the map holds one entry per project browsed.
+  const cutoff = now() - LAYOUT_TTL_MS
+  for (const [otherKey, entry] of layoutCache) {
+    if (otherKey !== key && entry.at < cutoff) layoutCache.delete(otherKey)
+  }
+  layoutCache.set(key, { layout, at: now() })
   return layout
 }
 
-// Always fresh. The read-only decision is derived from this, and a write is rare
-// enough that one resolution costs nothing a user would notice.
-function layoutForWrite(location: ProjectLocation): MemoryLayout {
-  const key = toNativeRoot(location.path, location.distro)
-  layoutCache.delete(key)
-  const layout = resolveLayout(location)
-  layoutCache.set(key, { layout, at: Date.now() })
-  return layout
-}
-
-// The marker lives in the project's CLAUDE.md, so editing that file can change
-// where memory lives. Dropping the entry keeps the viewer from showing the old
-// routing for the rest of the TTL after the user has just changed it.
+// Any successful write drops the cached routing for that project.
+//
+// Enumerating which files are routing inputs was the wrong shape: the marker is
+// read from BOTH `CLAUDE.md` and `.claude/CLAUDE.md`, and the latter is editable
+// through the ordinary `other` group, so invalidating only on the `instructions`
+// group left a write that changes routing without clearing the answer. Asking
+// "did anything change?" instead of "was it one of these files?" cannot be
+// incomplete in that way, and costs one extra resolution on a rare operation.
 function forgetLayout(location: ProjectLocation): void {
   layoutCache.delete(toNativeRoot(location.path, location.distro))
 }
@@ -208,8 +225,7 @@ function readOnlyFor(group: MemoryGroupId, layout: MemoryLayout): string | undef
 // central lives outside too (and only for native-Windows projects); the rest live
 // inside the project folder, WSL-aware via toNativeRoot/joinNative.
 function groupDir(layout: MemoryLayout, group: MemoryGroupId): string | null {
-  const { location, vaultHome } = layout
-  const root = toNativeRoot(location.path, location.distro)
+  const { root, projectPath, distro, vaultHome } = layout
   switch (group) {
     case 'vault-hot':
     case 'vault-ondemand':
@@ -225,8 +241,8 @@ function groupDir(layout: MemoryLayout, group: MemoryGroupId): string | null {
     case 'instructions':
       return root
     case 'remembered-central':
-      if (location.distro !== null) return null
-      return join(getDefaultClaudeProjectsRoot(), centralSlug(location.path), 'memory')
+      if (distro !== null) return null
+      return join(getDefaultClaudeProjectsRoot(), centralSlug(projectPath), 'memory')
   }
 }
 
@@ -360,7 +376,8 @@ export async function writeMemoryFile(
   const location = await resolveProjectLocation(platform, projectId, sender)
   if (!location) return { ok: false, error: 'Project folder not found' }
 
-  const layout = layoutForWrite(location)
+  // Always fresh: never the cache. The read-only decision below is a rule.
+  const layout = resolveLayout(location)
   // Refuse here, not only in the UI. The renderer's readOnly flag shapes what the
   // user sees; this is what makes it true. A hidden Edit button is a suggestion,
   // and the write path must not depend on the renderer having honoured it.
@@ -372,10 +389,10 @@ export async function writeMemoryFile(
 
   try {
     await writeFile(path, text, 'utf-8')
-    // CLAUDE.md carries the memory-home marker, so editing it can move where memory
-    // lives. Anything cached about this project is now a statement about the file
-    // as it was before this write.
-    if (parsed.group === 'instructions') forgetLayout(location)
+    // Any successful write can have changed where memory lives — the marker is read
+    // from both CLAUDE.md and .claude/CLAUDE.md, and the latter is an ordinary
+    // editable file here. Drop the routing rather than guess which files matter.
+    forgetLayout(location)
     return { ok: true }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'Could not save this file' }

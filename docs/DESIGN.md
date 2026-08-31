@@ -414,9 +414,15 @@ here — see the vault save engine section.
   can serve both the CLI workflows and this process — and for a WSL project that means
   stat/readdir over a `\wsl.localhost\…` UNC path on the main thread. Browsing the
   viewer asks the same question repeatedly, so the answer is cached for a few seconds.
-  The write path deliberately does not use it: a stale answer costs an out-of-date file
-  list, but on the write path it could decide a locked file is editable. Editing the
-  project's `CLAUDE.md` drops the entry, since that file carries the marker.
+  The write path never consults it: a stale answer costs an out-of-date file list, but
+  on the write path it could decide a locked file is editable. Three properties keep
+  that cache honest, each of which was got wrong first: age is measured on a monotonic
+  clock, because a backwards wall-clock jump makes a `Date`-based age negative and pins
+  entries indefinitely; **any** successful write drops the project's entry, because
+  enumerating which files affect routing missed that the marker is read from
+  `.claude/CLAUDE.md` as well as `CLAUDE.md` and that the former is an ordinary
+  editable file here; and entries are pruned rather than only overwritten, so a
+  long-running process does not retain one per project ever viewed.
 - **Read-only is a main-process rule, not a hidden button.** The service decides
   read-only state and `writeMemoryFile` refuses on the same rule independently. The
   renderer's flag shapes the UI only; a write path that trusts the renderer to have
