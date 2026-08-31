@@ -255,6 +255,10 @@
    the alternative — showing the frozen bank under its ordinary heading — is
    indistinguishable from working software. */
 .memory-unresolved {
+  /* The reason names every candidate path tried, and a Windows path has no spaces
+     to break at — without this a single path forces a horizontal scrollbar onto the
+     220-320px list pane. */
+  overflow-wrap: anywhere;
   margin: 0 0 8px;
   padding: 8px 10px;
   background: var(--surface-2);

@@ -127,6 +127,47 @@ function resolveLayout(location: ProjectLocation): MemoryLayout {
   }
 }
 
+// resolveRoute's interface is synchronous by design — it is driven by injected
+// callbacks so the same function serves the CLI workflows and this process — so
+// resolving reads files on the main thread. For a WSL project that means sync
+// stat/readdir over a `\wsl.localhost\…` UNC path, which can block the event
+// loop, and therefore every IPC channel and the window, for a noticeable
+// interval. Opening the viewer and clicking through files asks the same question
+// many times over, so the repetition is the part worth removing.
+//
+// The cache is deliberately short and deliberately not used for writes: see
+// layoutForWrite. A stale answer here costs at most a few seconds of an outdated
+// file list; a stale answer on the write path could decide that a locked file is
+// editable, which is a rule and not a display detail.
+const LAYOUT_TTL_MS = 5_000
+const layoutCache = new Map<string, { layout: MemoryLayout; at: number }>()
+
+function layoutForRead(location: ProjectLocation): MemoryLayout {
+  const key = toNativeRoot(location.path, location.distro)
+  const hit = layoutCache.get(key)
+  if (hit && Date.now() - hit.at < LAYOUT_TTL_MS) return hit.layout
+  const layout = resolveLayout(location)
+  layoutCache.set(key, { layout, at: Date.now() })
+  return layout
+}
+
+// Always fresh. The read-only decision is derived from this, and a write is rare
+// enough that one resolution costs nothing a user would notice.
+function layoutForWrite(location: ProjectLocation): MemoryLayout {
+  const key = toNativeRoot(location.path, location.distro)
+  layoutCache.delete(key)
+  const layout = resolveLayout(location)
+  layoutCache.set(key, { layout, at: Date.now() })
+  return layout
+}
+
+// The marker lives in the project's CLAUDE.md, so editing that file can change
+// where memory lives. Dropping the entry keeps the viewer from showing the old
+// routing for the rest of the TTL after the user has just changed it.
+function forgetLayout(location: ProjectLocation): void {
+  layoutCache.delete(toNativeRoot(location.path, location.distro))
+}
+
 // `abort` means the project HAS a vault marker but its home could not be resolved
 // here — a second machine, a drive still syncing, WSL not running, an unclosed code
 // fence swallowing the marker. The engine distinguishes that from "never migrated",
@@ -209,7 +250,7 @@ export async function getProjectMemory(
   if (!location) {
     return { projectId: projectId ?? '', projectName: '', projectPath: null, available: false, groups: [] }
   }
-  const layout = resolveLayout(location)
+  const layout = layoutForRead(location)
 
   const byGroup = new Map<MemoryGroupId, MemoryFileMeta[]>()
   const push = (file: MemoryFileMeta): void => {
@@ -294,7 +335,7 @@ export async function readMemoryFile(
   const location = await resolveProjectLocation(platform, projectId, sender)
   if (!location) return { id, label: parsed.name, text: '', error: 'Project folder not found' }
 
-  const path = resolveFilePath(resolveLayout(location), parsed.group, parsed.name)
+  const path = resolveFilePath(layoutForRead(location), parsed.group, parsed.name)
   if (!path) return { id, label: parsed.name, text: '', error: 'Invalid file reference' }
 
   try {
@@ -319,7 +360,7 @@ export async function writeMemoryFile(
   const location = await resolveProjectLocation(platform, projectId, sender)
   if (!location) return { ok: false, error: 'Project folder not found' }
 
-  const layout = resolveLayout(location)
+  const layout = layoutForWrite(location)
   // Refuse here, not only in the UI. The renderer's readOnly flag shapes what the
   // user sees; this is what makes it true. A hidden Edit button is a suggestion,
   // and the write path must not depend on the renderer having honoured it.
@@ -331,6 +372,10 @@ export async function writeMemoryFile(
 
   try {
     await writeFile(path, text, 'utf-8')
+    // CLAUDE.md carries the memory-home marker, so editing it can move where memory
+    // lives. Anything cached about this project is now a statement about the file
+    // as it was before this write.
+    if (parsed.group === 'instructions') forgetLayout(location)
     return { ok: true }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'Could not save this file' }
