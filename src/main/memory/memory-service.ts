@@ -24,7 +24,7 @@ import {
 import { isValidEntryName, joinNative, toNativeRoot } from '@shared/project-files'
 import { getDefaultClaudeProjectsRoot } from '../usage/claude-jsonl'
 import { resolveProjectLocation, type ProjectLocation } from '../projects/project-locator'
-import { resolveRoute } from '../vault-save/resolve-memory-route.mjs'
+import { resolveRoute, type MemoryRoute } from '../vault-save/resolve-memory-route.mjs'
 
 // The working-memory bank files (lowercased for matching). Anything else directly
 // in `.claude/` that ends in .md falls into the "other context" group.
@@ -70,7 +70,11 @@ function meta(group: MemoryGroupId, file: FoundFile): MemoryFileMeta {
 // import of the shared engine; see docs/DESIGN.md.
 type MemoryLayout = {
   location: ProjectLocation
-  vaultHome: string | null // the vault memory home, when this project routes there
+  // The engine's verdict, kept whole. Reducing it to "did we get a home?" is what
+  // made `abort` indistinguishable from "never migrated" — see resolveLayout.
+  route: MemoryRoute
+  vaultHome: string | null // the resolved memory home; null on every route but 'vault'
+  reason: string | null // why the engine could not resolve a home it was told exists
 }
 
 function readFileSafe(path: string): string | null {
@@ -107,10 +111,6 @@ function listDirectorySync(path: string): string[] {
 
 function resolveLayout(location: ProjectLocation): MemoryLayout {
   const root = toNativeRoot(location.path, location.distro)
-  // An `abort` route means a marker exists but its home could not be resolved.
-  // Treating that as "no vault" would quietly show the frozen bank as if it were
-  // live memory, which is the failure this whole change exists to end — so the
-  // vault side simply comes back empty and the frozen bank stays labelled frozen.
   const resolved = resolveRoute({
     root,
     readFileSafe,
@@ -119,8 +119,27 @@ function resolveLayout(location: ProjectLocation): MemoryLayout {
     env: process.env,
     listDirectory: listDirectorySync
   })
-  const vaultHome = resolved.route === 'vault' && resolved.home ? resolved.home : null
-  return { location, vaultHome }
+  return {
+    location,
+    route: resolved.route,
+    vaultHome: resolved.route === 'vault' && resolved.home ? resolved.home : null,
+    reason: resolved.reason ?? null
+  }
+}
+
+// `abort` means the project HAS a vault marker but its home could not be resolved
+// here — a second machine, a drive still syncing, WSL not running, an unclosed code
+// fence swallowing the marker. The engine distinguishes that from "never migrated",
+// and so must this: collapsing the two would show the frozen bank under its ordinary
+// "Working memory" heading, editable, with nothing on screen to say the live memory
+// is simply missing. That is the precise defect this change exists to end, and it
+// would be reachable in ordinary multi-machine use.
+//
+// So an aborted project is treated as vault-routed with an unknown home: no vault
+// groups (there are none to show), the bank still labelled frozen and locked, and
+// the engine's own reason surfaced so the user learns what to fix.
+function isVaultRouted(layout: MemoryLayout): boolean {
+  return layout.route === 'vault' || layout.route === 'abort'
 }
 
 // Groups the viewer will never write to, and the plain-language reason shown when
@@ -139,7 +158,7 @@ const FROZEN_BANK_REASON = 'The old in-repo memory bank is frozen: kept for refe
 
 function readOnlyFor(group: MemoryGroupId, layout: MemoryLayout): string | undefined {
   if (READ_ONLY_REASONS[group]) return READ_ONLY_REASONS[group]
-  if (layout.vaultHome && FROZEN_BANK_LABELS[group]) return FROZEN_BANK_REASON
+  if (isVaultRouted(layout) && FROZEN_BANK_LABELS[group]) return FROZEN_BANK_REASON
   return undefined
 }
 
@@ -243,14 +262,24 @@ export async function getProjectMemory(
     const reason = readOnlyFor(id, layout)
     return {
       id,
-      label: (layout.vaultHome ? FROZEN_BANK_LABELS[id] : undefined) ?? MEMORY_GROUP_LABELS[id],
+      label: (isVaultRouted(layout) ? FROZEN_BANK_LABELS[id] : undefined) ?? MEMORY_GROUP_LABELS[id],
       files: byGroup.get(id) as MemoryFileMeta[],
       readOnly: Boolean(reason),
       readOnlyReason: reason
     }
   })
 
-  return { projectId: location.id, projectName: location.name, projectPath: location.path, available: true, groups }
+  return {
+    projectId: location.id,
+    projectName: location.name,
+    projectPath: location.path,
+    available: true,
+    groups,
+    // Only on abort. resolveRoute composes this message specifically to name what
+    // could not be resolved and what to fix, so it is passed through rather than
+    // replaced with a generic one.
+    unresolvedVaultReason: layout.route === 'abort' ? (layout.reason ?? 'The vault memory home could not be resolved.') : undefined
+  }
 }
 
 export async function readMemoryFile(

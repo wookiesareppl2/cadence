@@ -400,6 +400,15 @@ here — see the vault save engine section.
   relabelled `Frozen old bank — …` and locked rather than dropped, because a bank that
   silently disappears looks like lost memory. Group ids stay unchanged so existing
   search deep-links keep resolving.
+- **An unreachable vault is a state of its own, never "no vault".** A project can carry
+  a valid marker whose home does not resolve on this machine — a second PC, a drive
+  still syncing, WSL not running, an unclosed fence swallowing the marker line. The
+  engine returns `abort` for exactly these, and the viewer must keep them distinct from
+  a project that never migrated: no vault groups, the bank still labelled frozen and
+  locked, and the engine's own `reason` shown. Collapsing `abort` into "no vault" puts
+  the frozen bank back under its ordinary heading, editable, with nothing on screen to
+  say the live memory is missing — which is the defect this section exists to prevent,
+  and it is reachable in ordinary multi-machine use.
 - **Read-only is a main-process rule, not a hidden button.** The service decides
   read-only state and `writeMemoryFile` refuses on the same rule independently. The
   renderer's flag shapes the UI only; a write path that trusts the renderer to have
@@ -408,6 +417,7 @@ here — see the vault save engine section.
   Show the muted `.memory-readonly` badge in the header and the one-sentence
   `.memory-readonly-note` beneath it. Both use `--text-3`, not `--caution`: nothing has
   gone wrong, this is how it is meant to work.
+
 ## Context-usage gauge
 
 The selected session shows a **context gauge** (`.context-gauge`) in the History

@@ -136,6 +136,13 @@ export function MemoryView({
             onChange={(event) => setFilter(event.target.value)}
           />
           <div className="memory-list-scroll">
+            {data?.unresolvedVaultReason ? (
+              <div className="memory-unresolved">
+                <strong>Live memory not found.</strong> This project keeps its memory in the vault,
+                but that location could not be reached from this machine, so only the frozen bank is
+                shown below. {data.unresolvedVaultReason}
+              </div>
+            ) : null}
             {loading ? (
               <div className="memory-msg">Loading…</div>
             ) : !hasAnyFiles ? (

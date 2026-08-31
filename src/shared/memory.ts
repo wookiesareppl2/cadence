@@ -39,6 +39,10 @@ export type ProjectMemory = {
   projectName: string
   projectPath: string | null
   available: boolean // false when the project has no resolvable folder
+  // Set when this project HAS a vault memory marker whose home could not be
+  // resolved here. The live memory is simply missing, not absent, and the user
+  // needs the engine own words about what to fix.
+  unresolvedVaultReason?: string
   groups: MemoryGroup[]
 }
 

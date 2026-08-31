@@ -250,6 +250,20 @@
    fault, so the badge states the status and the note under the header states the
    reason. Both use the quiet muted voice, not the caution colour: nothing has
    gone wrong here. */
+/* Live memory is missing, not absent. This is the one place in the viewer that
+   uses the caution voice: something the user needs to fix has been detected, and
+   the alternative — showing the frozen bank under its ordinary heading — is
+   indistinguishable from working software. */
+.memory-unresolved {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border-left: 2px solid var(--caution);
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .memory-readonly {
   color: var(--text-3);
   font-family: var(--font-mono);

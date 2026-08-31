@@ -127,6 +127,74 @@ describe('vault-routed project', () => {
   })
 })
 
+// The route that made the first attempt at this change a no-op. A project can
+// carry a valid marker whose home does not resolve HERE — a second machine, a
+// drive still syncing, WSL not running, an unclosed code fence swallowing the
+// marker line. Treating that as "never migrated" shows the frozen bank under its
+// ordinary heading, editable, with nothing to say the live memory is missing:
+// the original defect, reachable in ordinary multi-machine use.
+describe('vault marker that does not resolve here', () => {
+  beforeEach(() => {
+    const missing = join(root, 'vault', 'gone', 'memory')
+    writeFileSync(join(projectDir, 'CLAUDE.md'), `# Project\n\n${marker(missing)}\n`)
+  })
+
+  it('shows no vault groups, because there are none to show', async () => {
+    const memory = await getProjectMemory('claude', 'p1', sender)
+    expect(groupIds(memory.groups)).not.toContain('vault-hot')
+  })
+
+  it('still treats the old bank as frozen rather than as live memory', async () => {
+    const memory = await getProjectMemory('claude', 'p1', sender)
+    const working = memory.groups.find((group) => group.id === 'working')
+    expect(working?.label).toContain('Frozen')
+    expect(working?.readOnly).toBe(true)
+  })
+
+  it('refuses to write to the bank, so a stale edit cannot land', async () => {
+    const result = await writeMemoryFile('claude', 'p1', 'working:HANDOFF.md', '# Tampered\n', sender)
+    expect(result.ok).toBe(false)
+    expect(readFileSync(join(projectDir, '.claude', 'HANDOFF.md'), 'utf-8')).toBe('# Old handoff\n')
+  })
+
+  // The engine composes this message to name what it tried and what to fix.
+  // Dropping it leaves the user with a frozen bank and no way to know why.
+  it('surfaces the engine reason so the user knows what to fix', async () => {
+    const memory = await getProjectMemory('claude', 'p1', sender)
+    expect(memory.unresolvedVaultReason).toBeTruthy()
+    expect(memory.unresolvedVaultReason).toContain('no memory home resolved')
+  })
+})
+
+describe('marker-shaped text that is not a marker', () => {
+  // resolveRoute aborts rather than falling back, precisely so a damaged marker
+  // cannot silently demote a migrated project to its frozen bank.
+  it('aborts rather than treating the project as never migrated', async () => {
+    writeFileSync(
+      join(projectDir, 'CLAUDE.md'),
+      '# Project\n\nFelix memory home - Windows: nowhere\n'
+    )
+    const memory = await getProjectMemory('claude', 'p1', sender)
+    const working = memory.groups.find((group) => group.id === 'working')
+    expect(working?.readOnly).toBe(true)
+    expect(memory.unresolvedVaultReason).toBeTruthy()
+  })
+})
+
+describe('legacy-root project', () => {
+  // No marker and no `.claude/HANDOFF.md`: the engine routes to legacy-root. The
+  // viewer must not invent a vault or lock anything.
+  it('leaves everything editable and unlabelled', async () => {
+    rmSync(join(projectDir, '.claude', 'HANDOFF.md'))
+    writeFileSync(join(projectDir, 'CLAUDE.md'), '# Project\n')
+    const memory = await getProjectMemory('claude', 'p1', sender)
+    expect(memory.unresolvedVaultReason).toBeUndefined()
+    const pins = memory.groups.find((group) => group.id === 'pins')
+    expect(pins?.readOnly).toBe(false)
+    expect(pins?.label).not.toContain('Frozen')
+  })
+})
+
 describe('project that has not migrated', () => {
   it('behaves exactly as before: live bank, editable, no vault groups', async () => {
     writeFileSync(join(projectDir, 'CLAUDE.md'), '# Project\n\nNo marker here.\n')
