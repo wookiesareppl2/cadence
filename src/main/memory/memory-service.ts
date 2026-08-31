@@ -1,4 +1,5 @@
 import type { WebContents } from 'electron'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { PlatformId } from '@shared/platform'
@@ -13,10 +14,17 @@ import {
   type MemoryWriteResult,
   type ProjectMemory
 } from '@shared/memory'
-import { MEMORY_GROUP_LABELS, MEMORY_GROUP_ORDER } from '@shared/memory'
+import {
+  FROZEN_BANK_LABELS,
+  MEMORY_GROUP_LABELS,
+  MEMORY_GROUP_ORDER,
+  VAULT_ARCHIVE_DIR,
+  VAULT_HOT_NAMES
+} from '@shared/memory'
 import { isValidEntryName, joinNative, toNativeRoot } from '@shared/project-files'
 import { getDefaultClaudeProjectsRoot } from '../usage/claude-jsonl'
 import { resolveProjectLocation, type ProjectLocation } from '../projects/project-locator'
+import { resolveRoute, type MemoryRoute } from '../vault-save/resolve-memory-route.mjs'
 
 // The working-memory bank files (lowercased for matching). Anything else directly
 // in `.claude/` that ends in .md falls into the "other context" group.
@@ -52,12 +60,121 @@ function meta(group: MemoryGroupId, file: FoundFile): MemoryFileMeta {
   return { id: makeMemoryId(group, file.name), group, label: file.name, sizeBytes: file.sizeBytes, modifiedMs: file.modifiedMs }
 }
 
+// Where this project's memory actually lives, resolved once per request.
+//
+// The marker logic is NOT restated here. `resolveRoute` is the same function the
+// /start and /save workflows use to answer this question, and re-implementing it
+// in TypeScript is precisely the "derive, never restate" defect that shipped five
+// times in this codebase: the viewer would drift from the engine and start showing
+// a different memory home than the one being written to. This is the first app-code
+// import of the shared engine; see docs/DESIGN.md.
+type MemoryLayout = {
+  location: ProjectLocation
+  // The engine's verdict, kept whole. Reducing it to "did we get a home?" is what
+  // made `abort` indistinguishable from "never migrated" — see resolveLayout.
+  route: MemoryRoute
+  vaultHome: string | null // the resolved memory home; null on every route but 'vault'
+  reason: string | null // why the engine could not resolve a home it was told exists
+}
+
+function readFileSafe(path: string): string | null {
+  try {
+    return readFileSync(path, 'utf-8')
+  } catch {
+    return null
+  }
+}
+
+function isDirectorySync(path: string): boolean {
+  try {
+    return statSync(path).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+function fileExistsSync(path: string): boolean {
+  try {
+    return statSync(path).isFile()
+  } catch {
+    return false
+  }
+}
+
+function listDirectorySync(path: string): string[] {
+  try {
+    return readdirSync(path, { withFileTypes: true }).map((entry) => entry.name)
+  } catch {
+    return []
+  }
+}
+
+function resolveLayout(location: ProjectLocation): MemoryLayout {
+  const root = toNativeRoot(location.path, location.distro)
+  const resolved = resolveRoute({
+    root,
+    readFileSafe,
+    isDirectory: isDirectorySync,
+    fileExists: fileExistsSync,
+    env: process.env,
+    listDirectory: listDirectorySync
+  })
+  return {
+    location,
+    route: resolved.route,
+    vaultHome: resolved.route === 'vault' && resolved.home ? resolved.home : null,
+    reason: resolved.reason ?? null
+  }
+}
+
+// `abort` means the project HAS a vault marker but its home could not be resolved
+// here — a second machine, a drive still syncing, WSL not running, an unclosed code
+// fence swallowing the marker. The engine distinguishes that from "never migrated",
+// and so must this: collapsing the two would show the frozen bank under its ordinary
+// "Working memory" heading, editable, with nothing on screen to say the live memory
+// is simply missing. That is the precise defect this change exists to end, and it
+// would be reachable in ordinary multi-machine use.
+//
+// So an aborted project is treated as vault-routed with an unknown home: no vault
+// groups (there are none to show), the bank still labelled frozen and locked, and
+// the engine's own reason surfaced so the user learns what to fix.
+function isVaultRouted(layout: MemoryLayout): boolean {
+  return layout.route === 'vault' || layout.route === 'abort'
+}
+
+// Groups the viewer will never write to, and the plain-language reason shown when
+// the user asks why. Vault memory is governed by the save engine — required
+// frontmatter, unique entry ids, no dangling references, index counts that match —
+// and a hand edit here would satisfy none of it, only to fail the next save with an
+// error pointing nowhere near this window. The frozen bank is read-only because the
+// project baseline says it is not authoritative and must not be edited.
+const READ_ONLY_REASONS: Partial<Record<MemoryGroupId, string>> = {
+  'vault-hot': 'Vault memory is written by /save, which validates it. Edit it there.',
+  'vault-ondemand': 'Vault memory is written by /save, which validates it. Edit it there.',
+  'vault-archive': 'Archived memory is kept as a record and is not edited in place.'
+}
+
+const FROZEN_BANK_REASON = 'The old in-repo memory bank is frozen: kept for reference, no longer read.'
+
+function readOnlyFor(group: MemoryGroupId, layout: MemoryLayout): string | undefined {
+  if (READ_ONLY_REASONS[group]) return READ_ONLY_REASONS[group]
+  if (isVaultRouted(layout) && FROZEN_BANK_LABELS[group]) return FROZEN_BANK_REASON
+  return undefined
+}
+
 // The native (Windows) directory that holds a group's files for a given project.
-// Central lives outside the project (and only for native-Windows projects); the
-// rest live inside the project folder, WSL-aware via toNativeRoot/joinNative.
-function groupDir(location: ProjectLocation, group: MemoryGroupId): string | null {
+// Vault groups live outside the project entirely, at the resolved memory home;
+// central lives outside too (and only for native-Windows projects); the rest live
+// inside the project folder, WSL-aware via toNativeRoot/joinNative.
+function groupDir(layout: MemoryLayout, group: MemoryGroupId): string | null {
+  const { location, vaultHome } = layout
   const root = toNativeRoot(location.path, location.distro)
   switch (group) {
+    case 'vault-hot':
+    case 'vault-ondemand':
+      return vaultHome
+    case 'vault-archive':
+      return vaultHome ? join(vaultHome, VAULT_ARCHIVE_DIR) : null
     case 'working':
     case 'pins':
     case 'other':
@@ -75,10 +192,10 @@ function groupDir(location: ProjectLocation, group: MemoryGroupId): string | nul
 // Re-derive a file's absolute path from its (validated) group + name. The renderer
 // never supplies a path; this is the only place ids become real locations, so a
 // bad name or out-of-scope instructions write can't escape.
-function resolveFilePath(location: ProjectLocation, group: MemoryGroupId, name: string): string | null {
+function resolveFilePath(layout: MemoryLayout, group: MemoryGroupId, name: string): string | null {
   if (!isValidEntryName(name)) return null
   if (group === 'instructions' && name !== INSTRUCTIONS_NAME) return null
-  const dir = groupDir(location, group)
+  const dir = groupDir(layout, group)
   if (!dir) return null
   return join(dir, name)
 }
@@ -92,6 +209,7 @@ export async function getProjectMemory(
   if (!location) {
     return { projectId: projectId ?? '', projectName: '', projectPath: null, available: false, groups: [] }
   }
+  const layout = resolveLayout(location)
 
   const byGroup = new Map<MemoryGroupId, MemoryFileMeta[]>()
   const push = (file: MemoryFileMeta): void => {
@@ -100,15 +218,29 @@ export async function getProjectMemory(
     byGroup.set(file.group, list)
   }
 
-  // `.claude/*.md` → working / pins / other.
-  for (const file of await listMarkdown(groupDir(location, 'working') as string)) {
+  // The vault memory home: hot layer, deeper layer, then Archive/.
+  const vaultDir = groupDir(layout, 'vault-hot')
+  if (vaultDir) {
+    for (const file of await listMarkdown(vaultDir)) {
+      push(meta(VAULT_HOT_NAMES.includes(file.name) ? 'vault-hot' : 'vault-ondemand', file))
+    }
+    for (const file of await listMarkdown(groupDir(layout, 'vault-archive') as string)) {
+      push(meta('vault-archive', file))
+    }
+  }
+
+  // `.claude/*.md` → working / pins / other. Still listed when the project routes
+  // to the vault, because the frozen bank holds the pre-migration history and
+  // reading it is often exactly what the user wants; it is relabelled and locked
+  // rather than hidden.
+  for (const file of await listMarkdown(groupDir(layout, 'working') as string)) {
     const lower = file.name.toLowerCase()
     if (WORKING_NAMES.has(lower)) push(meta('working', file))
     else if (lower === PINS_NAME) push(meta('pins', file))
     else push(meta('other', file))
   }
   // `.claude/memory/*.md`
-  for (const file of await listMarkdown(groupDir(location, 'remembered-project') as string)) {
+  for (const file of await listMarkdown(groupDir(layout, 'remembered-project') as string)) {
     push(meta('remembered-project', file))
   }
   // root CLAUDE.md
@@ -121,18 +253,33 @@ export async function getProjectMemory(
     // No project instructions file — fine.
   }
   // central memory store (native-Windows projects only)
-  const centralDir = groupDir(location, 'remembered-central')
+  const centralDir = groupDir(layout, 'remembered-central')
   if (centralDir) {
     for (const file of await listMarkdown(centralDir)) push(meta('remembered-central', file))
   }
 
-  const groups: MemoryGroup[] = MEMORY_GROUP_ORDER.filter((id) => (byGroup.get(id)?.length ?? 0) > 0).map((id) => ({
-    id,
-    label: MEMORY_GROUP_LABELS[id],
-    files: byGroup.get(id) as MemoryFileMeta[]
-  }))
+  const groups: MemoryGroup[] = MEMORY_GROUP_ORDER.filter((id) => (byGroup.get(id)?.length ?? 0) > 0).map((id) => {
+    const reason = readOnlyFor(id, layout)
+    return {
+      id,
+      label: (isVaultRouted(layout) ? FROZEN_BANK_LABELS[id] : undefined) ?? MEMORY_GROUP_LABELS[id],
+      files: byGroup.get(id) as MemoryFileMeta[],
+      readOnly: Boolean(reason),
+      readOnlyReason: reason
+    }
+  })
 
-  return { projectId: location.id, projectName: location.name, projectPath: location.path, available: true, groups }
+  return {
+    projectId: location.id,
+    projectName: location.name,
+    projectPath: location.path,
+    available: true,
+    groups,
+    // Only on abort. resolveRoute composes this message specifically to name what
+    // could not be resolved and what to fix, so it is passed through rather than
+    // replaced with a generic one.
+    unresolvedVaultReason: layout.route === 'abort' ? (layout.reason ?? 'The vault memory home could not be resolved.') : undefined
+  }
 }
 
 export async function readMemoryFile(
@@ -147,7 +294,7 @@ export async function readMemoryFile(
   const location = await resolveProjectLocation(platform, projectId, sender)
   if (!location) return { id, label: parsed.name, text: '', error: 'Project folder not found' }
 
-  const path = resolveFilePath(location, parsed.group, parsed.name)
+  const path = resolveFilePath(resolveLayout(location), parsed.group, parsed.name)
   if (!path) return { id, label: parsed.name, text: '', error: 'Invalid file reference' }
 
   try {
@@ -172,7 +319,14 @@ export async function writeMemoryFile(
   const location = await resolveProjectLocation(platform, projectId, sender)
   if (!location) return { ok: false, error: 'Project folder not found' }
 
-  const path = resolveFilePath(location, parsed.group, parsed.name)
+  const layout = resolveLayout(location)
+  // Refuse here, not only in the UI. The renderer's readOnly flag shapes what the
+  // user sees; this is what makes it true. A hidden Edit button is a suggestion,
+  // and the write path must not depend on the renderer having honoured it.
+  const readOnly = readOnlyFor(parsed.group, layout)
+  if (readOnly) return { ok: false, error: readOnly }
+
+  const path = resolveFilePath(layout, parsed.group, parsed.name)
   if (!path) return { ok: false, error: 'Invalid file reference' }
 
   try {

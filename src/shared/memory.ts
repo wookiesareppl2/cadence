@@ -4,6 +4,9 @@
 // top and is the only place that turns these ids into real file paths.
 
 export type MemoryGroupId =
+  | 'vault-hot' // vault memory home: _Index / HANDOFF / Pins
+  | 'vault-ondemand' // vault memory home: Pins-Reference / Decisions / Patterns / Troubleshooting
+  | 'vault-archive' // vault memory home: Archive/*.md
   | 'working' // HANDOFF / decisions / patterns / troubleshooting
   | 'pins' // context-pins
   | 'remembered-project' // .claude/memory/*.md
@@ -23,6 +26,12 @@ export type MemoryGroup = {
   id: MemoryGroupId
   label: string
   files: MemoryFileMeta[]
+  // Whether this group can be edited in-app, and why not when it cannot. Both are
+  // decided in the main process: a group is read-only because of what the file IS,
+  // not because of what the renderer believes, and writeMemoryFile enforces the
+  // same rule independently. The renderer uses these only to shape the UI.
+  readOnly: boolean
+  readOnlyReason?: string
 }
 
 export type ProjectMemory = {
@@ -30,6 +39,10 @@ export type ProjectMemory = {
   projectName: string
   projectPath: string | null
   available: boolean // false when the project has no resolvable folder
+  // Set when this project HAS a vault memory marker whose home could not be
+  // resolved here. The live memory is simply missing, not absent, and the user
+  // needs the engine own words about what to fix.
+  unresolvedVaultReason?: string
   groups: MemoryGroup[]
 }
 
@@ -38,6 +51,9 @@ export type MemoryWriteResult = { ok: boolean; error?: string }
 
 // Human-readable section headings, in display order.
 export const MEMORY_GROUP_LABELS: Record<MemoryGroupId, string> = {
+  'vault-hot': 'Hot layer (read at every session)',
+  'vault-ondemand': 'Deeper memory (read on demand)',
+  'vault-archive': 'Archive',
   working: 'Working memory',
   pins: 'Pinned rules & context',
   'remembered-project': 'Remembered facts (this project)',
@@ -46,7 +62,21 @@ export const MEMORY_GROUP_LABELS: Record<MemoryGroupId, string> = {
   other: 'Other context'
 }
 
+// When a project routes to the vault, its in-repo `.claude/` bank is the frozen
+// transition artifact: still worth reading, never authoritative, never edited.
+// The ids stay the same so existing search deep-links keep resolving; only the
+// heading changes, and the service marks the group read-only.
+export const FROZEN_BANK_LABELS: Partial<Record<MemoryGroupId, string>> = {
+  working: 'Frozen old bank — working memory',
+  pins: 'Frozen old bank — pinned rules',
+  'remembered-project': 'Frozen old bank — remembered facts',
+  other: 'Frozen old bank — other context'
+}
+
 export const MEMORY_GROUP_ORDER: MemoryGroupId[] = [
+  'vault-hot',
+  'vault-ondemand',
+  'vault-archive',
   'working',
   'pins',
   'remembered-project',
@@ -54,6 +84,12 @@ export const MEMORY_GROUP_ORDER: MemoryGroupId[] = [
   'instructions',
   'other'
 ]
+
+// The vault memory home's own files, split into the two layers the save/start
+// workflow already distinguishes. Anything else in the home that ends in .md
+// falls into the deeper layer rather than being hidden.
+export const VAULT_HOT_NAMES = ['_Index.md', 'HANDOFF.md', 'Pins.md']
+export const VAULT_ARCHIVE_DIR = 'Archive'
 
 const WORKING_MEMORY_NAMES = new Set(['handoff.md', 'decisions.md', 'patterns.md', 'troubleshooting.md'])
 const PINS_MEMORY_NAME = 'context-pins.md'
