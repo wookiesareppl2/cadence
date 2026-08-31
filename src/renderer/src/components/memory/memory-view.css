@@ -246,6 +246,25 @@
   cursor: default;
 }
 
+/* Read-only state. A missing Edit button needs to read as a rule rather than a
+   fault, so the badge states the status and the note under the header states the
+   reason. Both use the quiet muted voice, not the caution colour: nothing has
+   gone wrong here. */
+.memory-readonly {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.memory-readonly-note {
+  padding: 8px 14px;
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-size: 11px;
+}
+
 .memory-save-error {
   padding: 8px 14px;
   background: var(--surface-2);

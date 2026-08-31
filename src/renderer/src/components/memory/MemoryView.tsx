@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { JSX } from 'react'
 import type { PlatformId } from '@shared/platform'
-import type { MemoryFileMeta } from '@shared/memory'
+import type { MemoryFileMeta, MemoryGroup } from '@shared/memory'
 import { HistoryMarkdown } from '../history-markdown'
 import { useProjectMemory } from './use-project-memory'
 import './memory-view.css'
@@ -60,14 +60,19 @@ export function MemoryView({
       .filter((group) => group.files.length > 0)
   }, [data, filter])
 
-  const selectedMeta: MemoryFileMeta | null = useMemo(() => {
+  // The selected file's own group, so the detail pane can say why a file cannot be
+  // edited instead of just omitting the button. A missing affordance with no reason
+  // reads as a bug; the reason is what makes it read as a rule.
+  const selected = useMemo((): { meta: MemoryFileMeta; group: MemoryGroup } | null => {
     if (!data || !selectedId) return null
     for (const group of data.groups) {
       const found = group.files.find((file) => file.id === selectedId)
-      if (found) return found
+      if (found) return { meta: found, group }
     }
     return null
   }, [data, selectedId])
+
+  const selectedMeta: MemoryFileMeta | null = selected?.meta ?? null
 
   useEffect(() => {
     if (!data || !pendingInitialId) return
@@ -180,7 +185,11 @@ export function MemoryView({
                   </span>
                 </div>
                 <div className="memory-detail-actions">
-                  {editing ? (
+                  {selected?.group.readOnly ? (
+                    <span className="memory-readonly" title={selected.group.readOnlyReason}>
+                      Read-only
+                    </span>
+                  ) : editing ? (
                     <>
                       <button type="button" className="memory-action primary" onClick={() => void commit()} disabled={saving}>
                         {saving ? 'Saving…' : 'Save'}
@@ -196,6 +205,9 @@ export function MemoryView({
                   )}
                 </div>
               </div>
+              {selected?.group.readOnly && selected.group.readOnlyReason ? (
+                <div className="memory-readonly-note">{selected.group.readOnlyReason}</div>
+              ) : null}
               {saveError ? <div className="memory-save-error">{saveError}</div> : null}
               <div className="memory-detail-body">
                 {contentLoading ? (

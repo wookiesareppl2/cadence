@@ -365,15 +365,49 @@ provider, and each exists because its absence shipped a real defect.
   computed twice, a hand-written `.d.mts` declaring a module's exports a second time. The scripts
   are LF-pinned in `.gitattributes` because the test suite imports them directly and a CRLF
   shebang breaks Vite's module transform on a fresh Windows checkout.
-- **The repo copy is canonical; the installed copies must match it byte for byte.** No app code
-  imports these scripts — they run from `~/.claude/skills/save/scripts/` and
-  `~/.codex/skills/save/scripts/`, so the repo copy exists to be the tested source of truth. When
-  an installed copy drifts, the suite guards an engine nobody runs while the one that runs is
-  unguarded: Claude's copy gained the two rules above, Codex's did not, and the two providers ran
-  different save engines for three weeks with a green suite throughout. A test now compares the
-  installed copies against the repo copy, skipping only where none is installed. Change the repo
-  copy first, then sync outward.
+- **The repo copy is canonical; the installed copies must match it byte for byte.** The engine runs
+  from `~/.claude/skills/save/scripts/` and `~/.codex/skills/save/scripts/`, so the repo copy exists
+  to be the tested source of truth. When an installed copy drifts, the suite guards an engine nobody
+  runs while the one that runs is unguarded: Claude's copy gained the two rules above, Codex's did
+  not, and the two providers ran different save engines for three weeks with a green suite
+  throughout. A test now compares the installed copies against the repo copy, skipping only where
+  none is installed. Change the repo copy first, then sync outward.
+- **App code may import the engine, but only to ask it a question — never to restate one.** The
+  Memory viewer imports `resolveRoute` from `resolve-memory-route.mjs` to find a project's memory
+  home. That is deliberate: re-implementing marker resolution in TypeScript would put the same fact
+  in two places, and the viewer would drift from the engine until it displayed a different memory
+  home than the one being written to. Import the engine's answer; do not copy its logic. Anything
+  imported this way must keep its `.d.mts` honest, since a declaration that lies about shape is
+  checked by nothing at runtime.
 
+## Memory viewer
+
+The Memory overlay shows a project's memory grouped by where it actually lives,
+resolved per project rather than assumed. A project carrying a vault memory-home
+marker shows its hot layer, its deeper on-demand files and its `Archive/`; a project
+without one shows its in-repo `.claude/` bank exactly as before. The routing question
+is answered by the save engine's own `resolveRoute`, never by a second implementation
+here — see the vault save engine section.
+
+- **Vault memory is read-only in the viewer.** The save engine enforces required
+  frontmatter, unique entry ids, no dangling references and index counts that match
+  the files; a hand edit in this window satisfies none of that and would surface as a
+  validation failure at the next save, pointing nowhere near the edit that caused it.
+  `/save` stays the single writer. `Archive/` is read-only for the same reason plus
+  its own: archived entries are a record.
+- **A frozen bank is shown, not hidden.** When a project has migrated, its `.claude/`
+  bank still holds the pre-migration history and reading it is often the point. It is
+  relabelled `Frozen old bank — …` and locked rather than dropped, because a bank that
+  silently disappears looks like lost memory. Group ids stay unchanged so existing
+  search deep-links keep resolving.
+- **Read-only is a main-process rule, not a hidden button.** The service decides
+  read-only state and `writeMemoryFile` refuses on the same rule independently. The
+  renderer's flag shapes the UI only; a write path that trusts the renderer to have
+  honoured it is not a rule.
+- **Say why, not just no.** A missing Edit button with no explanation reads as a bug.
+  Show the muted `.memory-readonly` badge in the header and the one-sentence
+  `.memory-readonly-note` beneath it. Both use `--text-3`, not `--caution`: nothing has
+  gone wrong, this is how it is meant to work.
 ## Context-usage gauge
 
 The selected session shows a **context gauge** (`.context-gauge`) in the History
