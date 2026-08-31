@@ -952,9 +952,11 @@ function changedAgainstOrientation(manifest, afterFiles, afterDaily) {
 
 // The intent half of the cross-check that deriving the changed set from disk
 // state used to cost us (the old KNOWN TRADE-OFF here). buildFileHunks emits a
-// hunk only for a file the PLAN asked to write, so the hunk keys are the
-// worker's declared intent, recorded before anything is written. Comparing them
-// against what the write actually produced catches two shapes of silent no-op:
+// hunk for each file the PLAN asked to write, and buildFileHunks hands back that
+// worker-owned subset as `intended` — deliberately NOT every key with a hunk,
+// since the collector injects some of its own (see the workerOwned filter).
+// Comparing intent against what the write actually produced catches two shapes
+// of silent no-op:
 //
 //   - byte-identical output — the plan restated content the file already had, so
 //     this invocation did nothing at all;
@@ -1288,7 +1290,7 @@ function stampedIndexText(memory, plan, counts) {
 function buildFileHunks(manifest, plan) {
   const memory = path.resolve(manifest.memory)
   assertUnchangedSinceManifest(manifest)
-  validatePlanFileKeys(memory, plan)
+  const workerKeys = validatePlanFileKeys(memory, plan)
   validateDnoAuthority(plan)
   const fileHunks = new Map()
 
@@ -1390,20 +1392,48 @@ function buildFileHunks(manifest, plan) {
     fileHunks.set('@daily', hunks)
   }
 
-  // A declaration is only meaningful for a file this plan actually writes.
-  // Containment alone was not enough: "HANDOFFF.md" resolves inside the memory
+  // Which of those hunks the WORKER actually asked for. Not the same as every
+  // key with a hunk: D4 injects a Pin Review Log line when the worker omits one,
+  // and D1 stamps _Index.md on every save whether or not the plan mentions it.
+  //
+  // Holding the worker to a write the COLLECTOR chose produced a false positive.
+  // Concretely: append ADR-900, validate fails, submit a correction that removes
+  // ADR-900. Decisions.md returns to its pre-save bytes (correctly flagged — that
+  // is a restore, and it needs declaring), but the stamped _Index.md count goes
+  // 101 back to 100 and lands on its pre-save bytes too. The guard then named a
+  // file the worker never mentioned, in a plan it could not have written
+  // differently.
+  //
+  // Authorship is the whole test, so deriving it from workerKeys is enough — and
+  // excluding _Index.md outright would be too much. COLLECTOR_GUARANTEES invites
+  // the worker to put _Index.md in `replace` for structure/status prose (only the
+  // four counts are collector-owned), and the other five plan shapes do not skip
+  // it at all. A blanket exclusion would leave a worker-authored _Index.md write
+  // unchecked — the very defect this guard exists to close, carved out for one
+  // file. When the worker names it, it is intent; when only D1 stamps it, it is
+  // not in workerKeys and never enters the check.
+  const workerOwned = new Set(workerKeys)
+  if (plan.daily) workerOwned.add('@daily')
+  const intended = [...fileHunks.keys()].filter((key) => workerOwned.has(key))
+
+  // A declaration is only meaningful for a write this plan is held to. Checking
+  // containment alone was not enough: "HANDOFFF.md" resolves inside the memory
   // home, so it passed while declaring nothing, leaving the worker believing the
-  // check had been stood down for the file it meant. Membership catches that
-  // typo, and also the stale key left behind when a plan stops writing the file
-  // it used to restore.
+  // check had been stood down for the file it meant. Checking against `intended`
+  // catches that typo, the stale key left behind when a plan stops writing the
+  // file it used to restore, and a declaration for a collector-injected write
+  // that was never going to be checked in the first place.
+  const declarable = new Set(intended)
   for (const key of plan.allowUnchanged) {
     if (key !== '@daily') assertMemoryPath(memory, key)
-    if (!fileHunks.has(key)) {
-      throw new Error(`allowUnchanged names ${key}, which this plan does not write. Declare only keys the plan writes.`)
+    if (!declarable.has(key)) {
+      throw new Error(fileHunks.has(key)
+        ? `allowUnchanged names ${key}, which the collector writes on its own initiative rather than at this plan's request. Such writes are never held to declared intent, so the declaration is unnecessary.`
+        : `allowUnchanged names ${key}, which this plan does not write. Declare only keys the plan writes.`)
     }
   }
 
-  return { memory, fileHunks }
+  return { memory, fileHunks, intended }
 }
 
 // `@daily` sorts last so the list reads memory-files-then-daily, as before.
@@ -1417,7 +1447,7 @@ function emitPatchPacket() {
   const planPath = path.resolve(required('plan'))
   const manifest = JSON.parse(readText(manifestPath))
   const plan = normalizePlan(JSON.parse(readText(planPath)))
-  const { memory, fileHunks } = buildFileHunks(manifest, plan)
+  const { memory, fileHunks, intended } = buildFileHunks(manifest, plan)
   if (!fileHunks.size) throw new Error('Patch plan contains no writes')
   const beforeFiles = memorySnapshot(memory)
   const beforeDaily = fileSnapshot(manifest.daily)
@@ -1437,7 +1467,7 @@ function emitPatchPacket() {
   const plannedChanged = changedAgainstOrientation(manifest, projected.files, projected.daily)
   assertIntendedWritesLanded(
     'patch',
-    [...fileHunks.keys()],
+    intended,
     { ...beforeFiles, '@daily': beforeDaily },
     { ...projected.files, '@daily': projected.daily },
     plannedChanged,
@@ -1512,7 +1542,7 @@ function emitApplyPacket() {
   const planPath = path.resolve(required('plan'))
   const manifest = JSON.parse(readText(manifestPath))
   const plan = normalizePlan(JSON.parse(readText(planPath)))
-  const { memory, fileHunks } = buildFileHunks(manifest, plan)
+  const { memory, fileHunks, intended } = buildFileHunks(manifest, plan)
   if (!fileHunks.size) throw new Error('Patch plan contains no writes')
   const beforeFiles = memorySnapshot(memory)
   const beforeDaily = fileSnapshot(manifest.daily)
@@ -1527,7 +1557,7 @@ function emitApplyPacket() {
   const projected = projectFileHunks(manifest, memory, fileHunks)
   assertIntendedWritesLanded(
     'apply',
-    [...fileHunks.keys()],
+    intended,
     { ...beforeFiles, '@daily': beforeDaily },
     { ...projected.files, '@daily': projected.daily },
     changedAgainstOrientation(manifest, projected.files, projected.daily),
