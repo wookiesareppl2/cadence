@@ -257,6 +257,29 @@ describe('route caching', () => {
     }
   })
 
+  // A write that throws can still have truncated or partly written the file, so
+  // the routing resolved before it is no longer a statement about what is on
+  // disk. The success path drops the entry; the failure path has to as well.
+  //
+  // Forcing a real failure: make the target a directory, so writeFile fails with
+  // EISDIR. That is a failure before any bytes land rather than a partial write,
+  // but it exercises the same path — the catch — and a partial write cannot be
+  // provoked deterministically here.
+  it('drops the cached routing when a write fails', async () => {
+    writeFileSync(join(projectDir, 'CLAUDE.md'), '# Project\n\nNo marker yet.\n')
+    mkdirSync(join(projectDir, '.claude', 'notes.md'))
+    await getProjectMemory('claude', 'p1', sender) // warm the cache
+
+    const failed = await writeMemoryFile('claude', 'p1', 'other:notes.md', '# Nope\n', sender)
+    expect(failed.ok).toBe(false)
+
+    // The project's routing changes while nothing else touches the cache. Only a
+    // cache dropped by the failed write lets this be seen inside the TTL.
+    writeFileSync(join(projectDir, 'CLAUDE.md'), `# Project\n\n${marker(vaultHome)}\n`)
+    const after = await getProjectMemory('claude', 'p1', sender)
+    expect(groupIds(after.groups)).toContain('vault-hot')
+  })
+
   it('still serves a warm read without re-resolving', async () => {
     writeFileSync(join(projectDir, 'CLAUDE.md'), `# Project\n\n${marker(vaultHome)}\n`)
     const first = await getProjectMemory('claude', 'p1', sender)
