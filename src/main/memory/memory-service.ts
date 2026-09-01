@@ -162,9 +162,10 @@ function layoutForRead(location: ProjectLocation): MemoryLayout {
   const hit = layoutCache.get(key)
   if (hit && now() - hit.at < LAYOUT_TTL_MS) return hit.layout
   const layout = resolveLayout(location)
-  // Evict on write rather than on a timer: entries are only ever replaced, so
-  // without this the map keeps one row per project ever viewed, for the life of
-  // the process. Bounded work — the map holds one entry per project browsed.
+  // Sweep expired entries here, on the miss we are already paying for, rather than
+  // on a timer. Entries are otherwise only ever replaced, so without this the map
+  // keeps one row per project ever viewed for the life of the process. The scan is
+  // skipped entirely on a hit, and its cost is dominated by the resolve above.
   const cutoff = now() - LAYOUT_TTL_MS
   for (const [otherKey, entry] of layoutCache) {
     if (otherKey !== key && entry.at < cutoff) layoutCache.delete(otherKey)
@@ -395,6 +396,10 @@ export async function writeMemoryFile(
     forgetLayout(location)
     return { ok: true }
   } catch (error) {
+    // A failure here can still have truncated or partly written the file, so the
+    // routing this project last resolved may already be a statement about content
+    // that no longer exists. Drop it on the way out as well.
+    forgetLayout(location)
     return { ok: false, error: error instanceof Error ? error.message : 'Could not save this file' }
   }
 }
