@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
+import type { ComponentProps } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { PLATFORM_CONFIG } from '../src/shared/platform'
 import { WINDOWS_ORIGIN, type AssistantSession } from '../src/shared/sessions'
 import { SessionHistorySidebar } from '../src/renderer/src/components/session-browser/session-panels'
 
@@ -39,7 +41,11 @@ const session: AssistantSession = {
   model: null
 }
 
-function renderSidebar(overrides: Record<string, unknown> = {}) {
+// Typed against the real prop shape rather than a bag of unknowns: a misspelled
+// override should fail to compile here, not be silently dropped on the floor.
+type SidebarProps = ComponentProps<typeof SessionHistorySidebar>
+
+function renderSidebar(overrides: Partial<SidebarProps> = {}) {
   const onResume = vi.fn()
   render(
     <SessionHistorySidebar
@@ -58,12 +64,16 @@ function renderSidebar(overrides: Record<string, unknown> = {}) {
   return { onResume, user: userEvent.setup() }
 }
 
-const caret = (): HTMLElement => screen.getByRole('button', { name: /other ways to resume/i })
+const caret = (): HTMLButtonElement =>
+  screen.getByRole('button', { name: /other ways to resume/i }) as HTMLButtonElement
+
+const resumeButton = (): HTMLButtonElement =>
+  screen.getByRole('button', { name: /resume this session in a terminal/i }) as HTMLButtonElement
 
 describe('the primary Resume button', () => {
   it('resumes in the safe mode, never the bypass one', async () => {
     const { onResume, user } = renderSidebar()
-    await user.click(screen.getByRole('button', { name: /resume this session in a terminal/i }))
+    await user.click(resumeButton())
     expect(onResume).toHaveBeenCalledTimes(1)
     expect(onResume).toHaveBeenCalledWith(false)
   })
@@ -128,15 +138,39 @@ describe('the caret menu', () => {
     expect(screen.queryByRole('menu')).toBeNull()
   })
 
-  it('cannot be opened when there is no session to resume', async () => {
-    const { user } = renderSidebar({ session: null })
-    await user.click(caret()).catch(() => undefined)
-    expect(screen.queryByRole('menu')).toBeNull()
+  // Two independent guards stop the menu opening with nothing to resume: the caret
+  // is disabled, and the menu is not rendered while Resume is unavailable. Asserted
+  // separately on purpose — testing only the outcome passed even with the `disabled`
+  // attribute removed, which is the visible regression: a caret that looks usable
+  // and silently does nothing.
+  it('disables the caret when there is no session to resume', () => {
+    renderSidebar({ session: null })
+    expect(caret().disabled).toBe(true)
+    expect(resumeButton().disabled).toBe(true)
   })
 
-  it('carries the accent in, so the portalled rows keep a focus ring', async () => {
-    const { user } = renderSidebar()
+  it('still refuses to open the menu if that disabled state is ever bypassed', async () => {
+    const { onResume, user } = renderSidebar({ session: null })
     await user.click(caret())
-    expect(screen.getByRole('menu').style.getPropertyValue('--accent')).toBeTruthy()
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(onResume).not.toHaveBeenCalled()
+  })
+
+  // The portalled menu sits outside `.app-shell`, where `--accent` is defined, so it
+  // has to carry its own. The value matters, not just its presence: a shared default
+  // would resolve — and paint Claude's orange focus ring on a Codex menu.
+  it.each([
+    ['claude' as const],
+    ['codex' as const]
+  ])('carries %s own accent into the portalled menu', async (platform) => {
+    const { user } = renderSidebar({ platform })
+    await user.click(caret())
+    expect(screen.getByRole('menu').style.getPropertyValue('--accent')).toBe(
+      PLATFORM_CONFIG[platform].accent
+    )
+  })
+
+  it('gives the two platforms visibly different accents, or the check above proves nothing', () => {
+    expect(PLATFORM_CONFIG.claude.accent).not.toBe(PLATFORM_CONFIG.codex.accent)
   })
 })
