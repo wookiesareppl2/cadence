@@ -28,6 +28,9 @@ const DEEP_SEARCH_BUDGET_MS = 1500
 // Memory gets its own budget rather than a share of the deep one. It is a short,
 // known list of markdown files, but some of it lives on a synced drive or across
 // a WSL share, so a slow home must not be able to spend the file walk's time.
+// This bounds the per-file matching only: resolving where a project's memory lives
+// happens before the first check and is not bounded by it (that resolution is
+// synchronous by design and cached for a few seconds — see memory-service).
 const MEMORY_SEARCH_BUDGET_MS = 800
 
 // Directories never worth searching — large, generated, packaged output, VCS
@@ -61,10 +64,12 @@ const IGNORE_DIRS = new Set([
 
 type DeepResult = { items: SearchResultItem[]; truncated: boolean }
 
-// `covered` holds the project-relative paths already reported under Memory, so a
-// frozen in-repo bank file is not listed twice under two different headings. The
-// set is derived from the memory enumeration itself, never from a list of names
-// restated here.
+// `covered` holds the project-relative paths of the in-project memory files the
+// Memory pass actually examined, so a frozen in-repo bank file is not listed twice
+// under two different headings. It is deliberately NOT every memory file: one the
+// Memory pass ran out of time to look at must stay findable here. The set is
+// derived from the memory enumeration itself, never from a list of names restated
+// here.
 async function searchFiles(
   target: ProjectLocation,
   needle: string,
@@ -142,15 +147,17 @@ async function searchFiles(
 }
 
 type MemoryResult = DeepResult & {
-  // Every memory file that lives inside the project folder, lowercased and
-  // project-relative — whether or not it matched. The file walk skips these so a
-  // file cannot appear under both Memory and Files.
+  // The in-project memory files this pass examined, lowercased and project-relative
+  // — whether or not they matched, but never ones it did not reach. The file walk
+  // skips these, so a file cannot appear under both Memory and Files, and a file
+  // the pass skipped is not silently dropped from both.
   coveredRelPaths: Set<string>
 }
 
 async function searchMemory(target: ProjectLocation, needle: string, deadline: number): Promise<MemoryResult> {
   const coveredRelPaths = new Set<string>()
   const matches: Array<{ score: number; item: SearchResultItem }> = []
+  const lowerNeedle = needle.toLowerCase()
   let truncated = false
 
   let targets
@@ -163,16 +170,24 @@ async function searchMemory(target: ProjectLocation, needle: string, deadline: n
   }
 
   for (const file of targets) {
-    if (file.projectRelPath) coveredRelPaths.add(file.projectRelPath.toLowerCase())
-  }
-
-  for (const file of targets) {
     if (Date.now() > deadline || matches.length >= MAX_MEMORY_RESULTS) {
       truncated = true
       break
     }
 
+    // Claimed only now, once this file is actually about to be examined. Claiming
+    // every in-project path up front instead meant that when the budget or the
+    // result cap ended this loop early, the files it never reached were still
+    // skipped by the file walk: dropped from Files without ever being matched in
+    // Memory, and so findable in neither. A file that becomes unfindable is a
+    // worse outcome than a file listed twice, so the claim has to trail the work.
+    if (file.projectRelPath) coveredRelPaths.add(file.projectRelPath.toLowerCase())
+
+    // Name, path, and content — the same three the file walk scores. Matching on
+    // fewer would mean covering a file here quietly narrowed how it can be found.
     const nameScore = matchScore(file.label, needle)
+    const pathHit =
+      nameScore === 0 && file.projectRelPath ? file.projectRelPath.toLowerCase().includes(lowerNeedle) : false
     let snippet = null
     if (file.sizeBytes <= MAX_TEXT_PREVIEW_BYTES) {
       try {
@@ -181,10 +196,10 @@ async function searchMemory(target: ProjectLocation, needle: string, deadline: n
         // Unreadable right now (locked, mid-sync, gone). A name match still counts.
       }
     }
-    if (nameScore === 0 && !snippet) continue
+    if (nameScore === 0 && !pathHit && !snippet) continue
 
     matches.push({
-      score: nameScore + (snippet ? 30 : 0),
+      score: (nameScore || (pathHit ? 10 : 0)) + (snippet ? 30 : 0),
       item: {
         kind: 'memory',
         id: file.id,
