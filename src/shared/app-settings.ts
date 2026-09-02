@@ -1,4 +1,4 @@
-import { makeProjectRoot, type ProjectRoot } from './project-roots'
+import { isUsableProjectRoot, makeProjectRoot, type ProjectRoot } from './project-roots'
 
 export const APP_SETTINGS_VERSION = 1 as const
 
@@ -44,6 +44,9 @@ function normalizeProjectRoots(value: unknown): ProjectRoot[] {
       typeof candidate.distro === 'string' && candidate.distro.trim() ? candidate.distro.trim() : null
     const label = typeof candidate.label === 'string' ? candidate.label : undefined
     const root = makeProjectRoot(candidate.path.trim(), distro, label)
+    // A root that cannot name a real location is dropped rather than stored looking
+    // configured — see isUsableProjectRoot for the one shape that qualifies.
+    if (!isUsableProjectRoot(root)) continue
     byId.set(root.id, root)
   }
   return [...byId.values()]

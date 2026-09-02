@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   isInsideProjectRoots,
   isProjectListed,
+  isUsableProjectRoot,
   makeProjectRoot,
   parseWslSharePath,
   rollUpToProjectFolder
@@ -216,5 +217,27 @@ describe('deciding whether a project is listed', () => {
 
   it('lists everything when no roots are configured', () => {
     expect(isProjectListed(outside, null, false, [])).toBe(true)
+  })
+})
+
+// `/` and a bare Windows separator look alike and are not alike. The Windows one is
+// drive-relative, so rolling up against it yields a bare drive prefix that resolve()
+// interprets against the process working directory — collapsing every Windows
+// project onto one id that moves when the working directory does.
+describe('whether a root names a real location', () => {
+  const SEPARATOR = String.fromCharCode(92)
+
+  it('accepts a distro filesystem root', () => {
+    expect(isUsableProjectRoot(makeProjectRoot('/', 'Ubuntu'))).toBe(true)
+  })
+
+  it('rejects a bare Windows separator', () => {
+    expect(isUsableProjectRoot(makeProjectRoot(SEPARATOR, null))).toBe(false)
+    expect(isUsableProjectRoot(makeProjectRoot('/', null))).toBe(false)
+  })
+
+  it('accepts ordinary folders on both origins', () => {
+    expect(isUsableProjectRoot(makeProjectRoot('C:' + SEPARATOR + 'Code', null))).toBe(true)
+    expect(isUsableProjectRoot(makeProjectRoot('/home/a/code', 'Ubuntu'))).toBe(true)
   })
 })

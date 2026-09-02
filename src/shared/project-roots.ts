@@ -70,6 +70,20 @@ export function projectRootLabel(path: string): string {
   return segments[segments.length - 1] || path
 }
 
+// Whether a root names a real location.
+//
+// `/` is a genuine WSL root: the distro's filesystem root, and every project in it
+// sits below. A bare Windows separator is not the same thing — it is drive-RELATIVE,
+// so a path rolled up against it comes back as just a drive prefix, which `resolve()`
+// then interprets against the process working directory. Every Windows project would
+// collapse to a single id that moves when the working directory does. Unreachable
+// through the folder picker, which always returns a drive-qualified path, but a
+// hand-edited settings file can produce it and the failure is silent.
+export function isUsableProjectRoot(root: ProjectRoot): boolean {
+  if (root.distro) return true
+  return splitPath(root.path).segments.length > 0
+}
+
 export function makeProjectRoot(path: string, distro: string | null, label?: string): ProjectRoot {
   const { prefix, segments } = splitPath(path)
   const clean = joinPath(prefix, segments, distro)

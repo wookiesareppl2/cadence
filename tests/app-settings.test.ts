@@ -73,6 +73,16 @@ describe('project roots', () => {
     expect(roots).toHaveLength(1)
   })
 
+  // A bare Windows separator is drive-relative; storing it would silently collapse
+  // every Windows project onto one working-directory-dependent id.
+  it('drops a Windows root that names no real location, but keeps a distro root', () => {
+    const roots = normalizeAppSettings({
+      projectRoots: [{ path: SEPARATOR }, { path: '/', distro: 'Ubuntu' }]
+    }).projectRoots
+    expect(roots).toHaveLength(1)
+    expect(roots[0].distro).toBe('Ubuntu')
+  })
+
   it('drops entries with no usable path', () => {
     const roots = normalizeAppSettings({
       projectRoots: [{ path: '   ' }, { distro: 'Ubuntu' }, null, 'nope', { path: winPath }]
