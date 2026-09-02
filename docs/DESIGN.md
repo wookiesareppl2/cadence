@@ -96,6 +96,45 @@ in `file-tree-panel.tsx`, and `MemoryIcon` / `CommandsIcon` in `App.tsx`.
 
 Use a **two-step inline confirm**, not a blocking dialog: the `🗑` swaps to `Delete?` with a `✓` (danger, `--caution`) and `✕` (cancel). The confirm stays visible after the row is no longer hovered. Heavier modal confirms (`.files-confirm`) are only for higher-stakes deletes (e.g. files), and WSL deletes must warn they are permanent.
 
+## Split actions (a default plus a riskier alternate)
+
+When one action has a safe default and a variant that should not be a slip away —
+resuming a session normally vs. resuming in the CLI's bypass-every-permission mode —
+use a **split control**, not a second sibling button.
+
+- One accent shape, two buttons: the labelled primary (`border-radius: 6px 0 0 6px`)
+  and a ~20px caret (`0 6px 6px 0`), seamed by a single `border-left` tinted with
+  `color-mix(in srgb, var(--surface-0) 35%, var(--accent))`. Both share the primary's
+  height, hover, disabled and focus treatment, so the pair reads as one control.
+- The caret opens a fixed-position menu measured from the **group's** rect, dismissed
+  per the Overlays rule below (Esc / outside-click / scroll) and repositioned on resize.
+  **Portal it to `<body>`.** A fixed overlay is positioned relative to the nearest
+  ancestor with a `transform`, `will-change: transform`, or `contain: layout`, and
+  `contain: paint` clips it outright — the history sidebar has all of these for its
+  open/close animation, so a menu left in place is offset into nowhere and then hidden.
+  A portalled menu is no longer inside the trigger's subtree, so the outside-click
+  handler must check the menu too; otherwise `mousedown` unmounts the row before its
+  `click` fires and the action silently never runs. It also leaves the `.app-shell`
+  subtree, where `--accent` / `--accent-dim` / `--accent-hover` are set inline per
+  platform — those stop resolving, and a property whose value names an unresolved
+  variable is invalid at computed-value time, so e.g. `outline: 1px solid var(--accent)`
+  becomes no outline rather than a differently-coloured one. Pass any accent a
+  portalled overlay needs in through its inline style. Close the menu whenever it would
+  otherwise be left pointing at something that changed — a different selection, the
+  action becoming unavailable, or the containing panel collapsing.
+- The primary keeps its full one-click behaviour. The alternate is always a second
+  deliberate click; never promote it to the button and never persist it as the new
+  default, or the control silently stops meaning what it did yesterday.
+- Mark a dangerous row with `--caution` (the house warning colour — no new red) and a
+  one-line `--font-mono` note in `--text-3` saying plainly what it turns off.
+- Where a mode belongs to an external tool, use **that tool's own word** for it
+  (Claude "skip perms", Codex "yolo"), derived from one shared source
+  (`src/shared/ai-launch.ts`) rather than spelled out at each button. That file is also
+  the only place that knows each CLI's launch and resume invocations.
+
+Reference implementation: the Resume control in `session-panels.tsx`
+(`.history-resume-group`).
+
 ## Overlays
 
 - **Modals** (`*-modal-backdrop` + dialog): `position: fixed; inset: 46px 0 0 0` (below the titlebar), centered, `rgba(0,0,0,0.5)` backdrop, dialog on `--surface-1` with a soft shadow; close on backdrop click + Esc.

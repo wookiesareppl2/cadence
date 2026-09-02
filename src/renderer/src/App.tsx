@@ -26,6 +26,7 @@ import type { CodexPlanUsage } from '@shared/codex-plan-usage'
 import { isPlatformId, PLATFORM_CONFIG, PLATFORM_IDS, type PlatformId } from '@shared/platform'
 import { APP_NAME } from '@shared/brand'
 import type { AssistantSession, SessionOrigin } from '@shared/sessions'
+import { resumeCommand } from '@shared/ai-launch'
 import { memoryIdFromProjectRelPath } from '@shared/memory'
 import {
   backgroundTerminalLocations,
@@ -293,7 +294,7 @@ function useSessionScopedTerminals(
   backgroundTerminals: TerminalBackgroundLocation[]
   pendingSessions: AssistantSession[]
   addTerminal: (cwd?: string | null, title?: string, wslDistro?: string | null, initialInput?: string | null) => void
-  resumeSession: (session: AssistantSession) => void
+  resumeSession: (session: AssistantSession, skipPermissions?: boolean) => void
   closeTerminal: (id: string) => void
   selectBackgroundTerminal: (terminal: TerminalBackgroundLocation) => void
   startSession: (project: ProjectSessionGroup) => void
@@ -417,12 +418,15 @@ function useSessionScopedTerminals(
   // (no duplicate tab); otherwise open a new terminal in its project folder/WSL
   // distro and auto-run it there. Assumes an existing terminal is at a shell
   // prompt — sending it while a CLI is already running just types into that CLI.
+  //
+  // `skipPermissions` resumes in the CLI's bypass-every-check mode. It is passed
+  // per call and never remembered: a mode that turns off every guard should be
+  // chosen deliberately each time, not inherited from a click made yesterday.
   const resumeSession = useCallback(
-    (session: AssistantSession) => {
+    (session: AssistantSession, skipPermissions = false) => {
       if (session.projectId) onSelectedProjectIdChange(session.projectId)
       onSelectedSessionIdChange(session.id)
-      const command =
-        platform === 'claude' ? `claude --resume ${session.id}` : `codex resume ${session.id}`
+      const command = resumeCommand(platform, session.id, skipPermissions)
       const existing = tabs.find((tab) => tab.sessionKey === session.id)
       if (existing) {
         window.dashboard.terminal.input(existing.id, `${command}\r`)
@@ -2232,9 +2236,10 @@ function ClaudeWorkspace({
             width={panelSizes.historySidebar}
             onResizeStart={panelResize.startHistorySidebarResize}
             onShowDetails={onToggleSessionDetail}
-            onResume={() => {
+            platform="claude"
+            onResume={(skipPermissions) => {
               const target = sessionBrowser.selectedSession
-              if (target) resumeSession(target)
+              if (target) resumeSession(target, skipPermissions)
             }}
           />
         </div>
@@ -2495,9 +2500,10 @@ function ProviderWorkspace({
             width={panelSizes.historySidebar}
             onResizeStart={panelResize.startHistorySidebarResize}
             onShowDetails={onToggleSessionDetail}
-            onResume={() => {
+            platform={platform}
+            onResume={(skipPermissions) => {
               const target = sessionBrowser.selectedSession
-              if (target) resumeSession(target)
+              if (target) resumeSession(target, skipPermissions)
             }}
           />
         </div>
