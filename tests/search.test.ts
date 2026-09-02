@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bestScore, buildSnippet, indexOfNeedle, matchScore } from '../src/shared/search'
+import { bestScore, buildSnippet, emptyResults, indexOfNeedle, matchScore } from '../src/shared/search'
 
 describe('indexOfNeedle', () => {
   it('finds matches case-insensitively', () => {
@@ -68,5 +68,19 @@ describe('buildSnippet', () => {
     const snippet = buildSnippet('needle at the very start of the text body here', 'needle', 10)
     expect(snippet!.matchStart).toBe(0)
     expect(snippet!.text.startsWith('needle')).toBe(true)
+  })
+})
+
+describe('emptyResults', () => {
+  // Every category the renderer renders must exist as an array even with no
+  // query, or a section silently disappears from the dropdown instead of showing
+  // as empty.
+  it('carries an empty list for every result category', () => {
+    const results = emptyResults()
+    expect(Object.keys(results).sort()).toEqual(
+      ['files', 'history', 'memory', 'projects', 'query', 'sessions', 'truncated'].sort()
+    )
+    expect(results.memory).toEqual([])
+    expect(results.truncated).toBe(false)
   })
 })

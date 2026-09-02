@@ -848,6 +848,16 @@ function DashboardApp(): JSX.Element {
 
   const handleSearchActivate = useCallback(
     (item: SearchResultItem, query: string) => {
+      // Open the Memory viewer on one file. Reached two ways: a Memory result,
+      // and a Files result that happens to be a file the viewer also surfaces.
+      const openMemoryFile = (memoryFileId: string): void => {
+        memorySelectionSequenceRef.current += 1
+        setMemorySelectionRequest({ id: memoryFileId, sequence: memorySelectionSequenceRef.current })
+        setMemoryOpen(true)
+        setCheatSheetOpen(false)
+        setSearchPreview(null)
+      }
+
       if (item.kind === 'project') {
         setSelectedProjectIds((current) => ({ ...current, [platform]: item.projectId }))
         setProjectSidebarOpen((current) => ({ ...current, [platform]: true }))
@@ -866,15 +876,16 @@ function DashboardApp(): JSX.Element {
         setHistorySidebarOpen((current) => ({ ...current, [platform]: true }))
         return
       }
+      if (item.kind === 'memory' && item.memoryId) {
+        setSelectedProjectIds((current) => ({ ...current, [platform]: item.projectId }))
+        openMemoryFile(item.memoryId)
+        return
+      }
       if (item.kind === 'file' && item.file) {
         setSelectedProjectIds((current) => ({ ...current, [platform]: item.projectId }))
         const memoryFileId = memoryIdFromProjectRelPath(item.file.relPath)
         if (memoryFileId) {
-          memorySelectionSequenceRef.current += 1
-          setMemorySelectionRequest({ id: memoryFileId, sequence: memorySelectionSequenceRef.current })
-          setMemoryOpen(true)
-          setCheatSheetOpen(false)
-          setSearchPreview(null)
+          openMemoryFile(memoryFileId)
           return
         }
         if (terminalDetached[platform]) {

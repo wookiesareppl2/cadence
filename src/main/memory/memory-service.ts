@@ -1,7 +1,7 @@
 import type { WebContents } from 'electron'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { readFile, readdir, stat, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { isAbsolute, join, relative } from 'node:path'
 import type { PlatformId } from '@shared/platform'
 import {
   centralSlug,
@@ -258,6 +258,67 @@ function resolveFilePath(layout: MemoryLayout, group: MemoryGroupId, name: strin
   return join(dir, name)
 }
 
+// Every memory file this project has, tagged with the group it belongs to.
+//
+// Enumeration lives here once. The viewer and the search index must never be able
+// to disagree about what counts as this project's memory: a file the search can
+// find but the viewer cannot open (or the reverse) is a dead result, and keeping
+// two lists in step by hand is exactly the drift this codebase has already paid
+// for elsewhere.
+async function collectMemoryFiles(layout: MemoryLayout): Promise<Array<{ group: MemoryGroupId; file: FoundFile }>> {
+  const collected: Array<{ group: MemoryGroupId; file: FoundFile }> = []
+  const push = (group: MemoryGroupId, file: FoundFile): void => {
+    collected.push({ group, file })
+  }
+
+  // The vault memory home: hot layer, deeper layer, then Archive/.
+  const vaultDir = groupDir(layout, 'vault-hot')
+  if (vaultDir) {
+    for (const file of await listMarkdown(vaultDir)) {
+      push(VAULT_HOT_NAMES.includes(file.name) ? 'vault-hot' : 'vault-ondemand', file)
+    }
+    for (const file of await listMarkdown(groupDir(layout, 'vault-archive') as string)) {
+      push('vault-archive', file)
+    }
+  }
+
+  // `.claude/*.md` → working / pins / other. Still listed when the project routes
+  // to the vault, because the frozen bank holds the pre-migration history and
+  // reading it is often exactly what the user wants; it is relabelled and locked
+  // rather than hidden.
+  for (const file of await listMarkdown(groupDir(layout, 'working') as string)) {
+    const lower = file.name.toLowerCase()
+    if (WORKING_NAMES.has(lower)) push('working', file)
+    else if (lower === PINS_NAME) push('pins', file)
+    else push('other', file)
+  }
+  // `.claude/memory/*.md`
+  for (const file of await listMarkdown(groupDir(layout, 'remembered-project') as string)) {
+    push('remembered-project', file)
+  }
+  // root CLAUDE.md
+  try {
+    const info = await stat(join(layout.root, INSTRUCTIONS_NAME))
+    if (info.isFile()) {
+      push('instructions', { name: INSTRUCTIONS_NAME, sizeBytes: info.size, modifiedMs: info.mtimeMs })
+    }
+  } catch {
+    // No project instructions file — fine.
+  }
+  // central memory store (native-Windows projects only)
+  const centralDir = groupDir(layout, 'remembered-central')
+  if (centralDir) {
+    for (const file of await listMarkdown(centralDir)) push('remembered-central', file)
+  }
+
+  return collected
+}
+
+// The heading a group shows for this project, frozen-bank relabelling included.
+function groupLabelFor(group: MemoryGroupId, layout: MemoryLayout): string {
+  return (isVaultRouted(layout) ? FROZEN_BANK_LABELS[group] : undefined) ?? MEMORY_GROUP_LABELS[group]
+}
+
 export async function getProjectMemory(
   platform: PlatformId,
   projectId: string | null,
@@ -270,57 +331,17 @@ export async function getProjectMemory(
   const layout = layoutForRead(location)
 
   const byGroup = new Map<MemoryGroupId, MemoryFileMeta[]>()
-  const push = (file: MemoryFileMeta): void => {
-    const list = byGroup.get(file.group) ?? []
-    list.push(file)
-    byGroup.set(file.group, list)
-  }
-
-  // The vault memory home: hot layer, deeper layer, then Archive/.
-  const vaultDir = groupDir(layout, 'vault-hot')
-  if (vaultDir) {
-    for (const file of await listMarkdown(vaultDir)) {
-      push(meta(VAULT_HOT_NAMES.includes(file.name) ? 'vault-hot' : 'vault-ondemand', file))
-    }
-    for (const file of await listMarkdown(groupDir(layout, 'vault-archive') as string)) {
-      push(meta('vault-archive', file))
-    }
-  }
-
-  // `.claude/*.md` → working / pins / other. Still listed when the project routes
-  // to the vault, because the frozen bank holds the pre-migration history and
-  // reading it is often exactly what the user wants; it is relabelled and locked
-  // rather than hidden.
-  for (const file of await listMarkdown(groupDir(layout, 'working') as string)) {
-    const lower = file.name.toLowerCase()
-    if (WORKING_NAMES.has(lower)) push(meta('working', file))
-    else if (lower === PINS_NAME) push(meta('pins', file))
-    else push(meta('other', file))
-  }
-  // `.claude/memory/*.md`
-  for (const file of await listMarkdown(groupDir(layout, 'remembered-project') as string)) {
-    push(meta('remembered-project', file))
-  }
-  // root CLAUDE.md
-  try {
-    const info = await stat(join(toNativeRoot(location.path, location.distro), INSTRUCTIONS_NAME))
-    if (info.isFile()) {
-      push(meta('instructions', { name: INSTRUCTIONS_NAME, sizeBytes: info.size, modifiedMs: info.mtimeMs }))
-    }
-  } catch {
-    // No project instructions file — fine.
-  }
-  // central memory store (native-Windows projects only)
-  const centralDir = groupDir(layout, 'remembered-central')
-  if (centralDir) {
-    for (const file of await listMarkdown(centralDir)) push(meta('remembered-central', file))
+  for (const { group, file } of await collectMemoryFiles(layout)) {
+    const list = byGroup.get(group) ?? []
+    list.push(meta(group, file))
+    byGroup.set(group, list)
   }
 
   const groups: MemoryGroup[] = MEMORY_GROUP_ORDER.filter((id) => (byGroup.get(id)?.length ?? 0) > 0).map((id) => {
     const reason = readOnlyFor(id, layout)
     return {
       id,
-      label: (isVaultRouted(layout) ? FROZEN_BANK_LABELS[id] : undefined) ?? MEMORY_GROUP_LABELS[id],
+      label: groupLabelFor(id, layout),
       files: byGroup.get(id) as MemoryFileMeta[],
       readOnly: Boolean(reason),
       readOnlyReason: reason
@@ -402,4 +423,47 @@ export async function writeMemoryFile(
     forgetLayout(location)
     return { ok: false, error: error instanceof Error ? error.message : 'Could not save this file' }
   }
+}
+
+// One memory file, described for an indexer rather than for the viewer.
+export type MemorySearchTarget = {
+  id: string // the viewer's own id, so a result can deep-link straight to the file
+  group: MemoryGroupId
+  groupLabel: string // already frozen-bank-relabelled for this project
+  label: string
+  path: string // absolute, main-process only — never sent to the renderer
+  sizeBytes: number
+  // The project-relative path when this file physically lives inside the project
+  // folder, otherwise null. Asked as "is this file inside the project?" rather
+  // than "is it one of the in-project groups?" so a group that later moves
+  // in or out of the repo cannot leave the answer quietly wrong.
+  projectRelPath: string | null
+}
+
+function projectRelPathFor(layout: MemoryLayout, group: MemoryGroupId, name: string): string | null {
+  const dir = groupDir(layout, group)
+  if (!dir) return null
+  const rel = relative(layout.root, join(dir, name))
+  // A different drive gives an absolute path back; a parent directory gives a
+  // leading `..` segment. Either way the file is outside the project.
+  if (!rel || isAbsolute(rel)) return null
+  const parts = rel.split(/[\\/]+/)
+  if (parts[0] === '..') return null
+  return parts.join('/')
+}
+
+// Every memory file worth searching for a project, from the same enumeration the
+// viewer lists. A project whose vault home cannot be resolved here simply yields
+// its frozen bank — the same thing the viewer shows, for the same reason.
+export async function listMemorySearchTargets(location: ProjectLocation): Promise<MemorySearchTarget[]> {
+  const layout = layoutForRead(location)
+  return (await collectMemoryFiles(layout)).map(({ group, file }) => ({
+    id: makeMemoryId(group, file.name),
+    group,
+    groupLabel: groupLabelFor(group, layout),
+    label: file.name,
+    path: join(groupDir(layout, group) as string, file.name),
+    sizeBytes: file.sizeBytes,
+    projectRelPath: projectRelPathFor(layout, group, file.name)
+  }))
 }

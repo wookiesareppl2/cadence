@@ -1,4 +1,5 @@
 import type { WebContents } from 'electron'
+import { readFile } from 'node:fs/promises'
 import type { PlatformId } from '@shared/platform'
 import type { AssistantSession } from '@shared/sessions'
 import type { SearchQuery, SearchResultItem, SearchResults } from '@shared/search'
@@ -11,6 +12,7 @@ import { getSessionMetadata } from '../sessions/session-metadata-service'
 import { listDirectory, readFilePreview } from '../projects/project-files-service'
 import { groupProjects, resolveLocation, type ProjectLocation } from '../projects/project-locator'
 import { listProjectCatalog } from '../projects/project-catalog-service'
+import { listMemorySearchTargets } from '../memory/memory-service'
 
 // Result/work caps. Project + session matching is in-memory and cheap; the deep
 // (file-content + history-content) pass walks the disk, so it is scoped to one
@@ -21,14 +23,24 @@ const MAX_FILE_RESULTS = 40
 const MAX_HISTORY_RESULTS = 40
 const MAX_FILES_VISITED = 2500
 const MAX_HISTORY_SESSIONS = 25
+const MAX_MEMORY_RESULTS = 25
 const DEEP_SEARCH_BUDGET_MS = 1500
+// Memory gets its own budget rather than a share of the deep one. It is a short,
+// known list of markdown files, but some of it lives on a synced drive or across
+// a WSL share, so a slow home must not be able to spend the file walk's time.
+// This bounds the per-file matching only: resolving where a project's memory lives
+// happens before the first check and is not bounded by it (that resolution is
+// synchronous by design and cached for a few seconds — see memory-service).
+const MEMORY_SEARCH_BUDGET_MS = 800
 
 // Directories never worth searching — large, generated, packaged output, VCS
 // internals, or editor settings. Keeps the walk fast and results relevant
 // (especially over the slow WSL UNC share). NOTE: we deliberately do NOT skip
 // `.claude` / `.codex` / `.agents` — those hold the project's memory bank and
-// context files, which the user wants to find via search (and a future
-// memory-bank viewer will surface). Only genuinely value-free dirs belong here.
+// context files, which the user wants to find via search. The subset of them the
+// Memory viewer surfaces is reported under Memory instead and skipped here (see
+// `covered` in searchFiles); the rest still belongs in Files. Only genuinely
+// value-free dirs belong in this list.
 const IGNORE_DIRS = new Set([
   '.cache',
   '.git',
@@ -52,7 +64,18 @@ const IGNORE_DIRS = new Set([
 
 type DeepResult = { items: SearchResultItem[]; truncated: boolean }
 
-async function searchFiles(target: ProjectLocation, needle: string, deadline: number): Promise<DeepResult> {
+// `covered` holds the project-relative paths of the in-project memory files the
+// Memory pass actually examined, so a frozen in-repo bank file is not listed twice
+// under two different headings. It is deliberately NOT every memory file: one the
+// Memory pass ran out of time to look at must stay findable here. The set is
+// derived from the memory enumeration itself, never from a list of names restated
+// here.
+async function searchFiles(
+  target: ProjectLocation,
+  needle: string,
+  deadline: number,
+  covered: ReadonlySet<string>
+): Promise<DeepResult> {
   const items: Array<{ score: number; item: SearchResultItem }> = []
   const lowerNeedle = needle.toLowerCase()
   let visited = 0
@@ -76,6 +99,8 @@ async function searchFiles(target: ProjectLocation, needle: string, deadline: nu
         if (!IGNORE_DIRS.has(entry.name)) dirQueue.push(childRel)
         continue
       }
+
+      if (covered.has(childRel.toLowerCase())) continue
 
       visited += 1
       if (visited >= MAX_FILES_VISITED) {
@@ -119,6 +144,76 @@ async function searchFiles(target: ProjectLocation, needle: string, deadline: nu
 
   items.sort((a, b) => b.score - a.score)
   return { items: items.map((entry) => entry.item), truncated }
+}
+
+type MemoryResult = DeepResult & {
+  // The in-project memory files this pass examined, lowercased and project-relative
+  // — whether or not they matched, but never ones it did not reach. The file walk
+  // skips these, so a file cannot appear under both Memory and Files, and a file
+  // the pass skipped is not silently dropped from both.
+  coveredRelPaths: Set<string>
+}
+
+async function searchMemory(target: ProjectLocation, needle: string, deadline: number): Promise<MemoryResult> {
+  const coveredRelPaths = new Set<string>()
+  const matches: Array<{ score: number; item: SearchResultItem }> = []
+  const lowerNeedle = needle.toLowerCase()
+  let truncated = false
+
+  let targets
+  try {
+    targets = await listMemorySearchTargets(target)
+  } catch {
+    // No resolvable memory for this project — nothing to search, and nothing for
+    // the file walk to skip either.
+    return { items: [], truncated: false, coveredRelPaths }
+  }
+
+  for (const file of targets) {
+    if (Date.now() > deadline || matches.length >= MAX_MEMORY_RESULTS) {
+      truncated = true
+      break
+    }
+
+    // Claimed only now, once this file is actually about to be examined. Claiming
+    // every in-project path up front instead meant that when the budget or the
+    // result cap ended this loop early, the files it never reached were still
+    // skipped by the file walk: dropped from Files without ever being matched in
+    // Memory, and so findable in neither. A file that becomes unfindable is a
+    // worse outcome than a file listed twice, so the claim has to trail the work.
+    if (file.projectRelPath) coveredRelPaths.add(file.projectRelPath.toLowerCase())
+
+    // Name, path, and content — the same three the file walk scores. Matching on
+    // fewer would mean covering a file here quietly narrowed how it can be found.
+    const nameScore = matchScore(file.label, needle)
+    const pathHit =
+      nameScore === 0 && file.projectRelPath ? file.projectRelPath.toLowerCase().includes(lowerNeedle) : false
+    let snippet = null
+    if (file.sizeBytes <= MAX_TEXT_PREVIEW_BYTES) {
+      try {
+        snippet = buildSnippet(await readFile(file.path, 'utf-8'), needle)
+      } catch {
+        // Unreadable right now (locked, mid-sync, gone). A name match still counts.
+      }
+    }
+    if (nameScore === 0 && !pathHit && !snippet) continue
+
+    matches.push({
+      score: (nameScore || (pathHit ? 10 : 0)) + (snippet ? 30 : 0),
+      item: {
+        kind: 'memory',
+        id: file.id,
+        title: file.label,
+        subtitle: file.groupLabel,
+        projectId: target.id,
+        memoryId: file.id,
+        snippet: snippet ?? undefined
+      }
+    })
+  }
+
+  matches.sort((a, b) => b.score - a.score)
+  return { items: matches.map((entry) => entry.item), truncated, coveredRelPaths }
 }
 
 async function searchHistory(
@@ -223,6 +318,7 @@ export async function searchWorkspace(query: SearchQuery, sender: WebContents): 
     }
   }
 
+  let memory: SearchResultItem[] = []
   let files: SearchResultItem[] = []
   let history: SearchResultItem[] = []
   let deepTruncated = false
@@ -241,12 +337,17 @@ export async function searchWorkspace(query: SearchQuery, sender: WebContents): 
     }
   }
   if (target) {
+    // Memory runs first and on its own clock: it is the smallest, highest-signal
+    // set, and the file walk needs its covered-path list before it starts.
+    const memoryResult = await searchMemory(target, needle, Date.now() + MEMORY_SEARCH_BUDGET_MS)
+    memory = memoryResult.items
+
     const deadline = Date.now() + DEEP_SEARCH_BUDGET_MS
-    const fileResult = await searchFiles(target, needle, deadline)
+    const fileResult = await searchFiles(target, needle, deadline, memoryResult.coveredRelPaths)
     files = fileResult.items
     const historyResult = await searchHistory(query.platform, target.sessions, needle, deadline)
     history = historyResult.items
-    deepTruncated = fileResult.truncated || historyResult.truncated
+    deepTruncated = memoryResult.truncated || fileResult.truncated || historyResult.truncated
   }
 
   const rank = (matches: Array<{ score: number; item: SearchResultItem }>, max: number): { items: SearchResultItem[]; truncated: boolean } => {
@@ -261,6 +362,7 @@ export async function searchWorkspace(query: SearchQuery, sender: WebContents): 
     query: query.query,
     projects: projects.items,
     sessions: sessionResults.items,
+    memory,
     files,
     history,
     truncated: projects.truncated || sessionResults.truncated || deepTruncated
