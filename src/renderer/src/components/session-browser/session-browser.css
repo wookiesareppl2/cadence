@@ -1587,7 +1587,7 @@
   height: 26px;
   padding: 0 10px;
   border: 1px solid var(--accent);
-  border-radius: 6px;
+  border-radius: 6px 0 0 6px;
   background: var(--accent);
   color: var(--surface-0);
   font: inherit;
@@ -1624,6 +1624,111 @@
   stroke-width: 1.5;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* Split Resume: the button does the ordinary thing, the caret opens the modes that
+   deserve a deliberate second click. The pair reads as one control — a single accent
+   shape with a hairline seam — so the default action keeps all of its weight and the
+   alternates cost only ~20px of a sidebar the user can drag narrow. */
+.history-resume-group {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.history-resume-caret {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--accent);
+  border-left-color: color-mix(in srgb, var(--surface-0) 35%, var(--accent));
+  border-radius: 0 6px 6px 0;
+  background: var(--accent);
+  color: var(--surface-0);
+  cursor: pointer;
+  transition:
+    background-color 160ms var(--ease-out-expo),
+    border-color 160ms var(--ease-out-expo),
+    opacity 160ms var(--ease-out-expo);
+}
+
+.history-resume-caret:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  border-left-color: color-mix(in srgb, var(--surface-0) 35%, var(--accent-hover));
+}
+
+.history-resume-caret:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.history-resume-caret:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.history-resume-caret-icon {
+  width: 12px;
+  height: 12px;
+  display: block;
+  fill: currentColor;
+}
+
+/* Fixed-position so it escapes the sidebar's scroll clipping — same overlay
+   treatment as the background-terminal locator menu. */
+.history-resume-menu {
+  position: fixed;
+  z-index: 120;
+  padding: 6px;
+  border: 1px solid var(--surface-4);
+  border-radius: 8px;
+  background: var(--surface-2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.history-resume-menu-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 160ms var(--ease-out-expo);
+}
+
+.history-resume-menu-row:hover {
+  background: var(--surface-3);
+}
+
+.history-resume-menu-row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* The house warning colour, not a new red — this turns off every guard. */
+.history-resume-menu-row.caution {
+  color: var(--caution);
+}
+
+.history-resume-menu-note {
+  margin: 2px 8px 2px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.45;
 }
 
 .session-detail-icon {

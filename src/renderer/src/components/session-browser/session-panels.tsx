@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CSSProperties, JSX, PointerEvent as ReactPointerEvent } from 'react'
 import type {
@@ -6,6 +6,8 @@ import type {
   AssistantSessionHistoryEntry
 } from '@shared/sessions'
 import { CONTEXT_VAULT_SYNC_ENABLED } from '@shared/context-vault-feature'
+import { resumeSkipLabel, skipModeName } from '@shared/ai-launch'
+import type { PlatformId } from '@shared/platform'
 import { CopyableCodeBlock, HistoryMarkdown } from '../history-markdown'
 import { GitHubImportModal } from './github-import-modal'
 import { ProjectList, SessionList } from './session-rows'
@@ -353,6 +355,25 @@ function ResumeIcon(): JSX.Element {
   )
 }
 
+// Disclosure caret for the split Resume control.
+function CaretIcon(): JSX.Element {
+  return (
+    <svg className="history-resume-caret-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M4.5 6.5l3.5 3.5 3.5-3.5z" />
+    </svg>
+  )
+}
+
+// Bolt — the skip-every-permission-check resume. Same stroked currentColor recipe,
+// filled like the resume triangle so the two read as a pair in the menu.
+function SkipPermsIcon(): JSX.Element {
+  return (
+    <svg className="history-resume-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M9 1.5L3.75 9h3.5l-.75 5.5L12.25 7h-3.5z" />
+    </svg>
+  )
+}
+
 function formatContextTokens(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value % 1_000_000 === 0 ? 0 : 1)}M`
   if (value >= 1_000) return `${Math.round(value / 1_000)}K`
@@ -559,6 +580,7 @@ export function SessionHistorySidebar({
   width,
   onResizeStart,
   onShowDetails,
+  platform,
   onResume
 }: {
   session: AssistantSession | null
@@ -569,7 +591,11 @@ export function SessionHistorySidebar({
   width: number | null
   onResizeStart: (event: ReactPointerEvent<HTMLElement>, startSize: number) => void
   onShowDetails: () => void
-  onResume?: () => void
+  // Which CLI this sidebar belongs to. The bypass mode is named by the CLI, not by
+  // Cadence — Claude calls it skip permissions, Codex calls it yolo — so the menu
+  // needs to know whose session it is showing.
+  platform: PlatformId
+  onResume?: (skipPermissions: boolean) => void
 }): JSX.Element {
   const { history, loading, error } = historyState
   const entryCount = history?.entries.length ?? 0
@@ -577,6 +603,58 @@ export function SessionHistorySidebar({
     loading && !history
       ? 'Loading entries...'
       : `${entryCount} ${entryCount === 1 ? 'entry' : 'entries'}`
+
+  // Resume is a split control: the button resumes normally, the caret opens the
+  // alternate modes. Same fixed-position menu mechanics as the background-terminal
+  // locator — measured from the trigger's rect so it escapes the sidebar's scroll
+  // clipping, dismissed on Esc, outside-click, or resize.
+  const resumeDisabled = !session || newSession || !onResume
+  const [resumeMenuOpen, setResumeMenuOpen] = useState(false)
+  const [resumeRect, setResumeRect] = useState<DOMRect | null>(null)
+  const resumeGroupRef = useRef<HTMLDivElement>(null)
+
+  const resumeMenuStyle = useMemo<CSSProperties | undefined>(() => {
+    if (!resumeRect) return undefined
+    const width = 232
+    return {
+      top: resumeRect.bottom + 6,
+      left: Math.max(8, Math.min(resumeRect.left, window.innerWidth - width - 8)),
+      width
+    }
+  }, [resumeRect])
+
+  useLayoutEffect(() => {
+    if (!resumeMenuOpen) return
+    const update = (): void => {
+      if (resumeGroupRef.current) setResumeRect(resumeGroupRef.current.getBoundingClientRect())
+    }
+    update()
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [resumeMenuOpen])
+
+  useEffect(() => {
+    if (!resumeMenuOpen) return
+    const onPointerDown = (event: MouseEvent): void => {
+      if (resumeGroupRef.current?.contains(event.target as Node)) return
+      setResumeMenuOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setResumeMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [resumeMenuOpen])
+
+  // Close on anything that makes the open menu a statement about a session it is no
+  // longer pointing at: a different session, or Resume becoming unavailable.
+  useEffect(() => {
+    setResumeMenuOpen(false)
+  }, [session?.id, resumeDisabled])
 
   // In-panel search keeps the whole transcript visible (Ctrl+F style) and highlights
   // the matched word in place, stepping through occurrences with prev/next. Matches
@@ -703,17 +781,63 @@ export function SessionHistorySidebar({
           <span>{session ? session.title : newSession ? 'New session' : 'No session selected'}</span>
         </div>
         <div className="history-actions">
-          <button
-            type="button"
-            className="history-resume-button"
-            onClick={onResume}
-            disabled={!session || newSession || !onResume}
-            aria-label="Resume this session in a terminal"
-            title="Resume this session in a terminal"
-          >
-            <ResumeIcon />
-            <span>Resume</span>
-          </button>
+          <div className="history-resume-group" ref={resumeGroupRef}>
+            <button
+              type="button"
+              className="history-resume-button"
+              onClick={() => onResume?.(false)}
+              disabled={resumeDisabled}
+              aria-label="Resume this session in a terminal"
+              title="Resume this session in a terminal"
+            >
+              <ResumeIcon />
+              <span>Resume</span>
+            </button>
+            <button
+              type="button"
+              className="history-resume-caret"
+              onClick={() => setResumeMenuOpen((open) => !open)}
+              disabled={resumeDisabled}
+              aria-haspopup="menu"
+              aria-expanded={resumeMenuOpen}
+              aria-label="Other ways to resume this session"
+              title="Other ways to resume this session"
+            >
+              <CaretIcon />
+            </button>
+            {resumeMenuOpen && !resumeDisabled ? (
+              <div className="history-resume-menu" style={resumeMenuStyle} role="menu" aria-label="Resume options">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="history-resume-menu-row"
+                  onClick={() => {
+                    setResumeMenuOpen(false)
+                    onResume?.(false)
+                  }}
+                >
+                  <ResumeIcon />
+                  <span>Resume</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="history-resume-menu-row caution"
+                  onClick={() => {
+                    setResumeMenuOpen(false)
+                    onResume?.(true)
+                  }}
+                >
+                  <SkipPermsIcon />
+                  <span>{resumeSkipLabel(platform)}</span>
+                </button>
+                <p className="history-resume-menu-note">
+                  {skipModeName(platform)} bypasses every permission check for the whole resumed
+                  session.
+                </p>
+              </div>
+            ) : null}
+          </div>
           <button
             type="button"
             className="history-details-button"
