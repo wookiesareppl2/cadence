@@ -7,7 +7,7 @@ import type {
 } from '@shared/sessions'
 import { CONTEXT_VAULT_SYNC_ENABLED } from '@shared/context-vault-feature'
 import { resumeSkipLabel, skipModeName } from '@shared/ai-launch'
-import type { PlatformId } from '@shared/platform'
+import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
 import { CopyableCodeBlock, HistoryMarkdown } from '../history-markdown'
 import { GitHubImportModal } from './github-import-modal'
 import { ProjectList, SessionList } from './session-rows'
@@ -618,15 +618,22 @@ export function SessionHistorySidebar({
   const resumeGroupRef = useRef<HTMLDivElement>(null)
   const resumeNoteId = useId()
 
-  const resumeMenuStyle = useMemo<CSSProperties | undefined>(() => {
+  const resumeMenuStyle = useMemo<CSSVars | undefined>(() => {
     if (!resumeRect) return undefined
     const width = 232
     return {
       top: resumeRect.bottom + 6,
       left: Math.max(8, Math.min(resumeRect.left, window.innerWidth - width - 8)),
-      width
+      width,
+      // `--accent` is set inline on `.app-shell`, not in `:root`. Portalling put this
+      // menu outside that subtree, so the variable stops resolving — and an `outline`
+      // shorthand naming an unresolved variable is invalid at computed-value time,
+      // which drops it to `outline-style: none`. That is not a wrong-coloured focus
+      // ring, it is no focus ring at all. Carried in explicitly, from the platform
+      // whose session this menu belongs to, so it also stays the right colour.
+      '--accent': PLATFORM_CONFIG[platform].accent
     }
-  }, [resumeRect])
+  }, [resumeRect, platform])
 
   useLayoutEffect(() => {
     if (!resumeMenuOpen) return

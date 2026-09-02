@@ -114,7 +114,12 @@ use a **split control**, not a second sibling button.
   open/close animation, so a menu left in place is offset into nowhere and then hidden.
   A portalled menu is no longer inside the trigger's subtree, so the outside-click
   handler must check the menu too; otherwise `mousedown` unmounts the row before its
-  `click` fires and the action silently never runs. Close the menu whenever it would
+  `click` fires and the action silently never runs. It also leaves the `.app-shell`
+  subtree, where `--accent` / `--accent-dim` / `--accent-hover` are set inline per
+  platform — those stop resolving, and a property whose value names an unresolved
+  variable is invalid at computed-value time, so e.g. `outline: 1px solid var(--accent)`
+  becomes no outline rather than a differently-coloured one. Pass any accent a
+  portalled overlay needs in through its inline style. Close the menu whenever it would
   otherwise be left pointing at something that changed — a different selection, the
   action becoming unavailable, or the containing panel collapsing.
 - The primary keeps its full one-click behaviour. The alternate is always a second
