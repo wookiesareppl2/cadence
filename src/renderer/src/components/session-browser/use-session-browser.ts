@@ -8,6 +8,8 @@ import type {
   SessionTitleGenerationStatus
 } from '@shared/sessions'
 import type { ProjectCatalogEntry, ProjectCatalogSource } from '@shared/project-catalog'
+import { isInsideProjectRoots } from '@shared/project-roots'
+import { useAppSettings } from '../settings/use-app-settings'
 import type {
   GitHubAuthStatus,
   GitHubContextSyncRequest,
@@ -126,14 +128,26 @@ export function useProjectSessionBrowserState({
     [rawSessions, metadata.sessionAliases]
   )
 
+  const { projectRoots } = useAppSettings()
+
+  // Session-derived projects are filtered here as well as in the catalog, because
+  // this list is the primary one and the catalog only contributes what it does not
+  // already contain. Filtering one and not the other would leave every excluded
+  // folder on screen anyway. Both sides ask the same shared question.
+  //
+  // Catalog entries arrive already filtered, except attachments, which are exempt by
+  // design: attaching a folder is an explicit act and must not be silently undone by
+  // a root the user set later.
   const projects = useMemo(
     () =>
       mergeCatalogProjects(
-        groupSessionsByProject(platform, sessions, metadata.projectAliases),
+        groupSessionsByProject(platform, sessions, metadata.projectAliases).filter(
+          (project) => !project.path || isInsideProjectRoots(project.path, project.origin.distro, projectRoots)
+        ),
         catalog,
         metadata.projectAliases
       ),
-    [platform, sessions, catalog, metadata.projectAliases]
+    [platform, sessions, catalog, metadata.projectAliases, projectRoots]
   )
   const filteredProjects = useMemo(() => filterProjects(projects, query), [projects, query])
 

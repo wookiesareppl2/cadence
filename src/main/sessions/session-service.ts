@@ -15,7 +15,11 @@ import {
   type SessionTranscriptSource
 } from './session-title-generation-service'
 import { getSessionOrigins, toSessionOrigin, type SessionOriginRoot } from './session-origins'
-import { canonicalProjectPath, stripAgentMetadataDir } from '../projects/project-identity'
+import {
+  canonicalProjectPath,
+  projectFolderForCwd,
+  stripAgentMetadataDir
+} from '../projects/project-identity'
 
 type ClaudeSessionDraft = {
   id: string
@@ -126,9 +130,19 @@ function formatTokenLabel(value: number): string | null {
 
 function canonicalSessionCwd(cwd: string | null, origin?: SessionOriginRoot): string | null {
   if (!cwd) return null
-  const root = stripAgentMetadataDir(cwd)
-  if (origin && origin.kind !== 'windows') return root
-  return canonicalProjectPath(root)
+  const stripped = stripAgentMetadataDir(cwd)
+  const canonical = origin && origin.kind !== 'windows' ? stripped : canonicalProjectPath(stripped)
+
+  // Roll a cwd up to the project folder it lives in, so a session started three
+  // levels down files under the project rather than inventing a sibling. Same rule
+  // the agent-metadata strip above applies, for the same reason: a folder has
+  // exactly one project.
+  //
+  // A path outside every configured root is returned unchanged rather than dropped.
+  // Whether such a project is SHOWN is a Projects-list decision; erasing the path
+  // here would also cost the session its folder in search, history and the file
+  // tree, which the user did not ask for.
+  return projectFolderForCwd(canonical, origin?.distro ?? null) ?? canonical
 }
 
 function projectLabel(cwd: string | null, sourcePath: string, origin?: SessionOriginRoot): string {

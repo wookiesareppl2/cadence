@@ -3,6 +3,7 @@ import type { PlatformId } from '@shared/platform'
 import type { ProjectCatalogEntry } from '@shared/project-catalog'
 import type { AssistantSession, SessionOrigin } from '@shared/sessions'
 import type { Workspace } from '@shared/workspaces'
+import { isInsideProjectRoots, type ProjectRoot } from '@shared/project-roots'
 import { workspaceProjectId } from '../workspaces/workspace-utils'
 
 export type ProjectCatalogSessionSet = {
@@ -14,6 +15,9 @@ type BuildProjectCatalogOptions = {
   targetPlatform: PlatformId
   sessionSets: ProjectCatalogSessionSet[]
   workspaces: Workspace[]
+  // The folders the user's projects live in. Empty means unconfigured, and nothing
+  // is filtered — passed in rather than read from a module so this stays pure.
+  projectRoots?: ProjectRoot[]
 }
 
 function catalogProjectId(platform: PlatformId, path: string, origin: SessionOrigin): string {
@@ -36,7 +40,8 @@ function timestamp(value: string | null): number {
 export function buildProjectCatalog({
   targetPlatform,
   sessionSets,
-  workspaces
+  workspaces,
+  projectRoots = []
 }: BuildProjectCatalogOptions): ProjectCatalogEntry[] {
   const byId = new Map<string, ProjectCatalogEntry>()
 
@@ -44,6 +49,9 @@ export function buildProjectCatalog({
     for (const session of sessions) {
       const path = session.projectPath?.trim()
       if (!path) continue
+      // Discovered folders outside the configured roots are not projects the user
+      // wants listed — that is the whole point of naming the roots.
+      if (!isInsideProjectRoots(path, session.origin.distro, projectRoots)) continue
 
       const id = catalogProjectId(targetPlatform, path, session.origin)
       const existing = byId.get(id)
@@ -63,8 +71,12 @@ export function buildProjectCatalog({
     }
   }
 
-  // A manual attachment wins over a discovered entry for the same Windows
-  // folder. That preserves the user's ability to explicitly detach it later.
+  // A manual attachment wins over a discovered entry for the same Windows folder.
+  // That preserves the user's ability to explicitly detach it later.
+  //
+  // Attachments are deliberately NOT filtered by the roots. Attaching a folder is an
+  // explicit act; hiding it because it sits outside a root would silently discard a
+  // choice the user made by hand, and leave them no way to see it again.
   for (const workspace of workspaces) {
     const id = workspaceProjectId(targetPlatform, workspace.path)
     const existing = byId.get(id)
