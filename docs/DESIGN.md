@@ -106,10 +106,17 @@ use a **split control**, not a second sibling button.
   and a ~20px caret (`0 6px 6px 0`), seamed by a single `border-left` tinted with
   `color-mix(in srgb, var(--surface-0) 35%, var(--accent))`. Both share the primary's
   height, hover, disabled and focus treatment, so the pair reads as one control.
-- The caret opens a fixed-position menu measured from the **group's** rect, following
-  the Overlays rule below (Esc / outside-click / resize). Close it whenever it would
-  otherwise be left pointing at something that changed — a different selection, or the
-  action becoming unavailable.
+- The caret opens a fixed-position menu measured from the **group's** rect, dismissed
+  per the Overlays rule below (Esc / outside-click / scroll) and repositioned on resize.
+  **Portal it to `<body>`.** A fixed overlay is positioned relative to the nearest
+  ancestor with a `transform`, `will-change: transform`, or `contain: layout`, and
+  `contain: paint` clips it outright — the history sidebar has all of these for its
+  open/close animation, so a menu left in place is offset into nowhere and then hidden.
+  A portalled menu is no longer inside the trigger's subtree, so the outside-click
+  handler must check the menu too; otherwise `mousedown` unmounts the row before its
+  `click` fires and the action silently never runs. Close the menu whenever it would
+  otherwise be left pointing at something that changed — a different selection, the
+  action becoming unavailable, or the containing panel collapsing.
 - The primary keeps its full one-click behaviour. The alternate is always a second
   deliberate click; never promote it to the button and never persist it as the new
   default, or the control silently stops meaning what it did yesterday.
