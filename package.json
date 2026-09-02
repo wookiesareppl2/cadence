@@ -37,6 +37,8 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.6",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.6",
@@ -45,6 +47,7 @@
     "electron": "^39.2.4",
     "electron-builder": "^26.0.12",
     "electron-vite": "^4.0.1",
+    "jsdom": "^30.0.1",
     "typescript": "^5.9.3",
     "vite": "^7.2.4",
     "vitest": "^4.1.6"
