@@ -9,9 +9,15 @@ export type AppSettingsUpdate = {
   mergeReviewEnabled?: boolean
 }
 
+// Merge review defaults ON. It is the one setting whose wrong value is silent: a
+// user who never opens Settings gets no independent look at a merge, and nothing
+// on screen tells them a gate they might have wanted is absent. Defaulting it on
+// makes the absent case the deliberate one. An install that already stored a
+// preference keeps it — normalizeAppSettings only falls back to this default when
+// the stored value is missing or not a boolean.
 export const DEFAULT_APP_SETTINGS: AppSettings = Object.freeze({
   version: APP_SETTINGS_VERSION,
-  mergeReviewEnabled: false
+  mergeReviewEnabled: true
 })
 
 export function normalizeAppSettings(value: unknown): AppSettings {
