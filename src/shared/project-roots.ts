@@ -47,7 +47,13 @@ function sameOrigin(a: string | null, b: string | null): boolean {
 }
 
 function isUnder(pathSegments: string[], rootSegments: string[], distro: string | null): boolean {
-  if (rootSegments.length === 0 || pathSegments.length < rootSegments.length) return false
+  // A root with no segments is that origin's own root — `/` for a WSL distro, a bare
+  // separator on Windows — and everything in the origin is under it. Rejecting it
+  // was silently catastrophic: picking the distro node itself, which the picker's
+  // own wording invites, stored a root that matched nothing, and because ANY root
+  // switches filtering on, the entire Projects list emptied with nothing on screen
+  // to say why.
+  if (pathSegments.length < rootSegments.length) return false
   return rootSegments.every(
     (segment, index) => comparable(pathSegments[index], distro) === comparable(segment, distro)
   )
@@ -126,6 +132,33 @@ export function parseWslSharePath(nativePath: string): { distro: string; posixPa
   )
   if (!match) return null
   const distro = match[1]
+  // `.` and `..` are path navigation, not distro names; a root built from one could
+  // never match anything and would sit in Settings looking configured.
+  if (distro === '.' || distro === '..') return null
   const { segments } = splitPath(match[2] ?? '')
   return { distro, posixPath: `/${segments.join('/')}` }
+}
+
+// Whether a discovered project belongs in the Projects list.
+//
+// Two exemptions, both deliberate. A project with no resolvable folder cannot be
+// judged against a root, so it stays rather than vanishing for a reason the user
+// cannot see or fix. A hand-attached folder stays because attaching one is an
+// explicit act — and attaching a folder outside the usual tree is precisely why
+// anyone attaches a folder, so it is the case a roots filter would most often get
+// wrong.
+//
+// Shared so the main-process catalog and the renderer's session-derived list decide
+// this the same way. They are separate lists that merge, and a project the renderer
+// drops but the catalog keeps comes back with its sessions stripped: still listed,
+// its history gone.
+export function isProjectListed(
+  path: string | null,
+  distro: string | null,
+  isAttached: boolean,
+  roots: ProjectRoot[]
+): boolean {
+  if (!path) return true
+  if (isAttached) return true
+  return isInsideProjectRoots(path, distro, roots)
 }

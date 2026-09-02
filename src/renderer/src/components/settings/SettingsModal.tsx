@@ -41,6 +41,12 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
     }
   }, [onClose, open])
 
+  // Another window can change these while this modal is open, so mirror the
+  // broadcast rather than trusting the value fetched when it was opened.
+  useEffect(() => {
+    return window.dashboard?.settings?.onChanged?.((next) => setSettings(next))
+  }, [])
+
   if (!open) return null
 
   const updateMergeReview = async (): Promise<void> => {
@@ -80,9 +86,13 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
       return
     }
     if (!picked) return
-    // Adding a folder already listed is a no-op rather than a duplicate row; the
-    // stored list is keyed by the same id the matcher uses.
-    if (settings.projectRoots.some((root) => root.id === picked.id)) return
+    // Adding a folder already listed must not create a duplicate row — the stored
+    // list is keyed by the same id the matcher uses — but silently doing nothing
+    // reads as a broken button, so say so.
+    if (settings.projectRoots.some((root) => root.id === picked.id)) {
+      setError('That folder is already listed.')
+      return
+    }
     await saveProjectRoots([...settings.projectRoots, picked])
   }
 

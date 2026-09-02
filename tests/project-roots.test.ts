@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   isInsideProjectRoots,
+  isProjectListed,
   makeProjectRoot,
   parseWslSharePath,
   rollUpToProjectFolder
@@ -150,5 +151,70 @@ describe('a folder picked on a WSL share', () => {
   it('leaves an ordinary Windows or UNC path alone', () => {
     expect(parseWslSharePath('C:\\Code')).toBeNull()
     expect(parseWslSharePath('\\\\fileserver\\share\\code')).toBeNull()
+  })
+})
+
+// A root with no path segments is the origin's own root. Rejecting it was silently
+// catastrophic: the picker's own wording invites choosing the distro node, which
+// yields `/`, and because ANY configured root switches filtering on, a root that
+// matched nothing emptied the whole Projects list with nothing on screen to explain
+// it.
+describe('a root that is the origin root itself', () => {
+  const SEPARATOR = String.fromCharCode(92)
+
+  it('contains everything in its own origin', () => {
+    const distroRoot = makeProjectRoot('/', 'Ubuntu')
+    expect(rollUpToProjectFolder('/home/sheldon/proj', 'Ubuntu', [distroRoot])).toBe('/home')
+    expect(isInsideProjectRoots('/srv/app', 'Ubuntu', [distroRoot])).toBe(true)
+  })
+
+  it('is what a picked distro node actually produces', () => {
+    const parsed = parseWslSharePath(SEPARATOR + SEPARATOR + 'wsl.localhost' + SEPARATOR + 'Ubuntu')
+    const root = makeProjectRoot(parsed!.posixPath, parsed!.distro)
+    expect(isInsideProjectRoots('/home/sheldon/proj', 'Ubuntu', [root])).toBe(true)
+  })
+
+  it('still does not reach across to the other origin', () => {
+    const distroRoot = makeProjectRoot('/', 'Ubuntu')
+    expect(isInsideProjectRoots('C:' + SEPARATOR + 'Code', null, [distroRoot])).toBe(false)
+  })
+
+  it('does the same for a bare Windows separator', () => {
+    const bare = makeProjectRoot(SEPARATOR, null)
+    expect(rollUpToProjectFolder(SEPARATOR + 'Code' + SEPARATOR + 'app', null, [bare])).not.toBeNull()
+  })
+
+  it('rejects a share path whose distro segment is path navigation', () => {
+    expect(parseWslSharePath(SEPARATOR + SEPARATOR + 'wsl.localhost' + SEPARATOR + '..' + SEPARATOR + 'x')).toBeNull()
+  })
+})
+
+// The listing rule both the catalog and the renderer's list ask. They merge, so a
+// project one drops and the other keeps reappears with its sessions stripped —
+// listed, but with its whole history gone.
+describe('deciding whether a project is listed', () => {
+  const SEPARATOR = String.fromCharCode(92)
+  const roots = [makeProjectRoot('C:' + SEPARATOR + 'Code', null)]
+  const outside = 'C:' + SEPARATOR + 'Work' + SEPARATOR + 'client'
+
+  it('lists a folder inside a root', () => {
+    expect(isProjectListed('C:' + SEPARATOR + 'Code' + SEPARATOR + 'app', null, false, roots)).toBe(true)
+  })
+
+  it('drops a folder outside every root', () => {
+    expect(isProjectListed(outside, null, false, roots)).toBe(false)
+  })
+
+  // Attaching a folder outside the usual tree is exactly why one attaches a folder.
+  it('keeps a hand-attached folder outside the roots', () => {
+    expect(isProjectListed(outside, null, true, roots)).toBe(true)
+  })
+
+  it('keeps a project whose folder cannot be resolved at all', () => {
+    expect(isProjectListed(null, null, false, roots)).toBe(true)
+  })
+
+  it('lists everything when no roots are configured', () => {
+    expect(isProjectListed(outside, null, false, [])).toBe(true)
   })
 })
