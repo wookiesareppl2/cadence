@@ -5,7 +5,7 @@
 import type { PlatformId } from './platform'
 import type { FileRequest } from './project-files'
 
-type SearchKind = 'project' | 'session' | 'file' | 'history'
+type SearchKind = 'project' | 'session' | 'memory' | 'file' | 'history'
 
 // One contiguous match window pulled out of a larger body of text, with the
 // matched span marked so the renderer can highlight it. Offsets index into `text`.
@@ -23,6 +23,7 @@ export type SearchResultItem = {
   projectId: string
   sessionId?: string // session + history results
   file?: FileRequest // file results — feeds the existing file preview
+  memoryId?: string // memory results — the Memory viewer's own opaque file id
   entryId?: string // history results — for scroll-to
   snippet?: SearchSnippet // content (file body / history message) matches
 }
@@ -31,6 +32,12 @@ export type SearchResults = {
   query: string
   projects: SearchResultItem[]
   sessions: SearchResultItem[]
+  // Memory is its own category rather than part of `files` because most of it is
+  // not in the project folder at all: a migrated project keeps its live memory in
+  // the vault home and its remembered facts in Claude's central store, neither of
+  // which the project file walk can reach. Folding them into `files` would have
+  // meant a "file" row with no file to open.
+  memory: SearchResultItem[]
   files: SearchResultItem[]
   history: SearchResultItem[]
   truncated: boolean // any category hit a cap / time budget
@@ -46,7 +53,7 @@ export type SearchQuery = {
 }
 
 export function emptyResults(query = ''): SearchResults {
-  return { query, projects: [], sessions: [], files: [], history: [], truncated: false }
+  return { query, projects: [], sessions: [], memory: [], files: [], history: [], truncated: false }
 }
 
 // Case-insensitive substring index. Returns -1 when `needle` is empty or absent.

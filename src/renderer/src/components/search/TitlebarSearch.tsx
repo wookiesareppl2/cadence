@@ -32,6 +32,9 @@ export function TitlebarSearch({
       [
         { key: 'projects', label: 'Projects', scoped: false, items: results.projects },
         { key: 'sessions', label: 'Sessions', scoped: false, items: results.sessions },
+        // Memory sits above Files: it is the smaller, more deliberate set, and a
+        // hit in it is nearly always the one being looked for.
+        { key: 'memory', label: 'Memory', scoped: true, items: results.memory },
         { key: 'files', label: 'Files', scoped: true, items: results.files },
         { key: 'history', label: 'History', scoped: true, items: results.history }
       ] satisfies Section[]
@@ -135,7 +138,7 @@ export function TitlebarSearch({
         ref={inputRef}
         type="text"
         className="titlebar-search-input"
-        placeholder="Search projects, sessions, files, history"
+        placeholder="Search projects, sessions, memory, files, history"
         value={query}
         spellCheck={false}
         onChange={(event) => {

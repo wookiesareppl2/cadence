@@ -31,7 +31,9 @@ vi.mock('../src/main/usage/claude-jsonl', () => ({
   getDefaultClaudeProjectsRoot: (): string => join(root, 'central')
 }))
 
-const { getProjectMemory, writeMemoryFile } = await import('../src/main/memory/memory-service')
+const { getProjectMemory, listMemorySearchTargets, writeMemoryFile } = await import(
+  '../src/main/memory/memory-service'
+)
 
 const sender = {} as never
 
@@ -325,5 +327,78 @@ describe('project that has not migrated', () => {
     const result = await writeMemoryFile('claude', 'p1', 'working:HANDOFF.md', '# Edited\n', sender)
     expect(result.ok).toBe(true)
     expect(readFileSync(join(projectDir, '.claude', 'HANDOFF.md'), 'utf-8')).toBe('# Edited\n')
+  })
+})
+
+// What global search indexes under "Memory". The point of the category is reach:
+// a migrated project's live memory is not in the project folder, so the file walk
+// that powers the Files category cannot see it at all. These pin both halves —
+// that the out-of-project files are offered, and that the in-project ones are
+// marked as such so the walk can skip them instead of listing them twice.
+describe('memory search targets', () => {
+  const location = (): { id: string; name: string; path: string; distro: null; sessions: [] } => ({
+    id: 'p1',
+    name: 'Fixture',
+    path: projectDir,
+    distro: null,
+    sessions: []
+  })
+
+  describe('vault-routed project', () => {
+    beforeEach(() => {
+      writeFileSync(join(projectDir, 'CLAUDE.md'), `# Project\n\n${marker(vaultHome)}\n`)
+    })
+
+    it('reaches the live vault memory the project file walk cannot see', async () => {
+      const targets = await listMemorySearchTargets(location() as never)
+      const ids = targets.map((entry) => entry.id)
+      expect(ids).toContain('vault-hot:HANDOFF.md')
+      expect(ids).toContain('vault-ondemand:Decisions.md')
+      expect(ids).toContain('vault-archive:old-handoff.md')
+    })
+
+    it('marks vault files as outside the project, so nothing is skipped by mistake', async () => {
+      const targets = await listMemorySearchTargets(location() as never)
+      for (const entry of targets.filter((file) => file.group.startsWith('vault-'))) {
+        expect(entry.projectRelPath, entry.id).toBeNull()
+      }
+    })
+
+    // The frozen bank IS in the project folder, so the file walk would find it
+    // too. The relative path is what lets the walk skip it and leave the row to
+    // the Memory section instead of printing it under two headings.
+    it('gives in-project memory a project-relative path the file walk can match', async () => {
+      const targets = await listMemorySearchTargets(location() as never)
+      const bank = targets.find((entry) => entry.id === 'working:HANDOFF.md')
+      expect(bank?.projectRelPath).toBe('.claude/HANDOFF.md')
+
+      const instructions = targets.find((entry) => entry.id === 'instructions:CLAUDE.md')
+      expect(instructions?.projectRelPath).toBe('CLAUDE.md')
+    })
+
+    it('labels a result with the heading the viewer would show it under', async () => {
+      const targets = await listMemorySearchTargets(location() as never)
+      expect(targets.find((entry) => entry.id === 'working:HANDOFF.md')?.groupLabel).toContain('Frozen')
+      expect(targets.find((entry) => entry.id === 'vault-hot:HANDOFF.md')?.groupLabel).not.toContain('Frozen')
+    })
+
+    // Two files named HANDOFF.md — one live, one frozen. They must stay separable,
+    // or a search result opens the wrong one.
+    it('keeps same-named live and frozen files distinct', async () => {
+      const targets = await listMemorySearchTargets(location() as never)
+      const handoffs = targets.filter((entry) => entry.label === 'HANDOFF.md')
+      expect(handoffs).toHaveLength(2)
+      expect(new Set(handoffs.map((entry) => entry.id)).size).toBe(2)
+    })
+  })
+
+  describe('project whose vault home does not resolve here', () => {
+    it('offers the frozen bank rather than nothing at all', async () => {
+      const missing = join(root, 'vault', 'gone', 'memory')
+      writeFileSync(join(projectDir, 'CLAUDE.md'), `# Project\n\n${marker(missing)}\n`)
+      const targets = await listMemorySearchTargets(location() as never)
+      expect(targets.map((entry) => entry.id)).toContain('working:HANDOFF.md')
+      expect(targets.some((entry) => entry.group.startsWith('vault-'))).toBe(false)
+    })
   })
 })
