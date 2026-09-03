@@ -764,23 +764,16 @@ button {
   gap: 10px;
 }
 
-.sidebar-header h2,
 /* Safety net for every panel header, including ones with no tier rules of their own.
    A heading is the flexible half of a header; without an explicit zero minimum it
    keeps its full intrinsic width and pushes the action row past the panel edge
-   instead of truncating. This is the single most common way these headers broke. */
+   instead of truncating. (The headings themselves already truncate — see the
+   `.panel-header h1, h2` rule further down. This covers the wrapper around them.) */
 .panel-header > :first-child {
   min-width: 0;
 }
 
-.panel-header h1,
-.panel-header h2 {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
+.sidebar-header h2,
 .panel-header h2,
 .fact-list dt {
   margin: 0;
@@ -1041,11 +1034,13 @@ button {
      260px wide on a 4K display — a viewport media query cannot see that and would
      leave the row overflowing on a screen it considers roomy.
 
-     `container-type: inline-size` also makes this element a containing block for any
-     `position: fixed` descendant and clips it. That is safe ONLY because no panel
-     header contains an overlay: menus and modals are rendered as siblings of the
-     header or portalled to <body>. Keep it that way — an overlay moved inside a
-     header will silently render in the wrong place and be clipped away. */
+     Measured, because the obvious worry turns out to be the wrong one: a
+     `container-type: inline-size` box does NOT become a containing block for a
+     `position: fixed` descendant (such a child still resolves against the viewport).
+     `contain: layout` DOES — and `.history-sidebar-shell` carries `contain: layout
+     paint`, which is what once left a fixed menu inside it positioned against the
+     panel and then clipped away. So the rule to keep is about `contain` and
+     transforms, not about this line. */
   container-type: inline-size;
   min-height: 48px;
   display: flex;
@@ -1277,7 +1272,12 @@ button {
 
 .main-stack {
   flex: 1 1 auto;
-  min-width: 0;
+  /* The terminal's floor, and the only thing that actually guarantees one. The
+     per-panel viewport clamps cap each sidebar on its own, but three individually
+     reasonable caps still sum past the window: measured at 760px with every panel
+     open, this column was left 1.4px wide. A real minimum here makes the sidebars
+     give way instead, since they are all allowed to shrink. */
+  min-width: min(320px, 100%);
   min-height: 0;
   display: grid;
   /* Rows: terminal deck (fills) · notes & tasks dock. The dock row is auto so it
@@ -1361,8 +1361,15 @@ button {
 .terminal-actions {
   min-width: 0;
   display: flex;
+  /* Wrap at every width, not just the narrowest tier. The row is allowed to shrink
+     below its content while the buttons themselves are fixed-size, so without this
+     they render OUTSIDE the panel instead of moving to a second line. Reachable at a
+     700px panel as soon as the header also carries the background-terminal note. */
+  flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
   gap: 8px;
+  row-gap: 6px;
 }
 
 /* A labelled panel-header button. The label is a separate span so it can be dropped
@@ -1388,6 +1395,24 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+
+.terminal-action {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.terminal-action:hover {
+  border-color: var(--accent);
+  color: var(--text-1);
 }
 
 /* Panel-width tiers. Labels go first, then the row tightens to icon-sized squares —
@@ -1438,22 +1463,6 @@ button {
   }
 }
 
-.terminal-action {
-  height: 26px;
-  padding: 0 10px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--surface-2);
-  color: var(--text-2);
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.terminal-action:hover {
-  border-color: var(--accent);
-  color: var(--text-1);
-}
 
 .terminal-error {
   padding: 10px 14px;
@@ -1525,17 +1534,15 @@ button {
    so nothing below it was ever rendered, and the one rule here stacked the panels
    into a column — a layout mode that had never actually been seen. Panels now stay
    side by side at every width and their contents compact instead, which is what the
-   collapse toggles are for; the width they each take is capped against the viewport
-   (see the min() clamps in the panel stylesheets) so no saved size can crowd out the
-   terminal on a smaller screen. */
+   collapse toggles are for. Each panel's width is additionally capped against the
+   viewport (the min() clamps in the panel stylesheets) so one saved size cannot take
+   the whole window — but those caps are per-panel and can still sum past 100vw
+   together, so the terminal's own floor is what protects it (see `.main-stack`). */
 @media (max-width: 1180px) {
   .sidebar {
     width: 248px;
   }
 
-  .terminal-panel {
-    min-height: 300px;
-  }
 }
 
 @media (max-width: 1040px) {
@@ -1545,10 +1552,6 @@ button {
 
   .usage-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .terminal-panel {
-    min-height: 280px;
   }
 
   .main-stack {
@@ -1565,9 +1568,6 @@ button {
     min-width: 72px;
   }
 
-  .terminal-panel {
-    min-height: 240px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

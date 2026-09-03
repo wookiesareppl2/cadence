@@ -168,9 +168,10 @@
     color 140ms ease;
 }
 
-/* The label truncates; the count stays, because a task count squeezed to nothing
-   is the part of this control that carries information. */
-.workspace-task-tabs button > :not(.workspace-task-tab-count) {
+/* The label truncates; the count stays, because a task count squeezed to nothing is
+   the part of this control that carries information. The label needs to be a real
+   element for this to apply at all — as a bare text node it had nothing to match. */
+.workspace-task-tab-label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

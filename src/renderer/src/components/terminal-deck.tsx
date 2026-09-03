@@ -457,6 +457,7 @@ export const TerminalDeck = memo(function TerminalDeck({
             className="terminal-action"
             onClick={() => onAdd(defaultCwd, undefined, defaultWslDistro, launchCommand(platform))}
             disabled={!defaultCwd}
+            aria-label={launchLabel(platform)}
             title={defaultCwd ? `Launch ${PLATFORM_CONFIG[platform].label} in a new terminal` : noProjectLabel}
           >
             <LaunchIcon />
@@ -472,6 +473,7 @@ export const TerminalDeck = memo(function TerminalDeck({
                 ? `Launch ${PLATFORM_CONFIG[platform].label} with ${skipModeName(platform)} in a new terminal`
                 : noProjectLabel
             }
+            aria-label={launchSkipLabel(platform)}
           >
             <SkipPermsIcon />
             <span className="terminal-action-label">{launchSkipLabel(platform)}</span>
@@ -481,6 +483,7 @@ export const TerminalDeck = memo(function TerminalDeck({
               type="button"
               className="terminal-action"
               onClick={onDetach}
+              aria-label="Detach terminals to a separate window"
               title="Detach terminals to a separate window"
             >
               <DetachIcon />
@@ -492,6 +495,7 @@ export const TerminalDeck = memo(function TerminalDeck({
             className="terminal-action"
             onClick={() => onAdd(defaultCwd, undefined, defaultWslDistro)}
             disabled={!defaultCwd}
+            aria-label="Add terminal"
             title={defaultCwd ? `Open a new terminal in ${defaultCwd}` : noProjectLabel}
           >
             <AddTerminalIcon />

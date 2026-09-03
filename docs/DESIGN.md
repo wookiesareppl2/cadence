@@ -556,17 +556,28 @@ user-resizable, so a panel can be 240px wide on a 4K display — a viewport medi
 cannot see that. `.panel-header` is a `container-type: inline-size` context and its
 action rows compact against it.
 
-Three rules that this cost real defects to learn:
+Five rules that this cost real defects to learn:
 
 1. **A container query cannot style its own container.** `@container` rules apply to
    descendants only. A rule for `.panel-header` inside a `@container` block silently
    does nothing — while its children still take the new sizing, which is how an
    attempt to wrap a header instead overflowed the panel by more than its own width.
    Style the children.
-2. **`container-type` establishes a containing block for `position: fixed`
-   descendants and `paint` containment clips them.** No panel header may contain an
-   overlay; menus and modals belong as siblings of the header or portalled to `<body>`.
-3. **Flex items default to `min-width: auto`,** so a text-bearing child refuses to
+2. **`contain: layout` — not `container-type` — is what traps a fixed overlay.**
+   Measured: a `position: fixed` child of a `container-type: inline-size` box still
+   resolves against the viewport, but under `contain: layout` it resolves against the
+   host, and `contain: paint` then clips it. `.history-sidebar-shell` carries
+   `contain: layout paint`, and a transform (its open/close animation) does the same
+   — which is how a menu there once rendered offscreen and vanished. Overlays inside
+   a contained or transformed ancestor must be portalled to `<body>`.
+3. **A later rule of equal specificity beats a `@container` rule.** Container queries
+   add no specificity, so tier rules must come after the base rule they override in
+   source order — otherwise they are silently dead. Verify a tier actually changes a
+   computed value rather than assuming it applied.
+4. **A flex row that may shrink must be allowed to wrap.** Giving a row `min-width: 0`
+   while its children stay fixed-size lets the row shrink below its content and the
+   children render *outside* the panel rather than moving to a second line.
+5. **Flex items default to `min-width: auto`,** so a text-bearing child refuses to
    shrink below its content and overflows rather than truncating. Headings get an
    explicit `min-width: 0` from `.panel-header > :first-child`; anything else that must
    shrink needs its own.
@@ -581,9 +592,14 @@ screen. The stored value is untouched and returns intact when the window grows.
 
 Window-level tiers:
 
-- **≤1180px** — trim sidebar widths, reduce the terminal panel's minimum height.
+- **≤1180px** — trim sidebar widths.
 - **≤1040px** — trim sidebars again; the usage strip drops to two columns.
 - **≤900px** — narrowest sidebars; platform tabs shrink.
+
+The terminal column carries its own floor (`.main-stack { min-width }`) and the grid
+track's `minmax(140px, 1fr)` gives it a height floor. The per-panel viewport clamps cap
+each sidebar individually, but several reasonable caps still sum past 100vw, so they
+cannot by themselves guarantee the terminal any room — the floor is what does that.
 
 Titlebar tiers:
 
