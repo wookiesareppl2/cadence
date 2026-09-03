@@ -1,12 +1,12 @@
 .project-sidebar {
   position: relative;
-  width: var(--project-sidebar-width, 310px);
+  width: min(var(--project-sidebar-width, 310px), 34vw);
   overflow: hidden;
   transition: width var(--motion-sidebar) var(--ease-out-expo);
 }
 
 .project-sidebar.open {
-  width: var(--project-sidebar-width, 310px);
+  width: min(var(--project-sidebar-width, 310px), 34vw);
 }
 
 .project-sidebar.closed {
@@ -16,7 +16,7 @@
 }
 
 .project-sidebar-content {
-  width: var(--project-sidebar-width, 310px);
+  width: min(var(--project-sidebar-width, 310px), 34vw);
   min-height: 0;
   flex: 1 1 auto;
   display: flex;
@@ -160,7 +160,7 @@
      platform as `--project-list-height`); default to a balanced split that shows
      several projects. `max-height` always reserves room for the Sessions list. */
   flex: 0 0 auto;
-  height: var(--project-list-height, 260px);
+  height: min(var(--project-list-height, 260px), 55vh);
   min-height: 120px;
   max-height: calc(100% - 170px);
   overflow-y: auto;
@@ -934,8 +934,8 @@
 }
 
 .history-sidebar-shell.open {
-  flex-basis: var(--history-sidebar-open-width);
-  width: var(--history-sidebar-open-width);
+  flex-basis: min(var(--history-sidebar-open-width), 38vw);
+  width: min(var(--history-sidebar-open-width), 38vw);
 }
 
 .history-sidebar-panel {
@@ -2020,7 +2020,7 @@
   outline: none;
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1040px) {
   .project-sidebar {
     width: 260px;
   }

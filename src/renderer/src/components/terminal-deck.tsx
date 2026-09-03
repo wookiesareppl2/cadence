@@ -83,6 +83,42 @@ const CLAUDE_PROMPT_NEWLINE = '\x1b\r'
 // The prompt-newline shortcut differs per CLI: Codex uses Shift+Enter, Claude uses
 // Ctrl+Enter. Returns the bytes to inject for a newline, or null if the keydown is
 // not a newline shortcut (so Enter and everything else fall through unchanged).
+// Panel-header action icons. Same recipe as the file-tree and history icons: a few
+// filled paths on a 16 viewBox, `currentColor`, no stroke tricks. These exist so the
+// buttons keep meaning once their labels collapse at narrow panel widths.
+function LaunchIcon(): JSX.Element {
+  return (
+    <svg className="terminal-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M5.5 3.75l6.25 4.25-6.25 4.25z" />
+    </svg>
+  )
+}
+
+function SkipPermsIcon(): JSX.Element {
+  return (
+    <svg className="terminal-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M9 1.5L3.75 9h3.5l-.75 5.5L12.25 7h-3.5z" />
+    </svg>
+  )
+}
+
+function DetachIcon(): JSX.Element {
+  return (
+    <svg className="terminal-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M2.5 4.5h6v1.6H4.1v5.4h5.4V9.5h1.6v3.6h-8.6z" />
+      <path d="M9.5 2.5h4v4h-1.6V5.24l-3.1 3.1-1.14-1.14 3.1-3.1H9.5z" />
+    </svg>
+  )
+}
+
+function AddTerminalIcon(): JSX.Element {
+  return (
+    <svg className="terminal-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <path d="M7.2 3.2h1.6v3.9h3.9v1.6H8.8v3.9H7.2V8.7H3.3V7.1h3.9z" />
+    </svg>
+  )
+}
+
 function promptNewlineSequence(platform: TerminalPlatform, event: KeyboardEvent): string | null {
   if (event.key !== 'Enter' || event.altKey || event.metaKey) return null
   if (platform === 'codex' && event.shiftKey && !event.ctrlKey) return CODEX_PROMPT_NEWLINE
@@ -423,7 +459,8 @@ export const TerminalDeck = memo(function TerminalDeck({
             disabled={!defaultCwd}
             title={defaultCwd ? `Launch ${PLATFORM_CONFIG[platform].label} in a new terminal` : noProjectLabel}
           >
-            {launchLabel(platform)}
+            <LaunchIcon />
+            <span className="terminal-action-label">{launchLabel(platform)}</span>
           </button>
           <button
             type="button"
@@ -436,11 +473,18 @@ export const TerminalDeck = memo(function TerminalDeck({
                 : noProjectLabel
             }
           >
-            {launchSkipLabel(platform)}
+            <SkipPermsIcon />
+            <span className="terminal-action-label">{launchSkipLabel(platform)}</span>
           </button>
           {onDetach ? (
-            <button type="button" className="terminal-action" onClick={onDetach} title="Detach terminals to a separate window">
-              Detach
+            <button
+              type="button"
+              className="terminal-action"
+              onClick={onDetach}
+              title="Detach terminals to a separate window"
+            >
+              <DetachIcon />
+              <span className="terminal-action-label">Detach</span>
             </button>
           ) : null}
           <button
@@ -450,7 +494,8 @@ export const TerminalDeck = memo(function TerminalDeck({
             disabled={!defaultCwd}
             title={defaultCwd ? `Open a new terminal in ${defaultCwd}` : noProjectLabel}
           >
-            + Add terminal
+            <AddTerminalIcon />
+            <span className="terminal-action-label">Add terminal</span>
           </button>
         </div>
       </div>

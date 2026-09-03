@@ -133,8 +133,14 @@ function createMainWindow(): BrowserWindow {
   // overlays (tooltips, context menus) correctly placed.
   const mainWindow = new BrowserWindow({
     ...initialBounds,
-    minWidth: 1180,
-    minHeight: 720,
+    // The app has to fit the display it is on, including a monitor turned portrait.
+    // A 1180px floor exceeded the width of a rotated 1080p panel, so the window was
+    // forced wider than the screen and its right-hand edge was simply cut off — the
+    // layout was not degrading badly, it was never being shown. 760 matches the
+    // detached terminal window's existing floor and clears any plausible portrait
+    // display; the layout tiers below carry it down there.
+    minWidth: 760,
+    minHeight: 600,
     show: false,
     frame: false,
     backgroundColor: '#1e1b19',

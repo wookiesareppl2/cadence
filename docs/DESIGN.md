@@ -545,7 +545,47 @@ and optional short helper copy. Active toggle-like surfaces (Memory and Commands
 small accent state marker. Menus are fixed-position overlays measured from their trigger;
 only one opens at a time, and they close on selection, Esc, outside-click, or scroll.
 
-Responsive tiers track the 1180px minimum window width:
+Responsive tiers track the **760px** minimum window width. That floor exists so the
+window fits the display it is on — including a monitor turned portrait, where a
+1080px-wide screen could not contain the old 1180px minimum and the window's right
+edge was simply cut off. Panels stay side by side at every width; their contents
+compact, and the collapse toggles remain the way to reclaim space.
+
+**Panel contents compact by CONTAINER width, not viewport width.** Every panel here is
+user-resizable, so a panel can be 240px wide on a 4K display — a viewport media query
+cannot see that. `.panel-header` is a `container-type: inline-size` context and its
+action rows compact against it.
+
+Three rules that this cost real defects to learn:
+
+1. **A container query cannot style its own container.** `@container` rules apply to
+   descendants only. A rule for `.panel-header` inside a `@container` block silently
+   does nothing — while its children still take the new sizing, which is how an
+   attempt to wrap a header instead overflowed the panel by more than its own width.
+   Style the children.
+2. **`container-type` establishes a containing block for `position: fixed`
+   descendants and `paint` containment clips them.** No panel header may contain an
+   overlay; menus and modals belong as siblings of the header or portalled to `<body>`.
+3. **Flex items default to `min-width: auto`,** so a text-bearing child refuses to
+   shrink below its content and overflows rather than truncating. Headings get an
+   explicit `min-width: 0` from `.panel-header > :first-child`; anything else that must
+   shrink needs its own.
+
+**Labelled panel buttons** follow the titlebar's icon + collapsible-label shape: an icon
+plus a `<span>` label that is dropped at narrow container widths, with `title` carrying
+the meaning once the label is gone. Reference: `.terminal-action` and its tiers.
+
+**Saved panel sizes are clamped against the viewport** with `min(var(--size), Nvw)`, so
+a width dragged out on a wide monitor cannot claim more than its share on a smaller
+screen. The stored value is untouched and returns intact when the window grows.
+
+Window-level tiers:
+
+- **≤1180px** — trim sidebar widths, reduce the terminal panel's minimum height.
+- **≤1040px** — trim sidebars again; the usage strip drops to two columns.
+- **≤900px** — narrowest sidebars; platform tabs shrink.
+
+Titlebar tiers:
 
 - **≤1560px** — hide `.app-version` and reduce platform-tab width.
 - **≤1340px** — compact search to its glyph (see below) and reduce platform tabs again.

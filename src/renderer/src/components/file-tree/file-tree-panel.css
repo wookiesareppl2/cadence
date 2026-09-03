@@ -13,7 +13,7 @@
 }
 
 .files-panel-shell.open {
-  width: var(--files-panel-width, clamp(240px, 22vw, 300px));
+  width: min(var(--files-panel-width, clamp(240px, 22vw, 300px)), 30vw);
 }
 
 .files-panel-rail {

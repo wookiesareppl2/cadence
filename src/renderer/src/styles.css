@@ -765,6 +765,22 @@ button {
 }
 
 .sidebar-header h2,
+/* Safety net for every panel header, including ones with no tier rules of their own.
+   A heading is the flexible half of a header; without an explicit zero minimum it
+   keeps its full intrinsic width and pushes the action row past the panel edge
+   instead of truncating. This is the single most common way these headers broke. */
+.panel-header > :first-child {
+  min-width: 0;
+}
+
+.panel-header h1,
+.panel-header h2 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .panel-header h2,
 .fact-list dt {
   margin: 0;
@@ -1020,6 +1036,17 @@ button {
 }
 
 .panel-header {
+  /* A container-query context, so the action row compacts against the PANEL's width
+     rather than the window's. Every panel here is user-resizable, so a panel can be
+     260px wide on a 4K display — a viewport media query cannot see that and would
+     leave the row overflowing on a screen it considers roomy.
+
+     `container-type: inline-size` also makes this element a containing block for any
+     `position: fixed` descendant and clips it. That is safe ONLY because no panel
+     header contains an overlay: menus and modals are rendered as siblings of the
+     header or portalled to <body>. Keep it that way — an overlay moved inside a
+     header will silently render in the wrong place and be clipped away. */
+  container-type: inline-size;
   min-height: 48px;
   display: flex;
   align-items: center;
@@ -1311,6 +1338,17 @@ button {
   gap: 3px;
 }
 
+/* A grid child still has its own automatic minimum, so the title alone could hold the
+   header open and push the action row past the panel edge. Measured at a 240px panel
+   — reachable, since two sidebars on a 760px window leave about that much. */
+.terminal-heading h1,
+.terminal-heading span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .terminal-heading span {
   overflow: hidden;
   color: var(--text-3);
@@ -1321,9 +1359,83 @@ button {
 }
 
 .terminal-actions {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* A labelled panel-header button. The label is a separate span so it can be dropped
+   at narrow widths, leaving the icon — the same icon + collapsible-label shape the
+   titlebar actions already use. `title` carries the meaning once the label is gone. */
+.terminal-action {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.terminal-action-icon {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  display: block;
+  fill: currentColor;
+}
+
+.terminal-action-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Panel-width tiers. Labels go first, then the row tightens to icon-sized squares —
+   the button never wraps or pushes the heading out of the header. */
+@container (max-width: 620px) {
+  .terminal-action-label {
+    display: none;
+  }
+
+  .terminal-action {
+    padding: 0 8px;
+  }
+}
+
+@container (max-width: 420px) {
+  .terminal-actions {
+    gap: 5px;
+  }
+
+  .terminal-action {
+    padding: 0 6px;
+  }
+}
+
+/* Past this width the four controls and the title cannot share one line at any
+   sensible size — measured, not assumed. The buttons wrap into a block instead of
+   being squeezed: it costs vertical space, which a portrait screen has, and keeps
+   every control reachable. The terminal count goes, since the panel restates it.
+
+   NOTE: these rules can only target DESCENDANTS of the container. `.panel-header` is
+   the container itself, so a rule for it here would never apply — an earlier attempt
+   to make the header wrap did nothing while its children still took a full-width
+   basis, and they overflowed the panel by more than its own width. Style the
+   children, never the container. */
+@container (max-width: 300px) {
+  .terminal-heading span {
+    display: none;
+  }
+
+  .terminal-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 4px;
+  }
+
+  .terminal-action {
+    padding: 0 5px;
+  }
 }
 
 .terminal-action {
@@ -1409,7 +1521,24 @@ button {
   white-space: nowrap;
 }
 
-@media (max-width: 980px) {
+/* Narrow tiers. These used to be unreachable: the window's own minimum was 1180px,
+   so nothing below it was ever rendered, and the one rule here stacked the panels
+   into a column — a layout mode that had never actually been seen. Panels now stay
+   side by side at every width and their contents compact instead, which is what the
+   collapse toggles are for; the width they each take is capped against the viewport
+   (see the min() clamps in the panel stylesheets) so no saved size can crowd out the
+   terminal on a smaller screen. */
+@media (max-width: 1180px) {
+  .sidebar {
+    width: 248px;
+  }
+
+  .terminal-panel {
+    min-height: 300px;
+  }
+}
+
+@media (max-width: 1040px) {
   .sidebar {
     width: 232px;
   }
@@ -1425,9 +1554,19 @@ button {
   .main-stack {
     flex: 1 1 auto;
   }
+}
 
-  .content-body {
-    flex-direction: column;
+@media (max-width: 900px) {
+  .sidebar {
+    width: 216px;
+  }
+
+  .platform-switcher button {
+    min-width: 72px;
+  }
+
+  .terminal-panel {
+    min-height: 240px;
   }
 }
 

@@ -65,7 +65,7 @@
 
 .workspace-dock-body {
   display: flex;
-  height: var(--workspace-dock-height, clamp(190px, 30vh, 360px));
+  height: min(var(--workspace-dock-height, clamp(190px, 30vh, 360px)), 55vh);
   min-height: 0;
   border-top: 1px solid var(--border);
 }
@@ -149,7 +149,8 @@
 }
 
 .workspace-task-tabs button {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -165,6 +166,19 @@
   transition:
     background-color 140ms ease,
     color 140ms ease;
+}
+
+/* The label truncates; the count stays, because a task count squeezed to nothing
+   is the part of this control that carries information. */
+.workspace-task-tabs button > :not(.workspace-task-tab-count) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-task-tab-count {
+  flex: 0 0 auto;
 }
 
 .workspace-task-tabs button:hover {
