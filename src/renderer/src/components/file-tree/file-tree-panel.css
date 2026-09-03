@@ -18,7 +18,7 @@
      entirely on whichever neighbour happens to be flexible. Floor on `.open` only —
      a collapsed rail stays 32px. */
   flex-shrink: 1;
-  min-width: 140px;
+  min-width: 132px;
 }
 
 .files-panel-rail {

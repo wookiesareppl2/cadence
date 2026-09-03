@@ -1,20 +1,25 @@
+/* NOTE: no `width` here. The element always carries `.open` or `.closed`, and both
+   outrank this rule, so any width set here is dead. */
 .project-sidebar {
   position: relative;
-  width: min(var(--project-sidebar-width, 310px), 28vw);
   overflow: hidden;
   transition: width var(--motion-sidebar) var(--ease-out-expo);
 }
 
 .project-sidebar.open {
+  /* This panel is NOT a sibling of the terminal and the other two — it sits in
+     `.workspace` alongside `.content-grid`, which is `flex: 1; min-width: 0` and so
+     never pushes back. Nothing can make it shrink, and a `min-width` here would be
+     unreachable code. Its width is governed entirely by this clamp, which is why the
+     clamp tightens at narrow widths: every pixel it takes comes out of the three
+     panels inside `.content-grid`. */
   width: min(var(--project-sidebar-width, 310px), 28vw);
-  /* Shrinkable, with a floor. `.sidebar` sets `flex: 0 0 auto`, so without the
-     override this panel could not give at all and the whole row overflowed the
-     window instead. The floor then stops the opposite failure — absorbing the entire
-     deficit and becoming a clipped strip of list whose own collapse button sits
-     outside the visible box and cannot be clicked. Both are on `.open` only; a
-     collapsed rail must stay exactly 32px. */
-  flex-shrink: 1;
-  min-width: 156px;
+}
+
+@media (max-width: 1040px) {
+  .project-sidebar.open {
+    width: min(var(--project-sidebar-width, 310px), 24vw);
+  }
 }
 
 .project-sidebar.closed {
@@ -24,7 +29,12 @@
 }
 
 .project-sidebar-content {
-  width: min(var(--project-sidebar-width, 310px), 28vw);
+  /* Fills the shell rather than repeating its clamp. Holding an independent width
+     meant that as the shell narrowed this pane did not, and the collapse button at
+     the end of its header was pushed outside the visible box — a control the user
+     could see the edge of and not click. */
+  width: 100%;
+  min-width: 0;
   min-height: 0;
   flex: 1 1 auto;
   display: flex;
@@ -947,7 +957,7 @@
   /* Shrinkable, with a floor. Sharing the deficit is what keeps any single panel
      from being reduced to an unusable sliver. */
   flex-shrink: 1;
-  min-width: 176px;
+  min-width: 168px;
 }
 
 .history-sidebar-panel {

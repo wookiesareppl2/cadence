@@ -746,8 +746,10 @@ button {
   display: flex;
 }
 
+/* NOTE: `width` deliberately not set here. `.project-sidebar.open` / `.closed` carry
+   higher specificity and are the only rules that reach this element, so a width here
+   is dead code — as three tier overrides silently were. */
 .sidebar {
-  width: 272px;
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
@@ -755,7 +757,10 @@ button {
   border-right: 1px solid var(--border);
 }
 
+/* Not a `.panel-header`, so the general header safety net does not reach it: it needs
+   its own zero minimum or the collapse button is pushed outside the shell. */
 .sidebar-header {
+  min-width: 0;
   flex: 0 0 auto;
   padding: 12px 14px 8px;
   display: flex;
@@ -776,6 +781,10 @@ button {
 .sidebar-header h2,
 .panel-header h2,
 .fact-list dt {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   margin: 0;
   color: var(--text-2);
   font-size: 11px;
@@ -1539,22 +1548,17 @@ button {
    the whole window — but those caps are per-panel and can still sum past 100vw
    together, so the terminal's own floor is what protects it (see `.main-stack`). */
 @media (max-width: 1180px) {
-  .sidebar {
-    width: 248px;
-  }
-
 }
 
 @media (max-width: 1040px) {
-  .sidebar {
-    width: 232px;
-  }
-
-  /* Four floors plus the gaps must fit the window. 156 + 140 + 176 + 220 + 30 = 722,
-     inside the 760px minimum, so every panel keeps a usable width and none is clipped
-     to a sliver. */
+  /* The floors that have to fit are the THREE inside `.content-body`, not four in one
+     row: the project sidebar is in a different flex line. Their budget is the window
+     minus that sidebar's clamp and `.content-grid`'s 20px of padding — at 760 with the
+     24vw clamp, 760 − 182.4 − 20 = 557.6. Requirement: 132 + 210 + 168 + 20 of gaps
+     = 530, leaving ~27px of slack. Re-run that subtraction if a floor or the clamp
+     changes. */
   .main-stack {
-    min-width: min(220px, 100%);
+    min-width: min(210px, 100%);
   }
 
   .usage-strip {
@@ -1567,10 +1571,6 @@ button {
 }
 
 @media (max-width: 900px) {
-  .sidebar {
-    width: 216px;
-  }
-
   .platform-switcher button {
     min-width: 72px;
   }

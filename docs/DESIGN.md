@@ -592,9 +592,21 @@ screen. The stored value is untouched and returns intact when the window grows.
 
 Window-level tiers:
 
-- **≤1180px** — trim sidebar widths.
-- **≤1040px** — trim sidebars again; the usage strip drops to two columns.
-- **≤900px** — narrowest sidebars; platform tabs shrink.
+- **≤1040px** — the projects sidebar's clamp tightens to 24vw; the usage strip drops
+  to two columns; the terminal's floor drops to 210px.
+- **≤900px** — platform tabs shrink.
+
+(Sidebar widths are set by the `min()` clamps, not by a `.sidebar { width }` ladder —
+`.project-sidebar.open`/`.closed` outrank `.sidebar`, so width rules there are dead.)
+
+**Know which flex line a panel is actually in.** The projects sidebar is a child of
+`.workspace`, alongside `.content-grid`; only Files, the terminal and History are
+siblings inside `.content-body`. So the sidebar never competes with those three, and a
+`min-width` on it is unreachable — `.content-grid` is `flex: 1; min-width: 0` and never
+pushes back. Its size is governed by its clamp alone, and every pixel it takes comes
+out of the three panels inside. An earlier version of this note did the arithmetic for
+one row of four; the number happened to fit and the reasoning was wrong, which is worse
+than a wrong number.
 
 **Every panel in `.content-body` must be able to shrink AND have a floor.** These are
 one rule, not two, because each half alone fails in an opposite way:
@@ -606,11 +618,14 @@ one rule, not two, because each half alone fails in an opposite way:
 - If a shrinkable child has no floor, it reaches that same sliver state.
 
 So each open panel sets `flex-shrink: 1` plus a `min-width`, on `.open` only — a
-collapsed rail must stay exactly 32px. The floors are chosen to fit the window
-together: 156 + 140 + 176 + a 220 terminal + 30px of gaps = 722, inside the 760px
-minimum. **If you add a panel or change a floor, re-check that sum.**
+collapsed rail must stay exactly 32px. The floors must fit the space `.content-body`
+actually gets, which is the window **minus the projects sidebar's clamp, minus
+`.content-grid`'s 20px of padding**. At the 760px minimum: 760 − 182.4 − 20 = 557.6
+available, against 132 + 210 + 168 + 20 of gaps = 530. **If you add a panel, change a
+floor, or change the sidebar clamp, redo that subtraction — and check it at 760, not
+only at a comfortable width.**
 
-The terminal column's floor drops from 320 to 220 below 1040px for exactly that reason,
+The terminal column's floor drops from 320 to 210 below 1040px for exactly that reason,
 and the grid track's `minmax(140px, 1fr)` gives it a height floor. The per-panel
 viewport clamps cap each sidebar individually, but several reasonable caps still sum
 past 100vw, so they cannot by themselves guarantee anyone room — the floors do.
