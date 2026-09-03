@@ -267,3 +267,109 @@
     width: auto;
   }
 }
+
+/* Project folders: a short list of configured roots plus an add control. Reuses the
+   settings row tokens rather than introducing a second list treatment. */
+.settings-row-stacked {
+  align-items: flex-start;
+}
+
+.settings-root-list {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-root-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-0);
+}
+
+.settings-root-origin {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.settings-root-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl; /* keep the folder name visible when the path is too long */
+  text-align: left;
+}
+
+.settings-root-remove {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 11px;
+  cursor: pointer;
+  transition:
+    background-color 160ms var(--ease-out-expo),
+    color 160ms var(--ease-out-expo);
+}
+
+.settings-root-remove:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--caution);
+}
+
+.settings-root-remove:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.settings-root-add {
+  margin-top: 10px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-0);
+  color: var(--text-1);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background-color 160ms var(--ease-out-expo),
+    border-color 160ms var(--ease-out-expo);
+}
+
+.settings-root-add:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.settings-root-add:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.settings-root-hint {
+  margin: 8px 0 0;
+  color: var(--text-3);
+  font-size: 11px;
+}

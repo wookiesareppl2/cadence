@@ -4,6 +4,7 @@ import type { AssistantSession, SessionOrigin } from '../src/shared/sessions'
 import { WINDOWS_ORIGIN } from '../src/shared/sessions'
 import { buildProjectCatalog } from '../src/main/projects/project-catalog'
 import { createWorkspace, workspaceProjectId } from '../src/main/workspaces/workspace-utils'
+import { makeProjectRoot } from '../src/shared/project-roots'
 
 function session(
   platform: PlatformId,
@@ -127,5 +128,59 @@ describe('buildProjectCatalog', () => {
       'codex:wsl:Debian:/home/user/app',
       'codex:wsl:Ubuntu:/home/user/app'
     ])
+  })
+})
+
+// Project roots are what stop every folder an AI tool has ever run in from becoming
+// a permanent entry. The catalog is one of the two places that has to honour them;
+// the renderer's session-derived list is the other, and both ask the same shared
+// question so they cannot drift apart.
+describe('buildProjectCatalog with project roots', () => {
+  const SEPARATOR = String.fromCharCode(92)
+  const codeRoot = 'C:' + SEPARATOR + 'Code'
+  const inside = codeRoot + SEPARATOR + 'cadence'
+  const outside = 'C:' + SEPARATOR + 'Users' + SEPARATOR + 'sheldon' + SEPARATOR + 'Downloads'
+  const roots = [makeProjectRoot(codeRoot, null)]
+
+  const build = (sessions: AssistantSession[], projectRoots = roots, workspaces = []) =>
+    buildProjectCatalog({
+      targetPlatform: 'claude',
+      sessionSets: [{ platform: 'claude', sessions }],
+      workspaces,
+      projectRoots
+    })
+
+  it('keeps a discovered folder inside a root', () => {
+    expect(build([session('claude', inside)].map((entry) => entry)).map((entry) => entry.path)).toEqual([
+      inside
+    ])
+  })
+
+  it('drops a discovered folder outside every root', () => {
+    expect(build([session('claude', outside)])).toEqual([])
+  })
+
+  // The safe default: an app that has never been configured must behave as before.
+  it('keeps everything when no roots are configured', () => {
+    const entries = build([session('claude', inside), session('claude', outside)], [])
+    expect(entries).toHaveLength(2)
+  })
+
+  // Attaching a folder is an explicit act. Hiding it because a root was added later
+  // would silently discard a choice the user made by hand, with no way to see it.
+  it('always lists a hand-attached folder, even from outside the roots', () => {
+    const workspace = createWorkspace(outside)
+    const entries = buildProjectCatalog({
+      targetPlatform: 'claude',
+      sessionSets: [{ platform: 'claude', sessions: [] }],
+      workspaces: [workspace],
+      projectRoots: roots
+    })
+    expect(entries.map((entry) => entry.source)).toEqual(['attached'])
+  })
+
+  it('does not let a WSL root admit a Windows folder of the same name', () => {
+    const wslRoots = [makeProjectRoot('/home/sheldon/code', 'Ubuntu')]
+    expect(build([session('claude', inside)], wslRoots)).toEqual([])
   })
 })

@@ -8,6 +8,8 @@ import type {
   SessionTitleGenerationStatus
 } from '@shared/sessions'
 import type { ProjectCatalogEntry, ProjectCatalogSource } from '@shared/project-catalog'
+import { isProjectListed } from '@shared/project-roots'
+import { useAppSettings } from '../settings/use-app-settings'
 import type {
   GitHubAuthStatus,
   GitHubContextSyncRequest,
@@ -126,15 +128,60 @@ export function useProjectSessionBrowserState({
     [rawSessions, metadata.sessionAliases]
   )
 
+  const { projectRoots } = useAppSettings()
+
+  // Hand-attached folders are exempt from the roots. The catalog is what knows which
+  // ids those are, and the exemption has to be applied HERE too, not only there: the
+  // attached folder's id is the same id its session-derived group carries, so
+  // filtering the group out and letting the catalog re-add it produced a row with
+  // every session stripped — the project still listed, its history gone. Attaching a
+  // folder outside the usual tree is exactly why one attaches a folder, so that was
+  // the case most likely to be hit.
+  const attachedIds = useMemo(
+    () => new Set(catalog.filter((entry) => entry.source === 'attached').map((entry) => entry.id)),
+    [catalog]
+  )
+
+  // Session-derived projects are filtered here as well as in the catalog, because
+  // this list is the primary one and the catalog only contributes what it does not
+  // already contain. Filtering one and not the other would leave every excluded
+  // folder on screen anyway. Both sides ask the same shared question.
   const projects = useMemo(
     () =>
       mergeCatalogProjects(
-        groupSessionsByProject(platform, sessions, metadata.projectAliases),
+        groupSessionsByProject(platform, sessions, metadata.projectAliases).filter(
+          (project) =>
+            isProjectListed(
+              project.path,
+              project.origin.distro,
+              attachedIds.has(project.id),
+              projectRoots
+            )
+        ),
         catalog,
         metadata.projectAliases
       ),
-    [platform, sessions, catalog, metadata.projectAliases]
+    [platform, sessions, catalog, metadata.projectAliases, projectRoots, attachedIds]
   )
+  // Roots change what the MAIN process derives, not just what this list filters: a
+  // session's projectPath and projectId are rolled up over there. Re-filtering the
+  // sessions already in hand would leave deep subfolders showing as separate
+  // projects until the next 60s poll, so the data is refetched as well.
+  //
+  // Driven by the change event rather than by watching the roots value, because the
+  // value also "changes" once on load when the real settings replace the defaults,
+  // and that is not an edit worth a refetch.
+  const refreshAfterSettingsRef = useRef<() => void>(() => undefined)
+  refreshAfterSettingsRef.current = () => {
+    void Promise.all([refreshSessions(), refreshCatalog()])
+  }
+  useEffect(() => {
+    const unsubscribe = window.dashboard?.settings?.onChanged?.(() => {
+      refreshAfterSettingsRef.current()
+    })
+    return () => unsubscribe?.()
+  }, [])
+
   const filteredProjects = useMemo(() => filterProjects(projects, query), [projects, query])
 
   // Remember the last project we actually resolved for the current selection. A

@@ -52,6 +52,7 @@ import {
 import type { ClaudeUsageSummary } from '@shared/usage'
 import type { Workspace } from '@shared/workspaces'
 import type { ProjectCatalogEntry } from '@shared/project-catalog'
+import type { ProjectRoot } from '@shared/project-roots'
 import type { ExternalLinkOpenResult } from '@shared/external-links'
 import type { AppSettings, AppSettingsUpdate } from '@shared/app-settings'
 
@@ -75,7 +76,15 @@ const api = {
   },
   settings: {
     get: (): Promise<AppSettings> => ipcRenderer.invoke('settings:get'),
-    update: (update: AppSettingsUpdate): Promise<AppSettings> => ipcRenderer.invoke('settings:update', update)
+    update: (update: AppSettingsUpdate): Promise<AppSettings> => ipcRenderer.invoke('settings:update', update),
+    // Settings are read in more than one place now that project roots shape the
+    // Projects list, so a change has to reach the whole window, not just whichever
+    // component happened to make the edit.
+    onChanged: (callback: (settings: AppSettings) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: AppSettings): void => callback(payload)
+      ipcRenderer.on('settings:changed', listener)
+      return () => ipcRenderer.removeListener('settings:changed', listener)
+    }
   },
   externalLinks: {
     open: (url: string): Promise<ExternalLinkOpenResult> => ipcRenderer.invoke('external-links:open', url)
@@ -135,7 +144,8 @@ const api = {
   },
   projects: {
     catalog: (platform: PlatformId): Promise<ProjectCatalogEntry[]> =>
-      ipcRenderer.invoke('projects:catalog', platform)
+      ipcRenderer.invoke('projects:catalog', platform),
+    pickRoot: (): Promise<ProjectRoot | null> => ipcRenderer.invoke('projects:pick-root')
   },
   github: {
     getAuthStatus: (): Promise<GitHubAuthStatus> => ipcRenderer.invoke('github:auth-status'),

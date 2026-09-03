@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type JSX, type MouseEvent } from 'react'
 import type { AppSettings } from '@shared/app-settings'
+import type { ProjectRoot } from '@shared/project-roots'
 import './settings.css'
 
 export function SettingsModal({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element | null {
@@ -40,6 +41,12 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
     }
   }, [onClose, open])
 
+  // Another window can change these while this modal is open, so mirror the
+  // broadcast rather than trusting the value fetched when it was opened.
+  useEffect(() => {
+    return window.dashboard?.settings?.onChanged?.((next) => setSettings(next))
+  }, [])
+
   if (!open) return null
 
   const updateMergeReview = async (): Promise<void> => {
@@ -55,6 +62,43 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
     } finally {
       setSaving(false)
     }
+  }
+
+  const saveProjectRoots = async (projectRoots: ProjectRoot[]): Promise<void> => {
+    setSaving(true)
+    setError(null)
+    try {
+      setSettings(await window.dashboard.settings.update({ projectRoots }))
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not save your project folders.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const addProjectRoot = async (): Promise<void> => {
+    if (!settings || saving) return
+    let picked: ProjectRoot | null = null
+    try {
+      picked = (await window.dashboard.projects?.pickRoot?.()) ?? null
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not open the folder picker.')
+      return
+    }
+    if (!picked) return
+    // Adding a folder already listed must not create a duplicate row — the stored
+    // list is keyed by the same id the matcher uses — but silently doing nothing
+    // reads as a broken button, so say so.
+    if (settings.projectRoots.some((root) => root.id === picked.id)) {
+      setError('That folder is already listed.')
+      return
+    }
+    await saveProjectRoots([...settings.projectRoots, picked])
+  }
+
+  const removeProjectRoot = async (id: string): Promise<void> => {
+    if (!settings || saving) return
+    await saveProjectRoots(settings.projectRoots.filter((root) => root.id !== id))
   }
 
   const handleBackdropClick = (event: MouseEvent<HTMLDivElement>): void => {
@@ -118,6 +162,64 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                   <span className="settings-switch-thumb" />
                 </button>
               </div>
+            </section>
+            <section className="settings-group" aria-labelledby="project-folder-settings">
+              <div className="settings-group-heading">
+                <h3 id="project-folder-settings">Project folders</h3>
+                <span>Global</span>
+              </div>
+              <div className="settings-row settings-row-stacked">
+                <div className="settings-row-copy">
+                  <label id="project-folder-label">Where your projects live</label>
+                  <p>
+                    Cadence otherwise treats every folder an AI tool has ever run in as a project.
+                    Name the folders your projects sit inside and only those are listed. A session
+                    started deeper inside one is filed under its project rather than becoming a
+                    separate entry.
+                  </p>
+                  <p className="settings-row-note">
+                    {settings && settings.projectRoots.length === 0
+                      ? 'None yet — every discovered folder is currently shown.'
+                      : 'Folders you attach by hand are always listed, even from outside these.'}
+                  </p>
+                </div>
+              </div>
+
+              {settings && settings.projectRoots.length > 0 ? (
+                <ul className="settings-root-list" aria-labelledby="project-folder-label">
+                  {settings.projectRoots.map((root) => (
+                    <li key={root.id} className="settings-root-row">
+                      <span className="settings-root-origin">{root.distro ?? 'Windows'}</span>
+                      <span className="settings-root-path" title={root.path}>
+                        {root.path}
+                      </span>
+                      <button
+                        type="button"
+                        className="settings-root-remove"
+                        onClick={() => void removeProjectRoot(root.id)}
+                        disabled={saving}
+                        aria-label={`Stop using ${root.path} as a project folder`}
+                        title={`Stop using ${root.path} as a project folder`}
+                      >
+                        ✕
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+
+              <button
+                type="button"
+                className="settings-root-add"
+                onClick={() => void addProjectRoot()}
+                disabled={!settings || saving}
+              >
+                + Add folder
+              </button>
+              <p className="settings-root-hint">
+                For WSL, open <strong>Linux</strong> in the picker’s sidebar and choose a folder
+                inside your distro.
+              </p>
             </section>
             {error ? <p className="settings-error" role="alert">{error}</p> : null}
           </div>

@@ -76,9 +76,11 @@ import { DEFAULT_WINDOW_BOUNDS } from './window-state-utils'
 import { readWindowState, registerWindowStatePersistence } from './window-state'
 import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
 import { APP_NAME } from '@shared/brand'
-import type { AppSettingsUpdate } from '@shared/app-settings'
+import type { AppSettingsUpdate, AppSettings } from '@shared/app-settings'
 import { readAppSettings, updateAppSettings } from './settings/app-settings-service'
 import { installManagedMergeReviewWorkflow } from './merge-review/merge-review-workflow'
+import { pickProjectRoot } from './projects/project-roots-service'
+import { setProjectRoots } from './projects/project-identity'
 import {
   TERMINAL_DETACHED_CLOSED_CHANNEL,
   type TerminalDetachedEvent
@@ -433,13 +435,32 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
     window.close()
   })
 
+  // Project ids are derived from the roots, so a change to them invalidates every
+  // cached session: the same folder can map to a different project id before and
+  // after. Clearing here rather than trusting the TTL means the Projects list is
+  // correct on the next read instead of up to a minute later.
+  const applyProjectRoots = (settings: AppSettings): void => {
+    setProjectRoots(settings.projectRoots)
+    invalidateSessionCache()
+  }
+
   ipcMain.handle('app:version', () => app.getVersion())
   ipcMain.handle('settings:get', () => readAppSettings())
   ipcMain.handle('settings:update', async (_event, update: AppSettingsUpdate) => {
     if (update?.mergeReviewEnabled === true) await installManagedMergeReviewWorkflow()
     const settings = await updateAppSettings(update)
+    applyProjectRoots(settings)
+    // Every window is told, because the Projects list in each has to stop showing
+    // folders the user just excluded — a change confined to the Settings modal
+    // would leave the rest of the app describing the old configuration.
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send('settings:changed', settings)
+    }
     return settings
   })
+  ipcMain.handle('projects:pick-root', (event) =>
+    pickProjectRoot(BrowserWindow.fromWebContents(event.sender))
+  )
   // Clipboard moved to the main process so the renderer can run under sandbox:true
   // (the sandboxed preload can't import electron's clipboard module directly).
   ipcMain.handle('clipboard:read', () => clipboard.readText())
@@ -617,6 +638,7 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   createMainWindow()
   void readAppSettings()
     .then((settings) => {
+      applyProjectRoots(settings)
       if (settings.mergeReviewEnabled) return installManagedMergeReviewWorkflow()
       return undefined
     })
