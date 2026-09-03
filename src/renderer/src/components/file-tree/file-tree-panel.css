@@ -14,6 +14,11 @@
 
 .files-panel-shell.open {
   width: min(var(--files-panel-width, clamp(240px, 22vw, 300px)), 22vw);
+  /* Shares the shrink rather than staying rigid, so the deficit does not land
+     entirely on whichever neighbour happens to be flexible. Floor on `.open` only —
+     a collapsed rail stays 32px. */
+  flex-shrink: 1;
+  min-width: 140px;
 }
 
 .files-panel-rail {

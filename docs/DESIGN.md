@@ -596,10 +596,24 @@ Window-level tiers:
 - **≤1040px** — trim sidebars again; the usage strip drops to two columns.
 - **≤900px** — narrowest sidebars; platform tabs shrink.
 
-The terminal column carries its own floor (`.main-stack { min-width }`) and the grid
-track's `minmax(140px, 1fr)` gives it a height floor. The per-panel viewport clamps cap
-each sidebar individually, but several reasonable caps still sum past 100vw, so they
-cannot by themselves guarantee the terminal any room — the floor is what does that.
+**Every panel in `.content-body` must be able to shrink AND have a floor.** These are
+one rule, not two, because each half alone fails in an opposite way:
+
+- If only one child can shrink, it absorbs the entire deficit. `.sidebar` sets
+  `flex: 0 0 auto`, so the Projects sidebar first could not give at all (the row
+  overflowed the window) and then, once made flexible, took all of it — down to a 15px
+  strip whose own collapse button sat outside the visible box and could not be clicked.
+- If a shrinkable child has no floor, it reaches that same sliver state.
+
+So each open panel sets `flex-shrink: 1` plus a `min-width`, on `.open` only — a
+collapsed rail must stay exactly 32px. The floors are chosen to fit the window
+together: 156 + 140 + 176 + a 220 terminal + 30px of gaps = 722, inside the 760px
+minimum. **If you add a panel or change a floor, re-check that sum.**
+
+The terminal column's floor drops from 320 to 220 below 1040px for exactly that reason,
+and the grid track's `minmax(140px, 1fr)` gives it a height floor. The per-panel
+viewport clamps cap each sidebar individually, but several reasonable caps still sum
+past 100vw, so they cannot by themselves guarantee anyone room — the floors do.
 
 Titlebar tiers:
 

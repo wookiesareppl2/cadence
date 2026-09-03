@@ -1550,6 +1550,13 @@ button {
     width: 232px;
   }
 
+  /* Four floors plus the gaps must fit the window. 156 + 140 + 176 + 220 + 30 = 722,
+     inside the 760px minimum, so every panel keeps a usable width and none is clipped
+     to a sliver. */
+  .main-stack {
+    min-width: min(220px, 100%);
+  }
+
   .usage-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

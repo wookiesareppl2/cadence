@@ -7,6 +7,14 @@
 
 .project-sidebar.open {
   width: min(var(--project-sidebar-width, 310px), 28vw);
+  /* Shrinkable, with a floor. `.sidebar` sets `flex: 0 0 auto`, so without the
+     override this panel could not give at all and the whole row overflowed the
+     window instead. The floor then stops the opposite failure — absorbing the entire
+     deficit and becoming a clipped strip of list whose own collapse button sits
+     outside the visible box and cannot be clicked. Both are on `.open` only; a
+     collapsed rail must stay exactly 32px. */
+  flex-shrink: 1;
+  min-width: 156px;
 }
 
 .project-sidebar.closed {
@@ -936,6 +944,10 @@
 .history-sidebar-shell.open {
   flex-basis: min(var(--history-sidebar-open-width), 30vw);
   width: min(var(--history-sidebar-open-width), 30vw);
+  /* Shrinkable, with a floor. Sharing the deficit is what keeps any single panel
+     from being reduced to an unusable sliver. */
+  flex-shrink: 1;
+  min-width: 176px;
 }
 
 .history-sidebar-panel {
