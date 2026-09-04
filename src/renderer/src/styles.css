@@ -779,12 +779,16 @@ button {
 }
 
 .sidebar-header h2,
-.panel-header h2,
-.fact-list dt {
+.panel-header h2 {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sidebar-header h2,
+.panel-header h2,
+.fact-list dt {
   margin: 0;
   color: var(--text-2);
   font-size: 11px;
@@ -1547,26 +1551,25 @@ button {
    viewport (the min() clamps in the panel stylesheets) so one saved size cannot take
    the whole window — but those caps are per-panel and can still sum past 100vw
    together, so the terminal's own floor is what protects it (see `.main-stack`). */
-@media (max-width: 1180px) {
-}
-
 @media (max-width: 1040px) {
   /* The floors that have to fit are the THREE inside `.content-body`, not four in one
      row: the project sidebar is in a different flex line. Their budget is the window
      minus that sidebar's clamp and `.content-grid`'s 20px of padding — at 760 with the
-     24vw clamp, 760 − 182.4 − 20 = 557.6. Requirement: 132 + 210 + 168 + 20 of gaps
-     = 530, leaving ~27px of slack. Re-run that subtraction if a floor or the clamp
-     changes. */
+     22vw clamp, 760 − 167.2 − 20 = 572.8. Requirement: 140 + 210 + 188 + 20 of gaps
+     = 558, leaving ~15px of slack. Each floor is measured against its own panel's
+     header FIRST (measured minima: files 136, history 184); this sum is the check
+     afterwards, never the source. Deriving a floor from the sum is what produced two
+     separate unreachable-collapse-button defects here. Re-run that subtraction if a floor or the clamp
+     changes — and check each floor against its OWN header too, not just the sum: a
+     panel whose floor is narrower than its header needs reproduces the unreachable
+     collapse button one window size lower down. */
   .main-stack {
+    flex: 1 1 auto;
     min-width: min(210px, 100%);
   }
 
   .usage-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .main-stack {
-    flex: 1 1 auto;
   }
 }
 

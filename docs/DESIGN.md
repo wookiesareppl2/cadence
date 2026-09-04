@@ -620,10 +620,26 @@ one rule, not two, because each half alone fails in an opposite way:
 So each open panel sets `flex-shrink: 1` plus a `min-width`, on `.open` only — a
 collapsed rail must stay exactly 32px. The floors must fit the space `.content-body`
 actually gets, which is the window **minus the projects sidebar's clamp, minus
-`.content-grid`'s 20px of padding**. At the 760px minimum: 760 − 182.4 − 20 = 557.6
-available, against 132 + 210 + 168 + 20 of gaps = 530. **If you add a panel, change a
+`.content-grid`'s 20px of padding**. At the 760px minimum: 760 − 167.2 − 20 = 572.8
+available, against 140 + 210 + 188 + 20 of gaps = 558. **If you add a panel, change a
 floor, or change the sidebar clamp, redo that subtraction — and check it at 760, not
-only at a comfortable width.**
+only at a comfortable width.** Check each floor against **its own header** as well as
+against the sum: a panel whose floor is narrower than its header needs reproduces the
+unreachable-collapse-button defect at a lower window size. Measure each floor against its own header FIRST and check the sum afterwards —
+never derive one floor from the other. Doing it the wrong way round put the History
+button outside its shell at 168, and then, when that floor was raised and the Files
+floor lowered to pay for it, put the Files button outside instead. Measured minima: Files 136,
+History 184; the floors are 140 and 188.
+
+When measuring a floor, override the `min-width` too — forcing only `flex`/`width`
+leaves the existing floor clamping the result, so every probe below it silently
+reports the floor's own width and the panel looks fine at sizes it never reached.
+
+Two consequences worth knowing. The ≤1040 breakpoint changes the sidebar clamp and the
+terminal floor together, so the layout visibly steps across that one pixel. And
+`.project-sidebar-content` fills its shell rather than holding its own width, so the
+open/close animation reflows the content instead of revealing it behind a clipping
+edge — matching how the history panel already behaves.
 
 The terminal column's floor drops from 320 to 210 below 1040px for exactly that reason,
 and the grid track's `minmax(140px, 1fr)` gives it a height floor. The per-panel

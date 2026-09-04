@@ -17,8 +17,11 @@
 }
 
 @media (max-width: 1040px) {
+  /* 22vw, not 24: every pixel this panel takes comes out of the three inside
+     `.content-grid`, and at 24vw their floors summed to 0.4px more than the space
+     left at a 760px window. */
   .project-sidebar.open {
-    width: min(var(--project-sidebar-width, 310px), 24vw);
+    width: min(var(--project-sidebar-width, 310px), 22vw);
   }
 }
 
@@ -957,7 +960,13 @@
   /* Shrinkable, with a floor. Sharing the deficit is what keeps any single panel
      from being reduced to an unusable sliver. */
   flex-shrink: 1;
-  min-width: 168px;
+  /* Measured against this panel's OWN header, not derived from the sum: its header
+     stops overflowing at 184px, so 188 leaves ~8px of clearance. Deriving a floor
+     from the arithmetic instead put the collapse button outside the shell at 168,
+     and then — when this floor was raised and the files floor lowered to pay for it
+     — put the FILES button outside instead. Measure each floor against the panel it
+     belongs to, then check the sum. */
+  min-width: 188px;
 }
 
 .history-sidebar-panel {
