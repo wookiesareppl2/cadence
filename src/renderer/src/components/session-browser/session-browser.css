@@ -17,11 +17,13 @@
 }
 
 @media (max-width: 1040px) {
-  /* 22vw, not 24: every pixel this panel takes comes out of the three inside
-     `.content-grid`, and at 24vw their floors summed to 0.4px more than the space
-     left at a 760px window. */
+  /* Every pixel this panel takes comes out of the three inside `.content-grid`, so
+     this clamp and those floors are one budget. It was briefly cut to 22vw to make
+     the floors fit, which clipped this panel's OWN collapse toggle out of the shell
+     — the floors were too high because two action rows had no collapsible labels.
+     With those labels collapsing, 24vw fits and the toggle is reachable. */
   .project-sidebar.open {
-    width: min(var(--project-sidebar-width, 310px), 22vw);
+    width: min(var(--project-sidebar-width, 310px), 24vw);
   }
 }
 
@@ -106,6 +108,57 @@
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+/* The labels collapse before the panel does. `.sidebar-actions` is `flex: 0 0 auto`
+   with a ~161px intrinsic width and nothing that compacts it, so the header needed
+   ~189px and the collapse toggle was clipped out of the shell at every window below
+   ~859px. Dropping two words frees ~19px — more than the whole remaining width
+   budget, and cheaper than another round of floor arithmetic. Same icon +
+   collapsible-label shape as the terminal deck's actions. */
+.sidebar-action-glyph {
+  flex: 0 0 auto;
+}
+
+.sidebar-action-label,
+.history-resume-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@container (max-width: 250px) {
+  .sidebar-action-label {
+    display: none;
+  }
+
+  .sidebar-action {
+    padding: 0 7px;
+  }
+}
+
+@container (max-width: 210px) {
+  .sidebar-actions {
+    gap: 4px;
+  }
+
+  .sidebar-action {
+    padding: 0 5px;
+  }
+}
+
+/* The Resume label goes the same way: `.history-actions` carries the resume group,
+   an info button and the collapse toggle, and at 169.7px it was what pinned this
+   panel's floor at 199. */
+@container (max-width: 260px) {
+  .history-resume-label {
+    display: none;
+  }
+
+  .history-resume-button {
+    padding: 0 7px;
+  }
 }
 
 .sidebar-action {
@@ -960,13 +1013,12 @@
   /* Shrinkable, with a floor. Sharing the deficit is what keeps any single panel
      from being reduced to an unusable sliver. */
   flex-shrink: 1;
-  /* Measured against this panel's OWN header, not derived from the sum: its header
-     stops overflowing at 184px, so 188 leaves ~8px of clearance. Deriving a floor
-     from the arithmetic instead put the collapse button outside the shell at 168,
-     and then — when this floor was raised and the files floor lowered to pay for it
-     — put the FILES button outside instead. Measure each floor against the panel it
-     belongs to, then check the sum. */
-  min-width: 188px;
+  /* Measured against this panel's OWN header with its labels collapsed: the header
+     clears at 152px, so 160 leaves ~8px. Before the Resume label could collapse this
+     was 199 — one word pinned 47px of floor, which is what made the budget
+     unsatisfiable and drove two rounds of floor arithmetic. Measure the floor after
+     the row can compact, not before. */
+  min-width: 160px;
 }
 
 .history-sidebar-panel {

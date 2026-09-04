@@ -18,10 +18,10 @@
      entirely on whichever neighbour happens to be flexible. Floor on `.open` only —
      a collapsed rail stays 32px. */
   flex-shrink: 1;
-  /* Measured: this panel's header stops overflowing at 136px, so 140 leaves a few
-     pixels of clearance. Do not lower it to balance some other panel's floor — that
-     is how the collapse button ended up outside the shell here. */
-  min-width: 140px;
+  /* Measured against this panel's own header: it clears at 144px, so 148 leaves a
+     few pixels. Do not lower it to balance another panel's floor — that is how the
+     collapse button ended up outside the shell here once already. */
+  min-width: 148px;
 }
 
 .files-panel-rail {

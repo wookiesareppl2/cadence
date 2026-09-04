@@ -758,8 +758,10 @@ button {
 }
 
 /* Not a `.panel-header`, so the general header safety net does not reach it: it needs
-   its own zero minimum or the collapse button is pushed outside the shell. */
+   its own zero minimum, and its own container context, or the collapse button is
+   pushed outside the shell. */
 .sidebar-header {
+  container-type: inline-size;
   min-width: 0;
   flex: 0 0 auto;
   padding: 12px 14px 8px;
@@ -1555,11 +1557,12 @@ button {
   /* The floors that have to fit are the THREE inside `.content-body`, not four in one
      row: the project sidebar is in a different flex line. Their budget is the window
      minus that sidebar's clamp and `.content-grid`'s 20px of padding — at 760 with the
-     22vw clamp, 760 − 167.2 − 20 = 572.8. Requirement: 140 + 210 + 188 + 20 of gaps
-     = 558, leaving ~15px of slack. Each floor is measured against its own panel's
-     header FIRST (measured minima: files 136, history 184); this sum is the check
-     afterwards, never the source. Deriving a floor from the sum is what produced two
-     separate unreachable-collapse-button defects here. Re-run that subtraction if a floor or the clamp
+     24vw clamp, 760 − 182.4 − 20 = 557.6. Requirement: 148 + 210 + 160 + 20 of gaps
+     = 538, leaving ~20px of slack. Each floor is measured against its own panel's
+     header FIRST, with that header's labels already collapsed (measured minima: files
+     144, history 152); this sum is the check afterwards, never the source. Deriving a
+     floor from the sum produced two separate unreachable-collapse-button defects
+     here, and measuring a floor before its row could compact produced a third. Re-run that subtraction if a floor or the clamp
      changes — and check each floor against its OWN header too, not just the sum: a
      panel whose floor is narrower than its header needs reproduces the unreachable
      collapse button one window size lower down. */

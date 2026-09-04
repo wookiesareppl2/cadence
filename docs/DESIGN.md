@@ -620,16 +620,25 @@ one rule, not two, because each half alone fails in an opposite way:
 So each open panel sets `flex-shrink: 1` plus a `min-width`, on `.open` only — a
 collapsed rail must stay exactly 32px. The floors must fit the space `.content-body`
 actually gets, which is the window **minus the projects sidebar's clamp, minus
-`.content-grid`'s 20px of padding**. At the 760px minimum: 760 − 167.2 − 20 = 572.8
-available, against 140 + 210 + 188 + 20 of gaps = 558. **If you add a panel, change a
+`.content-grid`'s 20px of padding**. At the 760px minimum: 760 − 182.4 − 20 = 557.6
+available, against 148 + 210 + 160 + 20 of gaps = 538. **If you add a panel, change a
 floor, or change the sidebar clamp, redo that subtraction — and check it at 760, not
 only at a comfortable width.** Check each floor against **its own header** as well as
 against the sum: a panel whose floor is narrower than its header needs reproduces the
 unreachable-collapse-button defect at a lower window size. Measure each floor against its own header FIRST and check the sum afterwards —
 never derive one floor from the other. Doing it the wrong way round put the History
 button outside its shell at 168, and then, when that floor was raised and the Files
-floor lowered to pay for it, put the Files button outside instead. Measured minima: Files 136,
-History 184; the floors are 140 and 188.
+floor lowered to pay for it, put the Files button outside instead. Measured minima: Files 144,
+History 152; the floors are 148 and 160.
+
+**Measure a floor only AFTER its action row can compact.** Every action row in a
+panel header needs the icon + collapsible-label treatment, not just the terminal
+deck's. Two rows lacked it, and their intrinsic widths pinned floors so high the
+budget could not be satisfied at all: History's floor was 199 until the word
+"Resume" could collapse, then 152 — one word held 47px. The projects sidebar's
+clamp had to be cut to 22vw to fit those inflated floors, which clipped that
+panel's own collapse toggle out of its shell for every window below ~859px. With
+the labels collapsing, the clamp went back to 24vw and every floor dropped.
 
 When measuring a floor, override the `min-width` too — forcing only `flex`/`width`
 leaves the existing floor clamping the result, so every probe below it silently

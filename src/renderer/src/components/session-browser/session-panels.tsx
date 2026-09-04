@@ -148,9 +148,13 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
                 className="sidebar-action"
                 onClick={() => browser.attachWorkspace()}
                 title="Attach an existing folder or create a new project workspace"
+                aria-label="Attach an existing folder or create a new project workspace"
                 tabIndex={open ? 0 : -1}
               >
-                + New
+                <span className="sidebar-action-glyph" aria-hidden="true">
+                  +
+                </span>
+                <span className="sidebar-action-label">New</span>
               </button>
               <button
                 type="button"
@@ -158,10 +162,11 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
                 onClick={() => setGithubImportOpen(true)}
                 title="Import from GitHub"
                 aria-haspopup="dialog"
+                aria-label="Import from GitHub"
                 tabIndex={open ? 0 : -1}
               >
                 <GitHubImportIcon />
-                GitHub
+                <span className="sidebar-action-label">GitHub</span>
               </button>
               <button
                 type="button"
@@ -815,7 +820,7 @@ export function SessionHistorySidebar({
               title="Resume this session in a terminal"
             >
               <ResumeIcon />
-              <span>Resume</span>
+              <span className="history-resume-label">Resume</span>
             </button>
             <button
               type="button"
