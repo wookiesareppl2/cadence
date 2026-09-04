@@ -110,7 +110,12 @@
   gap: 6px;
 }
 
-/* The labels collapse before the panel does. `.sidebar-actions` is `flex: 0 0 auto`
+/* NOTE: the @container tiers for these buttons sit AFTER their base rules, further
+   down this file. Container queries add no specificity, so a base rule later in
+   source order silently wins — these tiers were dead on arrival when first written
+   above `.sidebar-action`, which is the trap this branch documents.
+
+   The labels collapse before the panel does. `.sidebar-actions` is `flex: 0 0 auto`
    with a ~161px intrinsic width and nothing that compacts it, so the header needed
    ~189px and the collapse toggle was clipped out of the shell at every window below
    ~859px. Dropping two words frees ~19px — more than the whole remaining width
@@ -126,6 +131,24 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sidebar-action {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 4px;
+  background: var(--accent-dim);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease;
 }
 
 @container (max-width: 250px) {
@@ -146,37 +169,6 @@
   .sidebar-action {
     padding: 0 5px;
   }
-}
-
-/* The Resume label goes the same way: `.history-actions` carries the resume group,
-   an info button and the collapse toggle, and at 169.7px it was what pinned this
-   panel's floor at 199. */
-@container (max-width: 260px) {
-  .history-resume-label {
-    display: none;
-  }
-
-  .history-resume-button {
-    padding: 0 7px;
-  }
-}
-
-.sidebar-action {
-  min-height: 26px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  padding: 4px 9px;
-  border: 1px solid var(--accent-dim);
-  border-radius: 4px;
-  background: var(--accent-dim);
-  color: var(--text-1);
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  font-weight: 650;
-  cursor: pointer;
-  transition: background-color 160ms ease, border-color 160ms ease;
 }
 
 .sidebar-action-icon {
@@ -1681,6 +1673,19 @@
     background-color 160ms var(--ease-out-expo),
     border-color 160ms var(--ease-out-expo),
     opacity 160ms var(--ease-out-expo);
+}
+
+/* The Resume label goes the same way: `.history-actions` carries the resume group,
+   an info button and the collapse toggle, and at 169.7px it was what pinned this
+   panel's floor at 199. */
+@container (max-width: 260px) {
+  .history-resume-label {
+    display: none;
+  }
+
+  .history-resume-button {
+    padding: 0 7px;
+  }
 }
 
 .history-resume-button:hover:not(:disabled) {

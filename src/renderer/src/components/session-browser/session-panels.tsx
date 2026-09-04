@@ -148,7 +148,7 @@ export const ProjectSessionSidebar = memo(function ProjectSessionSidebar({
                 className="sidebar-action"
                 onClick={() => browser.attachWorkspace()}
                 title="Attach an existing folder or create a new project workspace"
-                aria-label="Attach an existing folder or create a new project workspace"
+                aria-label="New project"
                 tabIndex={open ? 0 : -1}
               >
                 <span className="sidebar-action-glyph" aria-hidden="true">
