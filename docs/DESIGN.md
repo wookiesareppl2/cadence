@@ -50,6 +50,42 @@ keyboard control: when focused, Up / Down moves the task one visible position an
 `aria-live` region announces its new position. Reordering uses the existing debounced
 workspace save and must never cross the Open / Done boundary or mutate task content.
 
+### Dock panes (Notes & Tasks / Agents)
+
+The bottom dock holds more than one pane, switched by a `.workspace-pane-tabs`
+segmented control at the top of the dock body — the same treatment as the Open/Done
+tabs one level down, so the two strips read as the same kind of control at different
+scopes. The dock header title follows the active pane rather than naming one of them,
+and the collapsed summary line describes the active pane too.
+
+Each tab carries a count badge. Give the badge the number that answers the question
+the user opens the pane to ask — open tasks for Notes & Tasks, **running** agents
+(never the list length) for Agents — and accent it only when it is non-zero, so a
+quiet dock stays quiet.
+
+**The Agents pane shows what the CLI spawned for this session**, read from the
+provider's own on-disk records (`src/main/agents/`). Rules:
+
+- **Status is a small mono pill, not a colour alone.** `running` takes `--success`;
+  `stalled` and `failed` share `--caution` — both mean "look at this", and there is
+  still no new red token. `done` and `stopped` stay muted.
+- **Neither CLI reliably records that a run died**, so a run that has written nothing
+  for five minutes reads `stalled` rather than spinning forever. Do not present that
+  as a failure: it means we cannot tell.
+- **Internal agents are muted, never hidden.** Codex spawns a per-tool-call
+  `guardian` approval checker alongside real delegated work — on real sessions those
+  outnumber the work agents several times over. They keep a row and their own name,
+  at `--text-3`, so the work agents stay readable without anything being dropped.
+- **Nested runs indent under the agent that spawned them**, which both providers
+  record; orphans surface at the root rather than disappearing.
+- **Token counts are per-provider and must not be reconciled into a fake common
+  unit.** Claude's figure excludes cache reads (every turn re-reads the whole cached
+  context, and summing that reported 33.5M for a real 1.6M run); Codex's cumulative
+  total already includes its cached input. See the type comment on `AgentRun`.
+- **Scanning stops when the dock is collapsed.** A closed panel polling the disk is
+  work nobody asked for, so the running count is only claimed to be current while the
+  pane is visible.
+
 ## Buttons
 
 - **Icon/action buttons** (rename, refresh, +file): ~24px, transparent border at rest, hover = `background: var(--surface-3); border-color: var(--surface-4); color: var(--text-1)`.

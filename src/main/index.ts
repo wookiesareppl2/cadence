@@ -16,6 +16,7 @@ import { getCachedClaudePlanUsage, getCachedCodexPlanUsage } from './usage/usage
 import { notifyUsageThresholds } from './usage/usage-alerts'
 import { getSessionHistory } from './sessions/session-service'
 import { invalidateSessionCache, scanSessions } from './sessions/session-scan'
+import { getAgentActivity } from './agents/agent-activity-service'
 import { getSessionTitleGenerationStatus } from './sessions/session-title-generation-service'
 import {
   getSessionMetadata,
@@ -524,6 +525,9 @@ if (hasSingleInstanceLock) app.whenReady().then(() => {
   ipcMain.handle('sessions:claude', (event) => scanSessions('claude', event.sender))
   ipcMain.handle('sessions:codex', (event) => scanSessions('codex', event.sender))
   ipcMain.handle('sessions:history', (_event, platform: PlatformId, sessionId: string) => getSessionHistory(platform, sessionId))
+  ipcMain.handle('agents:activity', (_event, platform: PlatformId, sessionId: string) =>
+    getAgentActivity(platform, sessionId)
+  )
   ipcMain.handle('sessions:title-generation-status', () => getSessionTitleGenerationStatus())
   ipcMain.handle('sessions:metadata', () => getSessionMetadata())
   ipcMain.handle('sessions:set-project-alias', (_event, projectId: string, name: string | null) =>

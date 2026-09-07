@@ -2221,6 +2221,8 @@ function ClaudeWorkspace({
             <ProjectWorkspaceDock
               projectId={sessionBrowser.selectedProject?.id ?? null}
               projectName={sessionBrowser.selectedProject?.name ?? null}
+              platform="claude"
+              sessionId={sessionBrowser.selectedSession?.id ?? null}
               open={workspaceDockOpen}
               onToggle={onToggleWorkspaceDock}
               height={panelSizes.workspaceDock}
@@ -2485,6 +2487,8 @@ function ProviderWorkspace({
             <ProjectWorkspaceDock
               projectId={sessionBrowser.selectedProject?.id ?? null}
               projectName={sessionBrowser.selectedProject?.name ?? null}
+              platform={platform}
+              sessionId={sessionBrowser.selectedSession?.id ?? null}
               open={workspaceDockOpen}
               onToggle={onToggleWorkspaceDock}
               height={panelSizes.workspaceDock}

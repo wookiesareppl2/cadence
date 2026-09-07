@@ -9,6 +9,7 @@ import type {
   SessionTitleGenerationStatus
 } from '@shared/sessions'
 import type { SessionMetadata } from '@shared/session-metadata'
+import type { AgentActivityResult } from '@shared/agent-activity'
 import type { ProjectWorkspace } from '@shared/project-workspace'
 import type {
   DirListing,
@@ -203,6 +204,13 @@ const api = {
       CONTEXT_VAULT_SYNC_ENABLED
         ? ipcRenderer.invoke('github:vault-set-github-recovery', request)
         : Promise.resolve({ ok: false, error: CONTEXT_VAULT_BANKED_REASON })
+  },
+  agents: {
+    // Reads the subagents a session has spawned. Polled while the Agents dock is
+    // open; the main process caches per file so a poll that finds nothing changed
+    // costs a stat, not a re-parse.
+    activity: (platform: PlatformId, sessionId: string): Promise<AgentActivityResult> =>
+      ipcRenderer.invoke('agents:activity', platform, sessionId)
   },
   projectWorkspace: {
     get: (projectId: string): Promise<ProjectWorkspace> => ipcRenderer.invoke('project-workspace:get', projectId),

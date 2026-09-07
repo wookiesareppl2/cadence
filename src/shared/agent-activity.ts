@@ -151,6 +151,15 @@ export type AgentActivitySummary = {
   total: number
 }
 
+// One scan of a session's spawned agents, as the renderer receives it.
+export type AgentActivityResult = {
+  platform: PlatformId
+  sessionId: string
+  runs: AgentRun[]
+  summary: AgentActivitySummary
+  scannedAtMs: number
+}
+
 // Feeds the titlebar badge. `running` is the number the badge shows, so it counts
 // only genuinely live runs — a stalled run is reported separately rather than
 // inflating the count with work that may already be dead.
