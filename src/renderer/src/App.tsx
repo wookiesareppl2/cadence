@@ -15,6 +15,13 @@ import { TerminalDeck, useTerminalDeck } from '@renderer/components/terminal-dec
 import type { TerminalTab } from '@renderer/components/terminal-deck'
 import { CheatSheet } from '@renderer/components/cheat-sheet'
 import { ProjectWorkspaceDock } from '@renderer/components/project-workspace'
+import type { DockPane } from '@renderer/components/project-workspace/project-workspace-dock'
+import {
+  AGENT_POLL_BACKGROUND_MS,
+  AGENT_POLL_VISIBLE_MS,
+  useAgentActivity,
+  type AgentActivityState
+} from '@renderer/components/project-workspace/use-agent-activity'
 import { FileTreePanel, FilePreviewModal, FilePreviewPane } from '@renderer/components/file-tree'
 import { TitlebarSearch } from '@renderer/components/search/TitlebarSearch'
 import { MemoryView } from '@renderer/components/memory/MemoryView'
@@ -994,6 +1001,25 @@ function DashboardApp(): JSX.Element {
     setWorkspaceDockOpen((current) => ({ ...current, [platform]: !current[platform] }))
   }, [platform, setWorkspaceDockOpen])
 
+  // The dock's active pane lives here, not in the dock, because the titlebar's
+  // running-agents badge opens the Agents pane from outside it.
+  const [dockPane, setDockPane] = useState<DockPane>('workspace')
+
+  // Polled at the app root so the badge stays honest whether or not the dock is
+  // open — slowly while the pane is out of sight, at the visible cadence when it
+  // is on screen.
+  const agents = useAgentActivity(
+    platform,
+    selectedSessionIds[platform],
+    true,
+    workspaceDockOpen[platform] && dockPane === 'agents' ? AGENT_POLL_VISIBLE_MS : AGENT_POLL_BACKGROUND_MS
+  )
+
+  const showAgents = useCallback(() => {
+    setDockPane('agents')
+    setWorkspaceDockOpen((current) => ({ ...current, [platform]: true }))
+  }, [platform, setWorkspaceDockOpen])
+
   const toggleClaudeFilesPanel = useCallback(() => {
     setFilesPanelOpen((current) => ({ ...current, claude: !current.claude }))
   }, [setFilesPanelOpen])
@@ -1126,6 +1152,8 @@ function DashboardApp(): JSX.Element {
         onExpandAllPanels={expandAllPanels}
         selectedProjectId={selectedProjectIds[platform]}
         onSearchActivate={handleSearchActivate}
+        runningAgents={agents.summary.running}
+        onShowAgents={showAgents}
       />
       <SettingsModal open={settingsOpen} onClose={closeSettings} />
       {memoryOpen ? (
@@ -1162,6 +1190,9 @@ function DashboardApp(): JSX.Element {
           onToggleProjectSidebar={toggleClaudeProjectSidebar}
           onToggleHistorySidebar={toggleClaudeHistorySidebar}
           onToggleWorkspaceDock={toggleClaudeWorkspaceDock}
+          agents={agents}
+          dockPane={dockPane}
+          onDockPaneChange={setDockPane}
           onToggleFilesPanel={toggleClaudeFilesPanel}
           onPanelResize={(key, size) => setPanelSize('claude', key, size)}
           onPreviewFile={(selection) =>
@@ -1197,6 +1228,9 @@ function DashboardApp(): JSX.Element {
           onToggleProjectSidebar={toggleProviderProjectSidebar}
           onToggleHistorySidebar={toggleProviderHistorySidebar}
           onToggleWorkspaceDock={toggleProviderWorkspaceDock}
+          agents={agents}
+          dockPane={dockPane}
+          onDockPaneChange={setDockPane}
           onToggleFilesPanel={toggleProviderFilesPanel}
           onPanelResize={(key, size) => setPanelSize(platform, key, size)}
           onPreviewFile={(selection) =>
@@ -1352,7 +1386,9 @@ function Titlebar({
   onCollapseAllPanels,
   onExpandAllPanels,
   selectedProjectId,
-  onSearchActivate
+  onSearchActivate,
+  runningAgents,
+  onShowAgents
 }: {
   platform: PlatformId
   // Connected platforms. The switcher shows only when more than one is active;
@@ -1371,6 +1407,8 @@ function Titlebar({
   onExpandAllPanels: () => void
   selectedProjectId: string | null
   onSearchActivate: (item: SearchResultItem, query: string) => void
+  runningAgents: number
+  onShowAgents: () => void
 }): JSX.Element {
   const [version, setVersion] = useState<string>('')
   const platformLabel = PLATFORM_CONFIG[platform].label
@@ -1475,10 +1513,38 @@ function Titlebar({
         </div>
       )}
       <div className="titlebar-right">
+        {/* Status, not a toolbar button: it appears only when something is actually
+            running, so a quiet app has an unchanged titlebar. Clicking it opens the
+            Agents pane, which is the only place the detail lives. */}
+        {runningAgents > 0 ? (
+          <button
+            type="button"
+            className="titlebar-agents"
+            onClick={onShowAgents}
+            title={`${runningAgents} agent${runningAgents === 1 ? '' : 's'} running — open the Agents pane`}
+          >
+            <AgentsIcon />
+            <span className="titlebar-agents-count">{runningAgents}</span>
+          </button>
+        ) : null}
         <TitlebarSearch platform={platform} projectId={selectedProjectId} onActivate={onSearchActivate} />
       </div>
       <WindowControls />
     </header>
+  )
+}
+
+// Canonical 16px line icon (docs/DESIGN.md): three nodes branching from one root,
+// which is what a session spawning agents actually looks like.
+function AgentsIcon(): JSX.Element {
+  return (
+    <svg className="titlebar-action-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <circle cx="3.4" cy="8" r="1.5" />
+      <circle cx="12.6" cy="3.6" r="1.5" />
+      <circle cx="12.6" cy="8" r="1.5" />
+      <circle cx="12.6" cy="12.4" r="1.5" />
+      <path d="M4.9 8h2.3M7.2 8v-4.4h3.9M7.2 8h3.9M7.2 8v4.4h3.9" />
+    </svg>
   )
 }
 
@@ -2006,6 +2072,9 @@ function ClaudeWorkspace({
   onToggleProjectSidebar,
   onToggleHistorySidebar,
   onToggleWorkspaceDock,
+  agents,
+  dockPane,
+  onDockPaneChange,
   onToggleFilesPanel,
   onPanelResize,
   onPreviewFile,
@@ -2034,6 +2103,9 @@ function ClaudeWorkspace({
   onToggleProjectSidebar: () => void
   onToggleHistorySidebar: () => void
   onToggleWorkspaceDock: () => void
+  agents: AgentActivityState
+  dockPane: DockPane
+  onDockPaneChange: (pane: DockPane) => void
   onToggleFilesPanel: () => void
   onPanelResize: (key: PanelSizeKey, size: number) => void
   onPreviewFile: (selection: FilePreviewSelection) => void
@@ -2221,8 +2293,10 @@ function ClaudeWorkspace({
             <ProjectWorkspaceDock
               projectId={sessionBrowser.selectedProject?.id ?? null}
               projectName={sessionBrowser.selectedProject?.name ?? null}
-              platform="claude"
               sessionId={sessionBrowser.selectedSession?.id ?? null}
+              agents={agents}
+              pane={dockPane}
+              onPaneChange={onDockPaneChange}
               open={workspaceDockOpen}
               onToggle={onToggleWorkspaceDock}
               height={panelSizes.workspaceDock}
@@ -2271,6 +2345,9 @@ function ProviderWorkspace({
   onToggleProjectSidebar,
   onToggleHistorySidebar,
   onToggleWorkspaceDock,
+  agents,
+  dockPane,
+  onDockPaneChange,
   onToggleFilesPanel,
   onPanelResize,
   onPreviewFile,
@@ -2300,6 +2377,9 @@ function ProviderWorkspace({
   onToggleProjectSidebar: () => void
   onToggleHistorySidebar: () => void
   onToggleWorkspaceDock: () => void
+  agents: AgentActivityState
+  dockPane: DockPane
+  onDockPaneChange: (pane: DockPane) => void
   onToggleFilesPanel: () => void
   onPanelResize: (key: PanelSizeKey, size: number) => void
   onPreviewFile: (selection: FilePreviewSelection) => void
@@ -2487,8 +2567,10 @@ function ProviderWorkspace({
             <ProjectWorkspaceDock
               projectId={sessionBrowser.selectedProject?.id ?? null}
               projectName={sessionBrowser.selectedProject?.name ?? null}
-              platform={platform}
               sessionId={sessionBrowser.selectedSession?.id ?? null}
+              agents={agents}
+              pane={dockPane}
+              onPaneChange={onDockPaneChange}
               open={workspaceDockOpen}
               onToggle={onToggleWorkspaceDock}
               height={panelSizes.workspaceDock}

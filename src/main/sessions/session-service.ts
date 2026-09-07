@@ -1,4 +1,6 @@
+import { createReadStream } from 'node:fs'
 import { open, readdir, readFile, stat } from 'node:fs/promises'
+import { createInterface } from 'node:readline'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import type { AssistantSession, AssistantSessionHistory, AssistantSessionHistoryEntry } from '@shared/sessions'
 import type { PlatformId } from '@shared/platform'
@@ -340,10 +342,12 @@ export function isSyntheticUserRow(row: any): boolean {
   return Boolean(row?.isMeta) || Boolean(row?.toolUseResult) || hasToolResultContent(row?.message?.content)
 }
 
-function claudeHistoryEntry(row: any, index: number): HistoryDraft | null {
+function claudeHistoryEntry(row: any, index: number, options?: { allowSidechain?: boolean }): HistoryDraft | null {
   // Subagent turns (isSidechain) are internal scaffolding — the agent's task
   // prompt and its step-by-step work — not part of the user's conversation.
-  if (row?.isSidechain === true) return null
+  // The agent transcript view opts back in, because there that scaffolding IS the
+  // conversation being read.
+  if (row?.isSidechain === true && options?.allowSidechain !== true) return null
 
   if (row?.type === 'queue-operation' && typeof row.content === 'string') {
     return historyEntry({ row, index, role: 'user', label: 'Queued', text: row.content, commandPrefix: '$' })
@@ -439,6 +443,50 @@ function finalizeHistoryEntries(entries: HistoryDraft[]): AssistantSessionHistor
   }
 
   return collapsed.map(({ timestampMs: _timestampMs, ...entry }) => entry)
+}
+
+// Read one agent's own transcript. Deliberately NOT `getSessionHistory`:
+//
+//  - A Claude subagent's rows are all `isSidechain`, which the session transcript
+//    drops by design — reading an agent that way returns an empty transcript.
+//  - The session view collapses a run of assistant messages down to the final one,
+//    because the intermediate narration is noise between tool calls. Here the
+//    step-by-step work is exactly what the reader opened the panel to see, so the
+//    turns are kept.
+//
+// The caller must have validated the path; this reads whatever it is given.
+export async function readAgentTranscript(
+  platform: PlatformId,
+  path: string
+): Promise<AssistantSessionHistoryEntry[]> {
+  const drafts: HistoryDraft[] = []
+  let index = 0
+
+  const reader = createInterface({ input: createReadStream(path, { encoding: 'utf8' }), crlfDelay: Infinity })
+  try {
+    for await (const line of reader) {
+      const trimmed = line.trim()
+      if (trimmed.length > 0) {
+        try {
+          const row = JSON.parse(trimmed)
+          const entry =
+            platform === 'claude'
+              ? claudeHistoryEntry(row, index, { allowSidechain: true })
+              : codexHistoryEntry(row, index)
+          if (entry) drafts.push(entry)
+        } catch {
+          // Ignore malformed rows in a read-only view.
+        }
+      }
+      index += 1
+    }
+  } finally {
+    reader.close()
+  }
+
+  return drafts
+    .sort((a, b) => a.timestampMs - b.timestampMs)
+    .map(({ timestampMs: _timestampMs, ...entry }) => entry)
 }
 
 export async function readCodexSessionDetails(path: string): Promise<CodexSessionDetails> {

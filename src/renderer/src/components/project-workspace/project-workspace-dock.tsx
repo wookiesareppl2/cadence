@@ -9,7 +9,8 @@ import type {
 import { reorderProjectTasks, type ProjectTask, type TaskDropEdge } from '@shared/project-workspace'
 import type { PlatformId } from '@shared/platform'
 import { buildAgentTree, type AgentRun, type AgentRunNode, type AgentRunStatus } from '@shared/agent-activity'
-import { useAgentActivity } from './use-agent-activity'
+import type { AgentActivityState } from './use-agent-activity'
+import { AgentTranscriptModal } from './agent-transcript-modal'
 // Lazy-loaded so TipTap/ProseMirror (~900 kB) is only fetched when the user opens
 // the Notes dock, instead of being parsed at every startup. The dock is collapsed
 // by default, so most sessions never load it.
@@ -25,13 +26,15 @@ function measuredDockBodyHeight(event: ReactPointerEvent<HTMLElement>, fallback:
   return body?.getBoundingClientRect().height ?? fallback
 }
 
-type DockPane = 'workspace' | 'agents'
+export type DockPane = 'workspace' | 'agents'
 
 export function ProjectWorkspaceDock({
   projectId,
   projectName,
-  platform,
   sessionId,
+  agents,
+  pane,
+  onPaneChange,
   open,
   onToggle,
   height,
@@ -39,8 +42,12 @@ export function ProjectWorkspaceDock({
 }: {
   projectId: string | null
   projectName: string | null
-  platform: PlatformId
   sessionId: string | null
+  // Polled one level up, because the titlebar's running badge needs the same
+  // answer whether or not this dock is open.
+  agents: AgentActivityState
+  pane: DockPane
+  onPaneChange: (pane: DockPane) => void
   open: boolean
   onToggle: () => void
   height: number | null
@@ -48,14 +55,9 @@ export function ProjectWorkspaceDock({
 }): JSX.Element {
   const workspace = useProjectWorkspace(projectId)
   const { tasks, notes } = workspace.workspace
-  const [pane, setPane] = useState<DockPane>('workspace')
+  const [openRun, setOpenRun] = useState<AgentRun | null>(null)
   const openCount = tasks.filter((task) => !task.done).length
   const hasNotes = notes.trim().length > 0
-
-  // Scanning stops when the dock is closed — a collapsed panel polling the disk
-  // every few seconds would be work nobody asked for. The running count therefore
-  // only claims to be current while the dock is open, which is when it is visible.
-  const agents = useAgentActivity(platform, sessionId, open)
 
   const paneTitle = pane === 'agents' ? 'Agents' : 'Notes & Tasks'
   const workspaceSummary = projectId
@@ -106,7 +108,7 @@ export function ProjectWorkspaceDock({
                 role="tab"
                 aria-selected={pane === 'workspace'}
                 className={pane === 'workspace' ? 'active' : ''}
-                onClick={() => setPane('workspace')}
+                onClick={() => onPaneChange('workspace')}
               >
                 <span className="workspace-pane-tab-label">Notes &amp; Tasks</span>
                 <span className="workspace-task-tab-count">{openCount}</span>
@@ -116,7 +118,7 @@ export function ProjectWorkspaceDock({
                 role="tab"
                 aria-selected={pane === 'agents'}
                 className={pane === 'agents' ? 'active' : ''}
-                onClick={() => setPane('agents')}
+                onClick={() => onPaneChange('agents')}
               >
                 <span className="workspace-pane-tab-label">Agents</span>
                 {/* The count is the running total, not the list length: the question
@@ -128,7 +130,7 @@ export function ProjectWorkspaceDock({
             </div>
             <div className="workspace-dock-panes">
               {pane === 'agents' ? (
-                <AgentsPanel runs={agents.runs} ready={agents.ready} sessionId={sessionId} />
+                <AgentsPanel runs={agents.runs} ready={agents.ready} sessionId={sessionId} onOpenRun={setOpenRun} />
               ) : !projectId ? (
                 <div className="workspace-dock-empty">Select a project to add notes and tasks.</div>
               ) : !workspace.ready ? (
@@ -145,6 +147,7 @@ export function ProjectWorkspaceDock({
           </div>
         </div>
       </div>
+      {openRun ? <AgentTranscriptModal run={openRun} onClose={() => setOpenRun(null)} /> : null}
     </section>
   )
 }
@@ -185,11 +188,13 @@ const AGENT_STATUS_LABEL: Record<AgentRunStatus, string> = {
 function AgentsPanel({
   runs,
   ready,
-  sessionId
+  sessionId,
+  onOpenRun
 }: {
   runs: AgentRun[]
   ready: boolean
   sessionId: string | null
+  onOpenRun: (run: AgentRun) => void
 }): JSX.Element {
   const tree = useMemo(() => buildAgentTree(runs), [runs])
 
@@ -205,14 +210,22 @@ function AgentsPanel({
     <div className="workspace-agents">
       <ul className="workspace-agent-list">
         {tree.map((node) => (
-          <AgentRow key={node.id} node={node} depth={0} />
+          <AgentRow key={node.id} node={node} depth={0} onOpenRun={onOpenRun} />
         ))}
       </ul>
     </div>
   )
 }
 
-function AgentRow({ node, depth }: { node: AgentRunNode; depth: number }): JSX.Element {
+function AgentRow({
+  node,
+  depth,
+  onOpenRun
+}: {
+  node: AgentRunNode
+  depth: number
+  onOpenRun: (run: AgentRun) => void
+}): JSX.Element {
   // A live run's elapsed time is measured to now; a finished one freezes at its last
   // recorded activity, so a completed run does not keep ticking upward.
   const endedAtMs = node.status === 'running' ? Date.now() : node.lastActivityAtMs
@@ -222,23 +235,30 @@ function AgentRow({ node, depth }: { node: AgentRunNode; depth: number }): JSX.E
     <>
       <li className={`workspace-agent-row status-${node.status}${node.isInternal ? ' internal' : ''}`}>
         <span className="workspace-agent-indent" style={{ width: `${depth * 12}px` }} aria-hidden="true" />
-        <span className={`workspace-agent-status status-${node.status}`}>{AGENT_STATUS_LABEL[node.status]}</span>
-        <span className="workspace-agent-label" title={node.errorMessage ?? node.label}>
-          {node.label}
-          {detail ? <span className="workspace-agent-detail"> {detail}</span> : null}
-        </span>
-        <span className="workspace-agent-metric" title="Elapsed">
-          {formatElapsed(node.startedAtMs, endedAtMs)}
-        </span>
-        <span className="workspace-agent-metric" title="Turns">
-          {node.turnCount}t
-        </span>
-        <span className="workspace-agent-metric" title="Tokens used">
-          {formatTokens(node.tokens)}
-        </span>
+        <button
+          type="button"
+          className="workspace-agent-open"
+          onClick={() => onOpenRun(node)}
+          title={node.errorMessage ?? `Read what ${node.label} did`}
+        >
+          <span className={`workspace-agent-status status-${node.status}`}>{AGENT_STATUS_LABEL[node.status]}</span>
+          <span className="workspace-agent-label">
+            {node.label}
+            {detail ? <span className="workspace-agent-detail"> {detail}</span> : null}
+          </span>
+          <span className="workspace-agent-metric" title="Elapsed">
+            {formatElapsed(node.startedAtMs, endedAtMs)}
+          </span>
+          <span className="workspace-agent-metric" title="Turns">
+            {node.turnCount}t
+          </span>
+          <span className="workspace-agent-metric" title="Tokens used">
+            {formatTokens(node.tokens)}
+          </span>
+        </button>
       </li>
       {node.children.map((child) => (
-        <AgentRow key={child.id} node={child} depth={depth + 1} />
+        <AgentRow key={child.id} node={child} depth={depth + 1} onOpenRun={onOpenRun} />
       ))}
     </>
   )

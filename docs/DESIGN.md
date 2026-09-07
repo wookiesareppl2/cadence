@@ -82,9 +82,48 @@ provider's own on-disk records (`src/main/agents/`). Rules:
   unit.** Claude's figure excludes cache reads (every turn re-reads the whole cached
   context, and summing that reported 33.5M for a real 1.6M run); Codex's cumulative
   total already includes its cached input. See the type comment on `AgentRun`.
-- **Scanning stops when the dock is collapsed.** A closed panel polling the disk is
-  work nobody asked for, so the running count is only claimed to be current while the
-  pane is visible.
+- **Two scan cadences, never zero.** The scan runs at 4s while the Agents pane is on
+  screen and 15s while it is not. It cannot stop when the dock closes: the titlebar
+  indicator below is the reason the feature exists, and a badge fed by a stopped scan
+  would quietly go stale — worse than not having one.
+- **Rows open the agent's own transcript.** The whole row is the control, borderless
+  at rest so the list still reads as a list.
+
+**Running-agents indicator (titlebar).** A count in `.titlebar-right`, left of search.
+This is the one sanctioned exception to "no individual framed titlebar buttons",
+because it is a **status readout that happens to be clickable**, not a toolbar action:
+it is unframed at rest, takes the accent, and **renders nothing at all when no agent
+is running**, so a quiet app has an unchanged titlebar. Clicking it opens the Agents
+pane, which is where all the detail lives — the badge itself never grows a menu.
+
+Measured against the real stylesheet at 760px (the window minimum): brand 205.8,
+switcher 164.5, `.titlebar-right` 205.8 (badge 47.9 + compact search 32), window
+controls clear at 622 — no overflow, and the badge sits well inside its region. One
+known consequence at **≤1340px**: focusing the compact search expands it to 300px
+`position: absolute` overlaying leftward, which covers the badge and takes its
+clicks until the search blurs. That is the documented overlay behaviour rather than
+a layout break — it previously overlaid empty space — and every alternative is
+worse: the badge cannot move right of the search (the expanded search is anchored
+`right: 146px`, so that space is the window controls), hiding it while typing makes
+it vanish, and raising it above the search puts a button over the text being typed.
+
+**Agent transcript view.** Standard modal geometry (below the titlebar, dimmed
+backdrop, Esc and backdrop-click both close), rendering turns through the same
+`HistoryEntryArticle` the History panel uses so an agent's work reads exactly like a
+session's. It re-reads on the live cadence while its run is still going and stops when
+it is not. Two things it must NOT reuse from the session path, both of which produce a
+silently wrong result:
+
+- **A Claude subagent's rows are all `isSidechain`,** which the session transcript
+  drops by design. Reading an agent through `getSessionHistory` returns an empty
+  transcript, not an error. `readAgentTranscript` opts back in.
+- **The session view collapses consecutive assistant turns to the final one,** since
+  intermediate narration between tool calls is noise there. Here the step-by-step work
+  is the thing being read, so the turns are kept.
+
+The transcript path comes from the renderer and is therefore an **input, not a
+permission**: the main process rejects any path outside the scanned provider roots
+before opening it. Without that check the channel is an arbitrary file reader.
 
 ## Buttons
 

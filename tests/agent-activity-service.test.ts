@@ -5,9 +5,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { SessionOriginRoot } from '../src/main/sessions/session-origins'
 import {
   clearAgentActivityCache,
+  isReadableTranscriptPath,
   scanClaudeAgents,
   scanCodexAgents
 } from '../src/main/agents/agent-activity-service'
+import { readAgentTranscript } from '../src/main/sessions/session-service'
 
 // These exercise the disk-facing half: finding a session's agents among real
 // directories, streaming their transcripts, and reporting a run that is still going
@@ -345,5 +347,133 @@ describe('scanCodexAgents', () => {
 
   it('returns nothing when the session is not a Codex rollout here', async () => {
     expect(await scanCodexAgents([originFor(home)], 'not-a-session', NOW)).toEqual([])
+  })
+})
+
+describe('isReadableTranscriptPath', () => {
+  const origins = [originFor('C:\Users\someone')]
+
+  it('accepts a path inside the provider directory it belongs to', () => {
+    expect(
+      isReadableTranscriptPath(
+        origins,
+        'claude',
+        join('C:\Users\someone', '.claude', 'projects', 'p', 'sess', 'subagents', 'agent-a.jsonl')
+      )
+    ).toBe(true)
+    expect(
+      isReadableTranscriptPath(origins, 'codex', join('C:\Users\someone', '.codex', 'sessions', '2026', 'r.jsonl'))
+    ).toBe(true)
+  })
+
+  it("refuses a path outside the scanned roots, and one from the other provider's root", () => {
+    // The renderer supplies this path; treating it as a permission rather than an
+    // input would turn the transcript channel into an arbitrary file reader.
+    expect(isReadableTranscriptPath(origins, 'claude', 'C:\Windows\System32\config\SAM')).toBe(false)
+    expect(
+      isReadableTranscriptPath(origins, 'claude', join('C:\Users\someone', '.codex', 'sessions', 'r.jsonl'))
+    ).toBe(false)
+  })
+
+  it('refuses a traversal that climbs back out of the root', () => {
+    expect(
+      isReadableTranscriptPath(
+        origins,
+        'claude',
+        join('C:\Users\someone', '.claude', 'projects', '..', '..', '.credentials.json')
+      )
+    ).toBe(false)
+  })
+
+  it('refuses the root itself and an empty path', () => {
+    expect(isReadableTranscriptPath(origins, 'claude', join('C:\Users\someone', '.claude', 'projects'))).toBe(false)
+    expect(isReadableTranscriptPath(origins, 'claude', '')).toBe(false)
+  })
+})
+
+describe('readAgentTranscript', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'cadence-agent-transcript-'))
+  })
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  async function write(rows: unknown[]): Promise<string> {
+    const path = join(dir, 'agent-a.jsonl')
+    await writeFile(path, rows.map((row) => JSON.stringify(row)).join('\n'), 'utf8')
+    return path
+  }
+
+  it('reads a subagent transcript, whose rows are ALL sidechain', async () => {
+    // The session view drops isSidechain rows by design. Reading an agent that way
+    // returns an empty transcript, which is the whole reason this reader exists.
+    const path = await write([
+      { type: 'user', isSidechain: true, timestamp: '2026-09-02T01:52:51.000Z', message: { content: 'Do the thing' } },
+      {
+        type: 'assistant',
+        isSidechain: true,
+        timestamp: '2026-09-02T01:53:10.000Z',
+        message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Did the thing' }] }
+      }
+    ])
+
+    const entries = await readAgentTranscript('claude', path)
+    expect(entries.map((entry) => entry.role)).toEqual(['user', 'assistant'])
+    expect(entries[1].text).toContain('Did the thing')
+  })
+
+  it('keeps every assistant turn instead of collapsing the run to its last', async () => {
+    // In the session view consecutive assistant messages collapse to the final one,
+    // because the narration between tool calls is noise. Here the steps ARE the
+    // thing being read.
+    const path = await write([
+      {
+        type: 'assistant',
+        isSidechain: true,
+        timestamp: '2026-09-02T01:53:00.000Z',
+        message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Step one' }] }
+      },
+      {
+        type: 'assistant',
+        isSidechain: true,
+        timestamp: '2026-09-02T01:54:00.000Z',
+        message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Step two' }] }
+      }
+    ])
+
+    const entries = await readAgentTranscript('claude', path)
+    expect(entries).toHaveLength(2)
+    expect(entries[0].text).toContain('Step one')
+  })
+
+  it('orders turns by time regardless of the order they were written', async () => {
+    const path = await write([
+      {
+        type: 'assistant',
+        isSidechain: true,
+        timestamp: '2026-09-02T02:00:00.000Z',
+        message: { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Later' }] }
+      },
+      { type: 'user', isSidechain: true, timestamp: '2026-09-02T01:00:00.000Z', message: { content: 'Earlier' } }
+    ])
+
+    const entries = await readAgentTranscript('claude', path)
+    expect(entries[0].text).toContain('Earlier')
+  })
+
+  it('survives malformed rows rather than failing the whole read', async () => {
+    const path = join(dir, 'agent-b.jsonl')
+    await writeFile(
+      path,
+      ['{not json', JSON.stringify({ type: 'user', isSidechain: true, timestamp: '2026-09-02T01:00:00.000Z', message: { content: 'Still here' } })].join('\n'),
+      'utf8'
+    )
+
+    const entries = await readAgentTranscript('claude', path)
+    expect(entries).toHaveLength(1)
   })
 })

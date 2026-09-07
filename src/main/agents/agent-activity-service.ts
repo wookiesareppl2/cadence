@@ -1,12 +1,14 @@
 import { createReadStream } from 'node:fs'
 import { readdir, readFile, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 import type { PlatformId } from '@shared/platform'
 import type { AgentActivityResult, AgentRun } from '@shared/agent-activity'
+import type { AssistantSessionHistoryEntry } from '@shared/sessions'
 import { summariseAgentRuns } from '@shared/agent-activity'
 import { getSessionOrigins, type SessionOriginRoot } from '../sessions/session-origins'
 import { parseCodexRolloutFile } from '../sessions/codex-rollout'
+import { readAgentTranscript } from '../sessions/session-service'
 import {
   agentIdFromFilename,
   buildClaudeAgentRuns,
@@ -336,6 +338,40 @@ export async function getAgentActivity(platform: PlatformId, sessionId: string):
     // A poll that throws would blank the panel; an empty result reads the same as
     // "this session has spawned nothing", which is the honest default here.
     return empty
+  }
+}
+
+// A transcript path is only ever read if it sits inside a directory the app already
+// scans for this provider. The renderer supplies the path (it came from a run we
+// handed it), and a path from the renderer is an input, not a permission: without
+// this, `agents:transcript` would read any file on the machine and hand it back.
+export function isReadableTranscriptPath(
+  origins: SessionOriginRoot[],
+  platform: PlatformId,
+  path: string
+): boolean {
+  if (path.length === 0) return false
+  const target = resolve(path)
+
+  return origins.some((origin) => {
+    const root = resolve(platform === 'claude' ? origin.claudeProjectsDir : origin.codexSessionsDir)
+    const inside = relative(root, target)
+    // Empty means the path IS the root; a `..` prefix or an absolute result means it
+    // escaped. Both are rejected.
+    return inside.length > 0 && !inside.startsWith('..') && !isAbsolute(inside)
+  })
+}
+
+export async function getAgentTranscript(
+  platform: PlatformId,
+  transcriptPath: string
+): Promise<AssistantSessionHistoryEntry[]> {
+  try {
+    const origins = await getSessionOrigins()
+    if (!isReadableTranscriptPath(origins, platform, transcriptPath)) return []
+    return await readAgentTranscript(platform, transcriptPath)
+  } catch {
+    return []
   }
 }
 

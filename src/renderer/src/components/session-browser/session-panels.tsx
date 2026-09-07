@@ -8,7 +8,7 @@ import type {
 import { CONTEXT_VAULT_SYNC_ENABLED } from '@shared/context-vault-feature'
 import { resumeSkipLabel, skipModeName } from '@shared/ai-launch'
 import { PLATFORM_CONFIG, type PlatformId } from '@shared/platform'
-import { CopyableCodeBlock, HistoryMarkdown } from '../history-markdown'
+import { HistoryEntryArticle } from '../history-entry-view'
 import { GitHubImportModal } from './github-import-modal'
 import { ProjectList, SessionList } from './session-rows'
 import { VaultStatusIndicator } from './vault-status-indicator'
@@ -33,23 +33,6 @@ type CSSVars = CSSProperties & Record<`--${string}`, string | number>
 // Only tool rows carry detail beyond the rail badge (which tool ran). User,
 // assistant, and context rows are fully identified by the rail, so showing a
 // speaker label there would just duplicate it.
-function historySpeakerLabel(entry: AssistantSessionHistoryEntry): string | null {
-  if (entry.role !== 'tool') return null
-  return entry.label || 'Tool'
-}
-
-function historyRoleCode(role: AssistantSessionHistoryEntry['role']): string {
-  if (role === 'user') return 'YOU'
-  if (role === 'assistant') return 'AGT'
-  if (role === 'tool') return 'RUN'
-  return 'CTX'
-}
-
-function historyRawCodeLanguage(text: string): string | null {
-  const trimmed = text.trim()
-  return trimmed.startsWith('{') || trimmed.startsWith('[') ? 'json' : null
-}
-
 function measuredPanelSize(
   event: ReactPointerEvent<HTMLElement>,
   selector: string,
@@ -752,32 +735,7 @@ export function SessionHistorySidebar({
   const historyEntries = useMemo(() => {
     if (displayedEntries.length === 0) return null
 
-    return displayedEntries.map((entry) => {
-      const speaker = historySpeakerLabel(entry)
-
-      return (
-        <article key={entry.id} className="history-entry" data-role={entry.role}>
-          <div className="history-entry-content">
-            <div className="history-entry-meta">
-              <span className="history-entry-marker">
-                <span className="history-entry-tag">{historyRoleCode(entry.role)}</span>
-                {entry.timestamp ? <time>{formatEntryTimestamp(entry.timestamp)}</time> : null}
-              </span>
-              {speaker ? <span className="history-entry-speaker">{speaker}</span> : null}
-            </div>
-            {entry.role === 'user' || entry.role === 'assistant' ? (
-              <HistoryMarkdown text={entry.text} copyCodeBlocks />
-            ) : (
-              <CopyableCodeBlock
-                code={entry.text}
-                language={historyRawCodeLanguage(entry.text)}
-                className="history-raw-code"
-              />
-            )}
-          </div>
-        </article>
-      )
-    })
+    return displayedEntries.map((entry) => <HistoryEntryArticle key={entry.id} entry={entry} />)
   }, [displayedEntries])
   const sidebarStyle =
     width === null
@@ -1036,14 +994,3 @@ function formatUpdatedAt(value: string | null): string {
   }).format(date)
 }
 
-function formatEntryTimestamp(value: string): string {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  }).format(date)
-}

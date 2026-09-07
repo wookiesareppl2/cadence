@@ -5,6 +5,7 @@ import type { PlatformId } from '@shared/platform'
 import type {
   AssistantSession,
   AssistantSessionHistory,
+  AssistantSessionHistoryEntry,
   SessionsUpdatedPayload,
   SessionTitleGenerationStatus
 } from '@shared/sessions'
@@ -210,7 +211,11 @@ const api = {
     // open; the main process caches per file so a poll that finds nothing changed
     // costs a stat, not a re-parse.
     activity: (platform: PlatformId, sessionId: string): Promise<AgentActivityResult> =>
-      ipcRenderer.invoke('agents:activity', platform, sessionId)
+      ipcRenderer.invoke('agents:activity', platform, sessionId),
+    // The path is validated against the scanned origins in the main process; a path
+    // from here is an input, never a permission.
+    transcript: (platform: PlatformId, transcriptPath: string): Promise<AssistantSessionHistoryEntry[]> =>
+      ipcRenderer.invoke('agents:transcript', platform, transcriptPath)
   },
   projectWorkspace: {
     get: (projectId: string): Promise<ProjectWorkspace> => ipcRenderer.invoke('project-workspace:get', projectId),
