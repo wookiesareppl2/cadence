@@ -179,7 +179,8 @@ function TasksPanel({ workspace, openCount }: { workspace: ProjectWorkspaceState
           className={tab === 'open' ? 'active' : ''}
           onClick={() => setTab('open')}
         >
-          Open <span className="workspace-task-tab-count">{openCount}</span>
+          <span className="workspace-task-tab-label">Open</span>
+          <span className="workspace-task-tab-count">{openCount}</span>
         </button>
         <button
           type="button"
@@ -188,7 +189,8 @@ function TasksPanel({ workspace, openCount }: { workspace: ProjectWorkspaceState
           className={tab === 'done' ? 'active' : ''}
           onClick={() => setTab('done')}
         >
-          Done <span className="workspace-task-tab-count">{doneCount}</span>
+          <span className="workspace-task-tab-label">Done</span>
+          <span className="workspace-task-tab-count">{doneCount}</span>
         </button>
       </div>
 

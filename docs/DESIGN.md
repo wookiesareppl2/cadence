@@ -545,7 +545,117 @@ and optional short helper copy. Active toggle-like surfaces (Memory and Commands
 small accent state marker. Menus are fixed-position overlays measured from their trigger;
 only one opens at a time, and they close on selection, Esc, outside-click, or scroll.
 
-Responsive tiers track the 1180px minimum window width:
+Responsive tiers track the **760px** minimum window width. That floor exists so the
+window fits the display it is on — including a monitor turned portrait, where a
+1080px-wide screen could not contain the old 1180px minimum and the window's right
+edge was simply cut off. Panels stay side by side at every width; their contents
+compact, and the collapse toggles remain the way to reclaim space.
+
+**Panel contents compact by CONTAINER width, not viewport width.** Every panel here is
+user-resizable, so a panel can be 240px wide on a 4K display — a viewport media query
+cannot see that. `.panel-header` is a `container-type: inline-size` context and its
+action rows compact against it.
+
+Five rules that this cost real defects to learn:
+
+1. **A container query cannot style its own container.** `@container` rules apply to
+   descendants only. A rule for `.panel-header` inside a `@container` block silently
+   does nothing — while its children still take the new sizing, which is how an
+   attempt to wrap a header instead overflowed the panel by more than its own width.
+   Style the children.
+2. **`contain: layout` — not `container-type` — is what traps a fixed overlay.**
+   Measured: a `position: fixed` child of a `container-type: inline-size` box still
+   resolves against the viewport, but under `contain: layout` it resolves against the
+   host, and `contain: paint` then clips it. `.history-sidebar-shell` carries
+   `contain: layout paint`, and a transform (its open/close animation) does the same
+   — which is how a menu there once rendered offscreen and vanished. Overlays inside
+   a contained or transformed ancestor must be portalled to `<body>`.
+3. **A later rule of equal specificity beats a `@container` rule.** Container queries
+   add no specificity, so tier rules must come after the base rule they override in
+   source order — otherwise they are silently dead. Verify a tier actually changes a
+   computed value rather than assuming it applied.
+4. **A flex row that may shrink must be allowed to wrap.** Giving a row `min-width: 0`
+   while its children stay fixed-size lets the row shrink below its content and the
+   children render *outside* the panel rather than moving to a second line.
+5. **Flex items default to `min-width: auto`,** so a text-bearing child refuses to
+   shrink below its content and overflows rather than truncating. Headings get an
+   explicit `min-width: 0` from `.panel-header > :first-child`; anything else that must
+   shrink needs its own.
+
+**Labelled panel buttons** follow the titlebar's icon + collapsible-label shape: an icon
+plus a `<span>` label that is dropped at narrow container widths, with `title` carrying
+the meaning once the label is gone. Reference: `.terminal-action` and its tiers.
+
+**Saved panel sizes are clamped against the viewport** with `min(var(--size), Nvw)`, so
+a width dragged out on a wide monitor cannot claim more than its share on a smaller
+screen. The stored value is untouched and returns intact when the window grows.
+
+Window-level tiers:
+
+- **≤1040px** — the projects sidebar's clamp tightens to 24vw; the usage strip drops
+  to two columns; the terminal's floor drops to 210px.
+- **≤900px** — platform tabs shrink.
+
+(Sidebar widths are set by the `min()` clamps, not by a `.sidebar { width }` ladder —
+`.project-sidebar.open`/`.closed` outrank `.sidebar`, so width rules there are dead.)
+
+**Know which flex line a panel is actually in.** The projects sidebar is a child of
+`.workspace`, alongside `.content-grid`; only Files, the terminal and History are
+siblings inside `.content-body`. So the sidebar never competes with those three, and a
+`min-width` on it is unreachable — `.content-grid` is `flex: 1; min-width: 0` and never
+pushes back. Its size is governed by its clamp alone, and every pixel it takes comes
+out of the three panels inside. An earlier version of this note did the arithmetic for
+one row of four; the number happened to fit and the reasoning was wrong, which is worse
+than a wrong number.
+
+**Every panel in `.content-body` must be able to shrink AND have a floor.** These are
+one rule, not two, because each half alone fails in an opposite way:
+
+- If only one child can shrink, it absorbs the entire deficit. `.sidebar` sets
+  `flex: 0 0 auto`, so the Projects sidebar first could not give at all (the row
+  overflowed the window) and then, once made flexible, took all of it — down to a 15px
+  strip whose own collapse button sat outside the visible box and could not be clicked.
+- If a shrinkable child has no floor, it reaches that same sliver state.
+
+So each open panel sets `flex-shrink: 1` plus a `min-width`, on `.open` only — a
+collapsed rail must stay exactly 32px. The floors must fit the space `.content-body`
+actually gets, which is the window **minus the projects sidebar's clamp, minus
+`.content-grid`'s 20px of padding**. At the 760px minimum: 760 − 182.4 − 20 = 557.6
+available, against 148 + 210 + 160 + 20 of gaps = 538. **If you add a panel, change a
+floor, or change the sidebar clamp, redo that subtraction — and check it at 760, not
+only at a comfortable width.** Check each floor against **its own header** as well as
+against the sum: a panel whose floor is narrower than its header needs reproduces the
+unreachable-collapse-button defect at a lower window size. Measure each floor against its own header FIRST and check the sum afterwards —
+never derive one floor from the other. Doing it the wrong way round put the History
+button outside its shell at 168, and then, when that floor was raised and the Files
+floor lowered to pay for it, put the Files button outside instead. Measured minima: Files 144,
+History 152; the floors are 148 and 160.
+
+**Measure a floor only AFTER its action row can compact.** Every action row in a
+panel header needs the icon + collapsible-label treatment, not just the terminal
+deck's. Two rows lacked it, and their intrinsic widths pinned floors so high the
+budget could not be satisfied at all: History's floor was 199 until the word
+"Resume" could collapse, then 152 — one word held 47px. The projects sidebar's
+clamp had to be cut to 22vw to fit those inflated floors, which clipped that
+panel's own collapse toggle out of its shell for every window below ~859px. With
+the labels collapsing, the clamp went back to 24vw and every floor dropped.
+
+When measuring a floor, override the `min-width` too — forcing only `flex`/`width`
+leaves the existing floor clamping the result, so every probe below it silently
+reports the floor's own width and the panel looks fine at sizes it never reached.
+
+Two consequences worth knowing. The ≤1040 breakpoint changes the sidebar clamp and the
+terminal floor together, so the layout visibly steps across that one pixel. And
+`.project-sidebar-content` fills its shell rather than holding its own width, so the
+open/close animation reflows the content instead of revealing it behind a clipping
+edge — matching how the history panel already behaves.
+
+The terminal column's floor drops from 320 to 210 below 1040px for exactly that reason,
+and the grid track's `minmax(140px, 1fr)` gives it a height floor. The per-panel
+viewport clamps cap each sidebar individually, but several reasonable caps still sum
+past 100vw, so they cannot by themselves guarantee anyone room — the floors do.
+
+Titlebar tiers:
 
 - **≤1560px** — hide `.app-version` and reduce platform-tab width.
 - **≤1340px** — compact search to its glyph (see below) and reduce platform tabs again.

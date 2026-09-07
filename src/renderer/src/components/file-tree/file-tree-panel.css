@@ -13,7 +13,15 @@
 }
 
 .files-panel-shell.open {
-  width: var(--files-panel-width, clamp(240px, 22vw, 300px));
+  width: min(var(--files-panel-width, clamp(240px, 22vw, 300px)), 22vw);
+  /* Shares the shrink rather than staying rigid, so the deficit does not land
+     entirely on whichever neighbour happens to be flexible. Floor on `.open` only —
+     a collapsed rail stays 32px. */
+  flex-shrink: 1;
+  /* Measured against this panel's own header: it clears at 144px, so 148 leaves a
+     few pixels. Do not lower it to balance another panel's floor — that is how the
+     collapse button ended up outside the shell here once already. */
+  min-width: 148px;
 }
 
 .files-panel-rail {
