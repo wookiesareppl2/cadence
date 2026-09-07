@@ -12,33 +12,40 @@ import { readAgentTranscript } from '../sessions/session-service'
 import {
   agentIdFromFilename,
   buildClaudeAgentRuns,
-  collectAgentToolUses,
-  collectToolResults,
+  createClaudeTranscriptCollector,
   parseClaudeAgentMeta,
-  summariseClaudeAgentTranscript,
+  type ClaudeAgentNotification,
   type ClaudeAgentSource,
   type ClaudeAgentToolUse,
-  type ClaudeToolResult
+  type ClaudeToolResult,
+  type ClaudeTranscriptCollector
 } from './claude-agent-scan'
 import {
   buildCodexAgentRuns,
-  collectCodexSubAgentActivity,
+  createCodexActivityCollector,
+  createCodexSummaryCollector,
   parseCodexAgentSpawn,
-  summariseCodexAgentTranscript,
+  type CodexActivityCollector,
   type CodexAgentActivity,
   type CodexAgentSource,
-  type CodexAgentSpawn
+  type CodexAgentSpawn,
+  type CodexAgentTranscriptSummary
 } from './codex-agent-scan'
 
-// Reads a session's spawned agents off disk. This is polled while the Agents dock
-// is open, so everything here is shaped by two facts learned the hard way:
+// Reads a session's spawned agents off disk, on a timer while a session is selected.
+// Three rules, each of which cost something to learn:
 //
-//  1. **Never read a transcript whole.** A real Codex rollout on this machine is
-//     large enough that `readFile(path, 'utf8')` throws `RangeError: Invalid string
-//     length` before any parsing happens. Every read below streams line by line.
-//  2. **Never re-parse an unchanged file.** A poll that re-read every transcript
-//     would burn the disk for no new information, so summaries are cached against
-//     the file's size and mtime and only recomputed when one of them moves.
+//  1. **Never hold a transcript in memory.** A real Codex rollout here reaches
+//     1.74 GB: `readFile` throws `RangeError: Invalid string length`, and even
+//     streaming it into an array of lines was measured at 466 MB of heap for a
+//     215 MB file. Every read below streams into a collector and keeps at most one
+//     chunk.
+//  2. **Never re-read what has not changed.** The two files that grow while being
+//     watched — a Claude session transcript and the Codex parent rollout — are
+//     TAILED from the last byte offset. A Codex child rollout is re-summarised only
+//     when its size or mtime moves, and a rollout's first line is parsed once.
+//  3. **Bound every cache.** These live as long as the process and gain an entry per
+//     file the user's browsing touches.
 
 // Enough agents to cover any real session; a guard against a pathological directory
 // rather than a product limit.
@@ -46,26 +53,45 @@ const MAX_AGENTS = 200
 
 type CachedSummary<T> = { size: number; mtimeMs: number; value: T }
 
-// Everything derived from one Claude transcript in a single pass. The Agent calls
-// and results are needed as well as the summary — an agent's own transcript is
-// where a nested run's parentage is recorded — and reading the file twice to get
-// them would make the cache pointless.
-type ClaudeTranscriptScan = {
-  summary: ReturnType<typeof summariseClaudeAgentTranscript>
-  toolUses: Map<string, ClaudeAgentToolUse>
-  toolResults: Map<string, ClaudeToolResult>
-}
+// Every cache here is bounded. These live for the lifetime of the main process and
+// gain an entry per file the user's browsing touches, so an unbounded map is a slow
+// leak rather than a cache.
+const CACHE_LIMIT = 64
 
-function scanClaudeTranscript(lines: string[]): ClaudeTranscriptScan {
-  return {
-    summary: summariseClaudeAgentTranscript(lines),
-    toolUses: collectAgentToolUses(lines),
-    toolResults: collectToolResults(lines)
+function cacheSet<T>(cache: Map<string, T>, key: string, value: T): void {
+  // Refresh insertion order so the busy entries are not the ones evicted.
+  cache.delete(key)
+  cache.set(key, value)
+  while (cache.size > CACHE_LIMIT) {
+    const oldest = cache.keys().next()
+    if (oldest.done) break
+    cache.delete(oldest.value)
   }
 }
 
-const claudeScanCache = new Map<string, CachedSummary<ClaudeTranscriptScan>>()
-const codexSummaryCache = new Map<string, CachedSummary<ReturnType<typeof summariseCodexAgentTranscript>>>()
+// Claude transcripts are tailed by byte offset for the same reason the Codex parent
+// rollout is: a live session transcript is appended to on every turn, and the largest
+// on a real machine is 56 MB. Re-reading one every few seconds is work that grows
+// with the session for no new information.
+type ClaudeTail = { offset: number; collector: ClaudeTranscriptCollector }
+const claudeTails = new Map<string, ClaudeTail>()
+
+const codexSummaryCache = new Map<string, CachedSummary<CodexAgentTranscriptSummary>>()
+
+// A rollout's FIRST line never changes once written, so the spawn metadata parsed
+// from it is cached rather than re-opening every candidate file on every poll.
+const codexSpawnCache = new Map<string, CodexAgentSpawn | null>()
+
+// The spawning rollout is read incrementally: the byte offset of the last complete
+// line consumed, plus the collector holding everything seen so far. This is the
+// difference between tailing a growing file and re-reading gigabytes every 4s.
+type CodexParentTail = { offset: number; collector: CodexActivityCollector }
+const codexParentTails = new Map<string, CodexParentTail>()
+
+// Listing the rollout tree is directory reads only, but there are hundreds of them
+// and the answer barely changes between polls.
+const ROLLOUT_LIST_TTL_MS = 10_000
+const rolloutListCache = new Map<string, { expiresAt: number; refs: RolloutRef[] }>()
 
 async function* streamLines(path: string): AsyncGenerator<string> {
   const reader = createInterface({
@@ -79,15 +105,41 @@ async function* streamLines(path: string): AsyncGenerator<string> {
   }
 }
 
-async function readAllLines(path: string): Promise<string[]> {
-  const lines: string[] = []
-  for await (const line of streamLines(path)) lines.push(line)
-  return lines
-}
-
 async function readFirstLine(path: string): Promise<string | null> {
   for await (const line of streamLines(path)) return line
   return null
+}
+
+// Feed `onLine` every line from `start` onward and return the offset just past the
+// last NEWLINE-TERMINATED one. Nothing larger than one chunk is ever held in memory.
+//
+// The trailing unterminated remainder is passed to `onLine` but NOT counted into the
+// returned offset, so the next read sees it again. Both halves of that matter:
+// a file still being appended to ends mid-row, and re-reading is how the rest of
+// that row eventually arrives; but a finished file whose last line simply has no
+// trailing newline would otherwise never be read at all — which is exactly what a
+// test caught here. Re-ingesting a line must therefore be harmless, and it is: the
+// collector only ever fills a null field, overwrites with the same value, or takes a
+// maximum.
+async function ingestFrom(path: string, start: number, onLine: (line: string) => void): Promise<number> {
+  let offset = start
+  let buffer = ''
+
+  const stream = createReadStream(path, { encoding: 'utf8', start })
+  for await (const chunk of stream) {
+    buffer += chunk as string
+    let index = buffer.indexOf('\n')
+    while (index !== -1) {
+      const line = buffer.slice(0, index)
+      buffer = buffer.slice(index + 1)
+      offset += Buffer.byteLength(line, 'utf8') + 1
+      onLine(line)
+      index = buffer.indexOf('\n')
+    }
+  }
+
+  if (buffer.trim().length > 0) onLine(buffer)
+  return offset
 }
 
 async function fileStamp(path: string): Promise<{ size: number; mtimeMs: number } | null> {
@@ -99,19 +151,19 @@ async function fileStamp(path: string): Promise<{ size: number; mtimeMs: number 
   }
 }
 
-// Re-summarise only when the file has actually changed. A growing transcript
-// changes both size and mtime, so this never serves a stale summary for a live run.
-async function cachedSummary<T>(
-  cache: Map<string, CachedSummary<T>>,
-  path: string,
-  compute: (lines: string[]) => T
-): Promise<T> {
+// Re-summarise a Codex child rollout only when the file has actually changed. A
+// growing transcript changes both size and mtime, so this never serves a stale
+// summary for a live run. The re-read streams into a collector rather than building
+// an array of lines, so even a very large child is bounded memory.
+async function cachedCodexSummary(path: string): Promise<CodexAgentTranscriptSummary> {
   const stamp = await fileStamp(path)
-  const cached = cache.get(path)
+  const cached = codexSummaryCache.get(path)
   if (stamp && cached && cached.size === stamp.size && cached.mtimeMs === stamp.mtimeMs) return cached.value
 
-  const value = compute(await readAllLines(path))
-  if (stamp) cache.set(path, { ...stamp, value })
+  const collector = createCodexSummaryCollector()
+  for await (const line of streamLines(path)) collector.ingest(line)
+  const value = collector.snapshot()
+  if (stamp) cacheSet(codexSummaryCache, path, { ...stamp, value })
   return value
 }
 
@@ -170,13 +222,15 @@ export async function scanClaudeAgents(origins: SessionOriginRoot[], sessionId: 
 
   const toolUses = new Map<string, ClaudeAgentToolUse>()
   const toolResults = new Map<string, ClaudeToolResult>()
+  const notifications = new Map<string, ClaudeAgentNotification>()
 
   // The session transcript holds the Agent calls and, crucially, the results that
   // prove a run ended.
   if (transcriptPath) {
-    const scan = await cachedSummary(claudeScanCache, transcriptPath, scanClaudeTranscript)
+    const scan = await claudeTranscript(transcriptPath)
     for (const [key, value] of scan.toolUses) toolUses.set(key, value)
     for (const [key, value] of scan.toolResults) toolResults.set(key, value)
+    for (const [key, value] of scan.notifications) notifications.set(key, value)
   }
 
   let entries: string[]
@@ -196,9 +250,10 @@ export async function scanClaudeAgents(origins: SessionOriginRoot[], sessionId: 
     // One pass per file: the summary, plus the calls this agent made — which is how
     // a nested run finds the agent that spawned it rather than being attributed to
     // the session.
-    const scan = await cachedSummary(claudeScanCache, path, scanClaudeTranscript)
+    const scan = await claudeTranscript(path)
     for (const [key, value] of scan.toolUses) toolUses.set(key, value)
     for (const [key, value] of scan.toolResults) toolResults.set(key, value)
+    for (const [key, value] of scan.notifications) notifications.set(key, value)
 
     let meta = null
     try {
@@ -208,10 +263,10 @@ export async function scanClaudeAgents(origins: SessionOriginRoot[], sessionId: 
       // named from the spawning call instead.
     }
 
-    agents.push({ agentId, transcriptPath: path, meta, summary: scan.summary })
+    agents.push({ agentId, transcriptPath: path, meta, summary: scan.snapshot() })
   }
 
-  return buildClaudeAgentRuns({ sessionId, agents, toolUses, toolResults, nowMs })
+  return buildClaudeAgentRuns({ sessionId, agents, toolUses, toolResults, notifications, nowMs })
 }
 
 // ---------------------------------------------------------------------------
@@ -223,6 +278,9 @@ type RolloutRef = { path: string; id: string; startedAtMs: number }
 // Codex files its rollouts under `sessions/YYYY/MM/DD/`, so listing them costs only
 // directory reads. Nothing is opened here.
 async function listCodexRollouts(origin: SessionOriginRoot): Promise<RolloutRef[]> {
+  const cached = rolloutListCache.get(origin.codexSessionsDir)
+  if (cached && cached.expiresAt > Date.now()) return cached.refs
+
   const refs: RolloutRef[] = []
 
   async function visit(dir: string, depth: number): Promise<void> {
@@ -246,6 +304,7 @@ async function listCodexRollouts(origin: SessionOriginRoot): Promise<RolloutRef[
   }
 
   await visit(origin.codexSessionsDir, 0)
+  cacheSet(rolloutListCache, origin.codexSessionsDir, { expiresAt: Date.now() + ROLLOUT_LIST_TTL_MS, refs })
   return refs
 }
 
@@ -262,15 +321,7 @@ export async function scanCodexAgents(origins: SessionOriginRoot[], sessionId: s
 
     const spawns = new Map<string, { spawn: CodexAgentSpawn; path: string }>()
     for (const candidate of candidates) {
-      const first = await readFirstLine(candidate.path)
-      if (!first || !first.includes('session_meta')) continue
-      let payload: unknown
-      try {
-        payload = (JSON.parse(first) as { payload?: unknown }).payload
-      } catch {
-        continue
-      }
-      const spawn = parseCodexAgentSpawn(payload)
+      const spawn = await readCodexSpawn(candidate.path)
       if (spawn) spawns.set(spawn.threadId, { spawn, path: candidate.path })
     }
 
@@ -292,18 +343,16 @@ export async function scanCodexAgents(origins: SessionOriginRoot[], sessionId: s
     if (descendants.length === 0) return []
 
     // The parent's own rollout carries the lifecycle — notably interruption, which
-    // a child never records about itself.
-    const activity = new Map<string, CodexAgentActivity>()
-    for (const [key, value] of collectCodexSubAgentActivity(await readAllLines(parent.path))) {
-      activity.set(key, value)
-    }
+    // a child never records about itself. It is also the one file that is large AND
+    // still being written, so it is tailed from where the last poll stopped.
+    const activity = await codexParentActivity(parent.path)
 
     const agents: CodexAgentSource[] = []
     for (const entry of descendants) {
       agents.push({
         spawn: entry.spawn,
         transcriptPath: entry.path,
-        summary: await cachedSummary(codexSummaryCache, entry.path, summariseCodexAgentTranscript)
+        summary: await cachedCodexSummary(entry.path)
       })
     }
 
@@ -311,6 +360,54 @@ export async function scanCodexAgents(origins: SessionOriginRoot[], sessionId: s
   }
 
   return []
+}
+
+// One tailed pass over a Claude transcript. Resets when the file is shorter than
+// where we stopped, which means it was replaced or truncated.
+async function claudeTranscript(path: string): Promise<ClaudeTranscriptCollector> {
+  const stamp = await fileStamp(path)
+  let tail = claudeTails.get(path)
+
+  if (!tail || (stamp !== null && stamp.size < tail.offset)) {
+    tail = { offset: 0, collector: createClaudeTranscriptCollector() }
+  }
+
+  tail.offset = await ingestFrom(path, tail.offset, tail.collector.ingest)
+  cacheSet(claudeTails, path, tail)
+  return tail.collector
+}
+
+async function readCodexSpawn(path: string): Promise<CodexAgentSpawn | null> {
+  const cached = codexSpawnCache.get(path)
+  if (cached !== undefined) return cached
+
+  let spawn: CodexAgentSpawn | null = null
+  const first = await readFirstLine(path)
+  if (first && first.includes('session_meta')) {
+    try {
+      spawn = parseCodexAgentSpawn((JSON.parse(first) as { payload?: unknown }).payload)
+    } catch {
+      spawn = null
+    }
+  }
+
+  cacheSet(codexSpawnCache, path, spawn)
+  return spawn
+}
+
+async function codexParentActivity(path: string): Promise<Map<string, CodexAgentActivity>> {
+  const stamp = await fileStamp(path)
+  let tail = codexParentTails.get(path)
+
+  // A file shorter than where we stopped was replaced or truncated; anything we
+  // remember about it describes bytes that no longer exist.
+  if (!tail || (stamp !== null && stamp.size < tail.offset)) {
+    tail = { offset: 0, collector: createCodexActivityCollector() }
+  }
+
+  tail.offset = await ingestFrom(path, tail.offset, tail.collector.ingest)
+  cacheSet(codexParentTails, path, tail)
+  return tail.collector.activity
 }
 
 // ---------------------------------------------------------------------------
@@ -375,9 +472,13 @@ export async function getAgentTranscript(
   }
 }
 
-// Exposed for the delete path and tests: a session whose files are gone should not
-// keep serving cached summaries.
+// Drops every cached read. Used by the tests; nothing in the app calls it, because
+// each cache invalidates itself on the file's size and mtime and all of them are
+// bounded.
 export function clearAgentActivityCache(): void {
-  claudeScanCache.clear()
+  claudeTails.clear()
   codexSummaryCache.clear()
+  codexSpawnCache.clear()
+  codexParentTails.clear()
+  rolloutListCache.clear()
 }

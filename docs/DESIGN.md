@@ -82,12 +82,35 @@ provider's own on-disk records (`src/main/agents/`). Rules:
   unit.** Claude's figure excludes cache reads (every turn re-reads the whole cached
   context, and summing that reported 33.5M for a real 1.6M run); Codex's cumulative
   total already includes its cached input. See the type comment on `AgentRun`.
+- **Status is derived, and the obvious signal is the wrong one.** A tool result
+  answering the spawning call does NOT mean a background agent finished: Claude Code
+  writes an acknowledgement result 2.3s after the launch while the agent runs for
+  minutes. Reading that as completion reported every background agent as done the
+  instant it started and pinned the running count at zero — the badge below could
+  never appear. Completion is a `<task-notification>` row naming the tool-use id, or
+  failing that a result that does not PREDATE the agent's own last transcript line.
+  Prefer a structural rule over matching the acknowledgement's wording.
 - **Two scan cadences, never zero.** The scan runs at 4s while the Agents pane is on
   screen and 15s while it is not. It cannot stop when the dock closes: the titlebar
   indicator below is the reason the feature exists, and a badge fed by a stopped scan
-  would quietly go stale — worse than not having one.
+  would quietly go stale — worse than not having one. One scan is in flight at a
+  time; a tick that arrives while the previous is still running is dropped rather
+  than queued.
+- **The pane and the badge must describe the same session.** The workspace reports
+  the session it is actually displaying up to the poller. The raw selection is not
+  the same thing — the browser falls back to a project's first session — and nothing
+  on screen names which session was scanned, so a mismatch is invisible.
 - **Rows open the agent's own transcript.** The whole row is the control, borderless
   at rest so the list still reads as a list.
+- **Nothing is ever held whole.** The two files that grow while being watched — a
+  Claude session transcript and the Codex parent rollout — are tailed from a byte
+  offset; everything else streams into a collector. This is not a nicety: a real
+  Codex rollout reaches 1.74 GB, `readFile` throws `RangeError: Invalid string
+  length` on it, and even collecting its lines into an array measured 466 MB of heap
+  for a 215 MB file. A tailing collector must be idempotent under a repeated line,
+  because a file being appended to ends mid-row and that row is re-offered next read.
+- **Every cache is bounded.** They live for the process lifetime and gain an entry
+  per file the user's browsing touches.
 
 **Running-agents indicator (titlebar).** A count in `.titlebar-right`, left of search.
 This is the one sanctioned exception to "no individual framed titlebar buttons",

@@ -698,7 +698,7 @@
 .agent-transcript-backdrop {
   position: fixed;
   inset: 46px 0 0 0;
-  z-index: 40;
+  z-index: 84;
   display: grid;
   place-items: center;
   padding: 24px;

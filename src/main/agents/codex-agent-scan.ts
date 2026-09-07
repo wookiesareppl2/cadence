@@ -133,7 +133,23 @@ export function parseCodexAgentSpawn(payload: unknown): CodexAgentSpawn | null {
 // Read the spawning thread's own rollout for what it knows about its children.
 // This is where interruption is recorded, and where a run that never managed to
 // write its own file still leaves a trace.
+//
+// Exposed as an incremental collector rather than a whole-file function because the
+// spawning rollout is the one file that is BOTH large and still growing: the largest
+// on a real machine is 1.74 GB, and re-reading it every poll is an out-of-memory
+// crash, not a slowdown. The caller feeds it only the bytes appended since last time.
+export type CodexActivityCollector = {
+  ingest: (line: string) => void
+  activity: Map<string, CodexAgentActivity>
+}
+
 export function collectCodexSubAgentActivity(lines: Iterable<string>): Map<string, CodexAgentActivity> {
+  const collector = createCodexActivityCollector()
+  for (const line of lines) collector.ingest(line)
+  return collector.activity
+}
+
+export function createCodexActivityCollector(): CodexActivityCollector {
   const activity = new Map<string, CodexAgentActivity>()
 
   const ensure = (threadId: string): CodexAgentActivity => {
@@ -152,17 +168,17 @@ export function collectCodexSubAgentActivity(lines: Iterable<string>): Map<strin
     return created
   }
 
-  for (const line of lines) {
+  const ingest = (line: string): void => {
     const row = parseLine(line)
-    if (!row) continue
+    if (!row) return
     const payload = asRecord(row.payload)
-    if (!payload) continue
+    if (!payload) return
 
     const rowAtMs = parseTimestamp(row.timestamp)
 
     if (payload.type === 'sub_agent_activity') {
       const threadId = asText(payload.agent_thread_id)
-      if (!threadId) continue
+      if (!threadId) return
       const entry = ensure(threadId)
       const atMs = asPositiveNumber(payload.occurred_at_ms) ?? rowAtMs
 
@@ -172,12 +188,12 @@ export function collectCodexSubAgentActivity(lines: Iterable<string>): Map<strin
       }
       if (payload.kind === 'started' && entry.startedAtMs === null) entry.startedAtMs = atMs
       if (payload.kind === 'interrupted') entry.interruptedAtMs = atMs
-      continue
+      return
     }
 
     if (payload.type === 'collab_agent_spawn_end') {
       const threadId = asText(payload.new_thread_id)
-      if (!threadId) continue
+      if (!threadId) return
       const entry = ensure(threadId)
       entry.nickname = asText(payload.new_agent_nickname) ?? entry.nickname
       entry.role = asText(payload.new_agent_role) ?? entry.role
@@ -188,7 +204,7 @@ export function collectCodexSubAgentActivity(lines: Iterable<string>): Map<strin
     }
   }
 
-  return activity
+  return { ingest, activity }
 }
 
 // Date the run, count its turns, and take its token total.
@@ -196,7 +212,21 @@ export function collectCodexSubAgentActivity(lines: Iterable<string>): Map<strin
 // `token_count` reports a CUMULATIVE `total_token_usage`, so the last one is the
 // answer and summing them would inflate the figure enormously — the same trap as
 // Claude's repeated request rows, in Codex's own shape.
+export type CodexSummaryCollector = {
+  ingest: (line: string) => void
+  snapshot: () => CodexAgentTranscriptSummary
+}
+
 export function summariseCodexAgentTranscript(lines: Iterable<string>): CodexAgentTranscriptSummary {
+  const collector = createCodexSummaryCollector()
+  for (const line of lines) collector.ingest(line)
+  return collector.snapshot()
+}
+
+// Streaming form, so a large child rollout is never held in memory as an array of
+// lines. Unlike the activity collector this one is rebuilt from scratch whenever the
+// file changes, so it does not need to be idempotent under a repeated line.
+export function createCodexSummaryCollector(): CodexSummaryCollector {
   let startedAtMs: number | null = null
   let lastActivityAtMs: number | null = null
   let completedAtMs: number | null = null
@@ -206,9 +236,9 @@ export function summariseCodexAgentTranscript(lines: Iterable<string>): CodexAge
   let turnCount = 0
   let tokens: number | null = null
 
-  for (const line of lines) {
+  const ingest = (line: string): void => {
     const row = parseLine(line)
-    if (!row) continue
+    if (!row) return
 
     const atMs = parseTimestamp(row.timestamp)
     if (atMs !== null) {
@@ -217,17 +247,17 @@ export function summariseCodexAgentTranscript(lines: Iterable<string>): CodexAge
     }
 
     const payload = asRecord(row.payload)
-    if (!payload) continue
+    if (!payload) return
 
     if (payload.type === 'agent_message') {
       turnCount += 1
-      continue
+      return
     }
 
     if (payload.type === 'token_count') {
       const total = asPositiveNumber(asRecord(asRecord(payload.info)?.total_token_usage)?.total_tokens)
       if (total !== null) tokens = total
-      continue
+      return
     }
 
     if (payload.type === 'task_complete') {
@@ -241,7 +271,7 @@ export function summariseCodexAgentTranscript(lines: Iterable<string>): CodexAge
         failed = false
         errorMessage = null
       }
-      continue
+      return
     }
 
     if (payload.type === 'turn_aborted') {
@@ -249,7 +279,7 @@ export function summariseCodexAgentTranscript(lines: Iterable<string>): CodexAge
     }
   }
 
-  return {
+  const snapshot = (): CodexAgentTranscriptSummary => ({
     startedAtMs,
     lastActivityAtMs,
     completedAtMs,
@@ -258,7 +288,9 @@ export function summariseCodexAgentTranscript(lines: Iterable<string>): CodexAge
     errorMessage,
     turnCount,
     tokens
-  }
+  })
+
+  return { ingest, snapshot }
 }
 
 export type CodexAgentSource = {

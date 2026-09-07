@@ -565,6 +565,9 @@ button {
    status readout that happens to be clickable, not a restored titlebar button, and
    it renders nothing at all when no agent is running. */
 .titlebar-agents {
+  /* Drag flows from `.titlebar`; every interactive child opts out individually, or
+     the drag region swallows its clicks in a frameless window. */
+  -webkit-app-region: no-drag;
   display: flex;
   flex: 0 0 auto;
   align-items: center;

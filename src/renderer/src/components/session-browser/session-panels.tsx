@@ -30,9 +30,6 @@ import './session-browser.css'
 
 type CSSVars = CSSProperties & Record<`--${string}`, string | number>
 
-// Only tool rows carry detail beyond the rail badge (which tool ran). User,
-// assistant, and context rows are fully identified by the rail, so showing a
-// speaker label there would just duplicate it.
 function measuredPanelSize(
   event: ReactPointerEvent<HTMLElement>,
   selector: string,

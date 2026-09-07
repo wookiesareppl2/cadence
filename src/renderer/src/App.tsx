@@ -1002,21 +1002,42 @@ function DashboardApp(): JSX.Element {
   }, [platform, setWorkspaceDockOpen])
 
   // The dock's active pane lives here, not in the dock, because the titlebar's
-  // running-agents badge opens the Agents pane from outside it.
-  const [dockPane, setDockPane] = useState<DockPane>('workspace')
+  // running-agents badge opens the Agents pane from outside it. Per platform, like
+  // every other panel's open state: Claude and Codex are independent views and one
+  // must not silently move the other's UI (DNO-002).
+  const [dockPanes, setDockPanes] = useState<Record<PlatformId, DockPane>>({
+    claude: 'workspace',
+    codex: 'workspace'
+  })
+  const dockPane = dockPanes[platform]
+  const setDockPane = useCallback(
+    (pane: DockPane) => setDockPanes((current) => ({ ...current, [platform]: pane })),
+    [platform]
+  )
+
+  // The session the Agents pane is actually showing, reported up by the workspace.
+  // NOT `selectedSessionIds[platform]`: the browser falls back to the project's first
+  // session when nothing is selected, so polling the raw selection would scan one
+  // session while the pane displayed another — and nothing on screen names which.
+  // Carrying the platform alongside it keeps a stale id from being scanned against
+  // the wrong provider for a tick after a switch.
+  const [agentSession, setAgentSession] = useState<{ platform: PlatformId; sessionId: string | null }>({
+    platform,
+    sessionId: null
+  })
 
   // Polled at the app root so the badge stays honest whether or not the dock is
   // open — slowly while the pane is out of sight, at the visible cadence when it
   // is on screen.
   const agents = useAgentActivity(
     platform,
-    selectedSessionIds[platform],
+    agentSession.platform === platform ? agentSession.sessionId : null,
     true,
     workspaceDockOpen[platform] && dockPane === 'agents' ? AGENT_POLL_VISIBLE_MS : AGENT_POLL_BACKGROUND_MS
   )
 
   const showAgents = useCallback(() => {
-    setDockPane('agents')
+    setDockPanes((current) => ({ ...current, [platform]: 'agents' }))
     setWorkspaceDockOpen((current) => ({ ...current, [platform]: true }))
   }, [platform, setWorkspaceDockOpen])
 
@@ -1193,6 +1214,7 @@ function DashboardApp(): JSX.Element {
           agents={agents}
           dockPane={dockPane}
           onDockPaneChange={setDockPane}
+          onAgentSessionChange={setAgentSession}
           onToggleFilesPanel={toggleClaudeFilesPanel}
           onPanelResize={(key, size) => setPanelSize('claude', key, size)}
           onPreviewFile={(selection) =>
@@ -1231,6 +1253,7 @@ function DashboardApp(): JSX.Element {
           agents={agents}
           dockPane={dockPane}
           onDockPaneChange={setDockPane}
+          onAgentSessionChange={setAgentSession}
           onToggleFilesPanel={toggleProviderFilesPanel}
           onPanelResize={(key, size) => setPanelSize(platform, key, size)}
           onPreviewFile={(selection) =>
@@ -2075,6 +2098,7 @@ function ClaudeWorkspace({
   agents,
   dockPane,
   onDockPaneChange,
+  onAgentSessionChange,
   onToggleFilesPanel,
   onPanelResize,
   onPreviewFile,
@@ -2106,6 +2130,7 @@ function ClaudeWorkspace({
   agents: AgentActivityState
   dockPane: DockPane
   onDockPaneChange: (pane: DockPane) => void
+  onAgentSessionChange: (value: { platform: PlatformId; sessionId: string | null }) => void
   onToggleFilesPanel: () => void
   onPanelResize: (key: PanelSizeKey, size: number) => void
   onPreviewFile: (selection: FilePreviewSelection) => void
@@ -2128,6 +2153,12 @@ function ClaudeWorkspace({
   useEffect(() => {
     if (!sessionsLoading) onReady()
   }, [sessionsLoading, onReady])
+  // Tell the app root which session the Agents pane is actually showing, so the
+  // titlebar count and the pane can never describe two different sessions.
+  const agentSessionId = sessionBrowser.selectedSession?.id ?? null
+  useEffect(() => {
+    onAgentSessionChange({ platform: 'claude', sessionId: agentSessionId })
+  }, [agentSessionId, onAgentSessionChange])
   const historyState = useSessionHistory(sessionBrowser.selectedSession)
   const {
     visibleTabs,
@@ -2348,6 +2379,7 @@ function ProviderWorkspace({
   agents,
   dockPane,
   onDockPaneChange,
+  onAgentSessionChange,
   onToggleFilesPanel,
   onPanelResize,
   onPreviewFile,
@@ -2380,6 +2412,7 @@ function ProviderWorkspace({
   agents: AgentActivityState
   dockPane: DockPane
   onDockPaneChange: (pane: DockPane) => void
+  onAgentSessionChange: (value: { platform: PlatformId; sessionId: string | null }) => void
   onToggleFilesPanel: () => void
   onPanelResize: (key: PanelSizeKey, size: number) => void
   onPreviewFile: (selection: FilePreviewSelection) => void
@@ -2403,6 +2436,12 @@ function ProviderWorkspace({
   useEffect(() => {
     if (!sessionsLoading) onReady()
   }, [sessionsLoading, onReady])
+  // Tell the app root which session the Agents pane is actually showing, so the
+  // titlebar count and the pane can never describe two different sessions.
+  const agentSessionId = sessionBrowser.selectedSession?.id ?? null
+  useEffect(() => {
+    onAgentSessionChange({ platform, sessionId: agentSessionId })
+  }, [platform, agentSessionId, onAgentSessionChange])
   const historyState = useSessionHistory(sessionBrowser.selectedSession)
   const {
     visibleTabs,

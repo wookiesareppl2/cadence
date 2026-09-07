@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -93,6 +93,82 @@ describe('scanClaudeAgents', () => {
     expect(runs[0].label).toBe('Independent merge review')
     expect(runs[0].tokens).toBe(52)
     expect(runs[0].turnCount).toBe(1)
+  })
+
+  it('does not call a background agent finished because it was acknowledged', async () => {
+    // The real disk shape: Claude Code answers the Agent call with an
+    // acknowledgement seconds after the launch, while the agent keeps writing for
+    // minutes. Reading that as completion made every background agent look done the
+    // instant it started, and the titlebar running count permanently zero.
+    await writeSessionTranscript([
+      {
+        type: 'assistant',
+        timestamp: isoBefore(600_000),
+        message: { content: [{ type: 'tool_use', id: 'toolu_bg', name: 'Agent', input: { description: 'Review' } }] }
+      },
+      {
+        type: 'user',
+        timestamp: isoBefore(597_000),
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_bg',
+              content: [{ type: 'text', text: 'Async agent launched successfully. The agent is working in the background.' }]
+            }
+          ]
+        }
+      }
+    ])
+    await writeAgent('agent-bg', { description: 'Review', toolUseId: 'toolu_bg', spawnDepth: 1 }, [
+      { type: 'user', timestamp: isoBefore(596_000) },
+      { type: 'assistant', timestamp: isoBefore(20_000) }
+    ])
+
+    const runs = await scanClaudeAgents([originFor(home)], SESSION, NOW)
+    expect(runs[0].status).toBe('running')
+  })
+
+  it('completes that run when the task notification lands', async () => {
+    await writeSessionTranscript([
+      {
+        type: 'assistant',
+        timestamp: isoBefore(600_000),
+        message: { content: [{ type: 'tool_use', id: 'toolu_bg', name: 'Agent', input: { description: 'Review' } }] }
+      },
+      {
+        type: 'user',
+        timestamp: isoBefore(597_000),
+        message: {
+          content: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_bg',
+              content: [{ type: 'text', text: 'Async agent launched successfully.' }]
+            }
+          ]
+        }
+      },
+      {
+        type: 'user',
+        timestamp: isoBefore(10_000),
+        message: {
+          content: [
+            '<task-notification>',
+            '<tool-use-id>toolu_bg</tool-use-id>',
+            '<status>completed</status>',
+            '</task-notification>'
+          ].join('\n')
+        }
+      }
+    ])
+    await writeAgent('agent-bg', { description: 'Review', toolUseId: 'toolu_bg', spawnDepth: 1 }, [
+      { type: 'user', timestamp: isoBefore(596_000) },
+      { type: 'assistant', timestamp: isoBefore(20_000) }
+    ])
+
+    const runs = await scanClaudeAgents([originFor(home)], SESSION, NOW)
+    expect(runs[0].status).toBe('completed')
   })
 
   it('reports the same run as completed once the session records its result', async () => {
@@ -345,33 +421,138 @@ describe('scanCodexAgents', () => {
     expect(runs[0].status).toBe('completed')
   })
 
+  it('picks up events appended to the parent rollout without re-reading it', async () => {
+    // The parent rollout is the one file that is both large and still growing — the
+    // largest on a real machine is 1.74 GB — so it is tailed from the last offset
+    // rather than re-read. This proves the tail actually advances.
+    const parentPath = join(dayDir, `rollout-2026-09-07T11-00-00-${PARENT}.jsonl`)
+    await writeRollout('2026-09-07T11-00-00', PARENT, [
+      { type: 'session_meta', timestamp: isoBefore(3_600_000), payload: { id: PARENT } }
+    ])
+    await writeRollout('2026-09-07T11-30-00', CHILD, [
+      {
+        type: 'session_meta',
+        timestamp: isoBefore(1_800_000),
+        payload: {
+          id: CHILD,
+          source: { subagent: { thread_spawn: { parent_thread_id: PARENT, depth: 1, agent_nickname: 'Fermat' } } }
+        }
+      },
+      { timestamp: isoBefore(30_000), type: 'event_msg', payload: { type: 'agent_message' } }
+    ])
+
+    const first = await scanCodexAgents([originFor(home)], PARENT, NOW)
+    expect(first[0].status).toBe('running')
+
+    // The parent now records that it interrupted the child.
+    const { appendFile } = await import('node:fs/promises')
+    await appendFile(
+      parentPath,
+      `\n${JSON.stringify({
+        timestamp: isoBefore(5_000),
+        type: 'event_msg',
+        payload: { type: 'sub_agent_activity', agent_thread_id: CHILD, occurred_at_ms: NOW - 5_000, kind: 'interrupted' }
+      })}`,
+      'utf8'
+    )
+    // A partial trailing line must not be consumed as a row.
+    await appendFile(parentPath, '\n{"type":"event_msg","payl', 'utf8')
+
+    const second = await scanCodexAgents([originFor(home)], PARENT, NOW)
+    expect(second[0].status).toBe('interrupted')
+  })
+
+  it('re-reads from the start when the parent rollout is truncated', async () => {
+    const parentPath = join(dayDir, `rollout-2026-09-07T11-00-00-${PARENT}.jsonl`)
+    await writeRollout('2026-09-07T11-00-00', PARENT, [
+      { type: 'session_meta', timestamp: isoBefore(3_600_000), payload: { id: PARENT } },
+      {
+        timestamp: isoBefore(600_000),
+        type: 'event_msg',
+        payload: { type: 'sub_agent_activity', agent_thread_id: CHILD, occurred_at_ms: NOW - 600_000, kind: 'interrupted' }
+      }
+    ])
+    await writeRollout('2026-09-07T11-30-00', CHILD, [
+      {
+        type: 'session_meta',
+        timestamp: isoBefore(1_800_000),
+        payload: { id: CHILD, source: { subagent: { thread_spawn: { parent_thread_id: PARENT, depth: 1 } } } }
+      },
+      { timestamp: isoBefore(30_000), type: 'event_msg', payload: { type: 'agent_message' } }
+    ])
+
+    expect((await scanCodexAgents([originFor(home)], PARENT, NOW))[0].status).toBe('interrupted')
+
+    // Shorter than where the tail stopped: everything remembered describes bytes
+    // that no longer exist, so the offset must reset instead of skipping the file.
+    await writeRollout('2026-09-07T11-00-00', PARENT, [
+      { type: 'session_meta', timestamp: isoBefore(3_600_000), payload: { id: PARENT } }
+    ])
+    expect((await stat(parentPath)).size).toBeGreaterThan(0)
+
+    expect((await scanCodexAgents([originFor(home)], PARENT, NOW))[0].status).toBe('running')
+  })
+
   it('returns nothing when the session is not a Codex rollout here', async () => {
     expect(await scanCodexAgents([originFor(home)], 'not-a-session', NOW)).toEqual([])
   })
 })
 
 describe('isReadableTranscriptPath', () => {
-  const origins = [originFor('C:\Users\someone')]
+  // String.raw throughout. The first version of these tests used single-quoted
+  // literals with bare backslashes, so 'C:\Users\someone' was the string
+  // "C:Userssomeone" — a RELATIVE path resolved against the test process's cwd.
+  // Every case passed while exercising none of the Windows shapes it named.
+  const WIN_HOME = String.raw`C:\Users\someone`
+  const UNC_HOME = String.raw`\\wsl.localhost\Ubuntu\home\someone`
+  const origins = [originFor(WIN_HOME), originFor(UNC_HOME)]
 
-  it('accepts a path inside the provider directory it belongs to', () => {
+  it('accepts a Windows path inside the provider root it belongs to', () => {
     expect(
       isReadableTranscriptPath(
         origins,
         'claude',
-        join('C:\Users\someone', '.claude', 'projects', 'p', 'sess', 'subagents', 'agent-a.jsonl')
+        String.raw`C:\Users\someone\.claude\projects\p\sess\subagents\agent-a.jsonl`
       )
     ).toBe(true)
     expect(
-      isReadableTranscriptPath(origins, 'codex', join('C:\Users\someone', '.codex', 'sessions', '2026', 'r.jsonl'))
+      isReadableTranscriptPath(origins, 'codex', String.raw`C:\Users\someone\.codex\sessions\2026\r.jsonl`)
     ).toBe(true)
   })
 
-  it("refuses a path outside the scanned roots, and one from the other provider's root", () => {
+  it('accepts a WSL transcript reached over the UNC share', () => {
+    // A real origin on this app: session-origins builds \\wsl.localhost\<distro>\...
+    expect(
+      isReadableTranscriptPath(
+        origins,
+        'claude',
+        String.raw`\\wsl.localhost\Ubuntu\home\someone\.claude\projects\p\sess\subagents\agent-a.jsonl`
+      )
+    ).toBe(true)
+  })
+
+  it('accepts a differently-cased root, because Windows paths are case-insensitive', () => {
+    expect(
+      isReadableTranscriptPath(origins, 'claude', String.raw`c:\users\SOMEONE\.CLAUDE\projects\p\a.jsonl`)
+    ).toBe(true)
+  })
+
+  it('accepts forward slashes, which Node and the shell both hand us', () => {
+    expect(isReadableTranscriptPath(origins, 'claude', 'C:/Users/someone/.claude/projects/p/a.jsonl')).toBe(true)
+  })
+
+  it('refuses an absolute path outside every scanned root', () => {
     // The renderer supplies this path; treating it as a permission rather than an
     // input would turn the transcript channel into an arbitrary file reader.
-    expect(isReadableTranscriptPath(origins, 'claude', 'C:\Windows\System32\config\SAM')).toBe(false)
+    expect(isReadableTranscriptPath(origins, 'claude', String.raw`C:\Windows\System32\config\SAM`)).toBe(false)
+  })
+
+  it("refuses one provider's root when asked for the other", () => {
     expect(
-      isReadableTranscriptPath(origins, 'claude', join('C:\Users\someone', '.codex', 'sessions', 'r.jsonl'))
+      isReadableTranscriptPath(origins, 'claude', String.raw`C:\Users\someone\.codex\sessions\r.jsonl`)
+    ).toBe(false)
+    expect(
+      isReadableTranscriptPath(origins, 'codex', String.raw`C:\Users\someone\.claude\projects\p\a.jsonl`)
     ).toBe(false)
   })
 
@@ -380,14 +561,34 @@ describe('isReadableTranscriptPath', () => {
       isReadableTranscriptPath(
         origins,
         'claude',
-        join('C:\Users\someone', '.claude', 'projects', '..', '..', '.credentials.json')
+        String.raw`C:\Users\someone\.claude\projects\..\..\.credentials.json`
+      )
+    ).toBe(false)
+    expect(
+      isReadableTranscriptPath(
+        origins,
+        'claude',
+        String.raw`\\wsl.localhost\Ubuntu\home\someone\.claude\projects\..\..\.credentials.json`
       )
     ).toBe(false)
   })
 
-  it('refuses the root itself and an empty path', () => {
-    expect(isReadableTranscriptPath(origins, 'claude', join('C:\Users\someone', '.claude', 'projects'))).toBe(false)
+  it('refuses a sibling directory that merely starts with the root, not a boundary match', () => {
+    expect(
+      isReadableTranscriptPath(origins, 'claude', String.raw`C:\Users\someone\.claude\projects-evil\a.jsonl`)
+    ).toBe(false)
+  })
+
+  it('refuses the root itself, a relative path, and an empty path', () => {
+    expect(isReadableTranscriptPath(origins, 'claude', String.raw`C:\Users\someone\.claude\projects`)).toBe(false)
+    expect(isReadableTranscriptPath(origins, 'claude', 'a.jsonl')).toBe(false)
     expect(isReadableTranscriptPath(origins, 'claude', '')).toBe(false)
+  })
+
+  it('refuses everything when there are no origins to match against', () => {
+    expect(
+      isReadableTranscriptPath([], 'claude', String.raw`C:\Users\someone\.claude\projects\p\a.jsonl`)
+    ).toBe(false)
   })
 })
 

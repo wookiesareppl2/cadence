@@ -9,10 +9,27 @@ import { resolveAgentStatus } from '@shared/agent-activity'
 //       agent-<hash>.jsonl          the subagent's full transcript
 //       agent-<hash>.meta.json      {agentType, description, toolUseId, spawnDepth}
 //
-// The meta file names the run; the transcript dates it. Neither records that the
-// run FINISHED — that lives back in the spawning transcript, as the tool result
-// answering the meta file's `toolUseId`. So a run is complete exactly when its
-// spawner has written a result for it, and still running when it has not.
+// The meta file names the run; the transcript dates it. Neither records that the run
+// FINISHED — that lives back in the spawning transcript, and reading it correctly is
+// the whole difficulty here.
+//
+// A tool result answering the meta file's `toolUseId` is NOT proof of completion. An
+// agent launched in the background gets an immediate acknowledgement result — on real
+// data, 2.3s after the call and 18ms after the agent's first transcript line — while
+// the agent then runs for another nine minutes. Treating that as completion reports
+// every background agent as finished the instant it starts, which is exactly what the
+// first version of this file did.
+//
+// Two signals, in order:
+//
+//  1. A `<task-notification>` row in the spawner naming the `tool-use-id` and a
+//     `status`. This is what a background agent's completion actually looks like, and
+//     it carries the outcome. An agent can be resumed, so the LAST one wins.
+//  2. Otherwise a tool result, but only if it does not PREDATE the agent's own last
+//     transcript line. A run that kept writing after its result was recorded plainly
+//     had not finished when that result was written. This rule is structural rather
+//     than a match on the acknowledgement's wording, so a change to that wording
+//     cannot silently resurrect the bug.
 
 type UnknownRecord = Record<string, unknown>
 
@@ -111,59 +128,162 @@ export function parseClaudeAgentMeta(raw: string): ClaudeAgentMeta | null {
   }
 }
 
+export type ClaudeAgentNotification = {
+  toolUseId: string
+  timestampMs: number | null
+  status: string
+}
+
+const TASK_NOTIFICATION = /<task-notification>([\s\S]*?)<\/task-notification>/
+const NOTIFICATION_TOOL_USE_ID = /<tool-use-id>\s*([^<\s]+)\s*<\/tool-use-id>/
+const NOTIFICATION_STATUS = /<status>\s*([^<\s]+)\s*<\/status>/
+
+// Text content arrives either as a plain string or as an array of blocks; a
+// notification row uses the string form.
+function rowText(row: UnknownRecord): string | null {
+  const content = asRecord(row.message)?.content
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return null
+
+  const parts: string[] = []
+  for (const block of content) {
+    const record = asRecord(block)
+    const text = record ? asText(record.text) : null
+    if (text) parts.push(text)
+  }
+  return parts.length > 0 ? parts.join('\n') : null
+}
+
+// One incremental pass over a transcript, feeding everything we derive from it.
+//
+// Incremental rather than whole-file for the same reason as the Codex side: a live
+// session transcript is appended to constantly and the largest on a real machine is
+// 56 MB, so re-reading it every few seconds is work that grows with the session.
+// The caller feeds only the bytes appended since last time.
+//
+// Every accumulator here must be IDEMPOTENT under a repeated line, because the
+// reader re-offers an unterminated trailing row on the next read. Timestamps take a
+// min/max, tokens dedupe on requestId (DNO-001), maps overwrite by key, and turns
+// dedupe on the row's uuid — a plain counter would drift upward on every re-read.
+export type ClaudeTranscriptCollector = {
+  ingest: (line: string) => void
+  snapshot: () => ClaudeAgentTranscriptSummary
+  toolUses: Map<string, ClaudeAgentToolUse>
+  toolResults: Map<string, ClaudeToolResult>
+  notifications: Map<string, ClaudeAgentNotification>
+}
+
+export function createClaudeTranscriptCollector(): ClaudeTranscriptCollector {
+  const toolUses = new Map<string, ClaudeAgentToolUse>()
+  const toolResults = new Map<string, ClaudeToolResult>()
+  const notifications = new Map<string, ClaudeAgentNotification>()
+
+  let startedAtMs: number | null = null
+  let lastActivityAtMs: number | null = null
+  let sawUsage = false
+  let tokens = 0
+  let cacheReadTokens = 0
+  const countedRequests = new Set<string>()
+  const countedTurns = new Set<string>()
+
+  const ingest = (line: string): void => {
+    const row = parseLine(line)
+    if (!row) return
+
+    const timestampMs = parseTimestamp(row.timestamp)
+    if (timestampMs !== null) {
+      if (startedAtMs === null || timestampMs < startedAtMs) startedAtMs = timestampMs
+      if (lastActivityAtMs === null || timestampMs > lastActivityAtMs) lastActivityAtMs = timestampMs
+    }
+
+    if (row.type === 'assistant') {
+      // Real Claude rows always carry a uuid; falling back to the raw line keeps the
+      // count exactly idempotent for anything that does not, rather than drifting
+      // upward every time a row is re-offered.
+      countedTurns.add(asText(row.uuid) ?? line)
+    }
+
+    const ownerAgentId = asText(row.agentId)
+    for (const block of contentBlocks(row)) {
+      if (block.type === 'tool_use') {
+        const name = asText(block.name)
+        const toolUseId = asText(block.id)
+        if (!name || !toolUseId || !AGENT_TOOL_NAMES.has(name)) continue
+        const input = asRecord(block.input)
+        toolUses.set(toolUseId, {
+          toolUseId,
+          description: asText(input?.description),
+          agentType: asText(input?.subagent_type),
+          timestampMs,
+          ownerAgentId
+        })
+        continue
+      }
+      if (block.type === 'tool_result') {
+        const toolUseId = asText(block.tool_use_id)
+        if (!toolUseId) continue
+        toolResults.set(toolUseId, { toolUseId, timestampMs, isError: block.is_error === true })
+      }
+    }
+
+    if (line.includes('<task-notification>')) {
+      const text = rowText(row)
+      const body = text?.match(TASK_NOTIFICATION)?.[1]
+      const toolUseId = body?.match(NOTIFICATION_TOOL_USE_ID)?.[1]
+      const status = body?.match(NOTIFICATION_STATUS)?.[1]
+      if (toolUseId && status) notifications.set(toolUseId, { toolUseId, timestampMs, status })
+    }
+
+    const usage = asRecord(asRecord(row.message)?.usage)
+    if (!usage) return
+
+    const requestId = asText(row.requestId) ?? asText(row.request_id)
+    if (requestId !== null) {
+      if (countedRequests.has(requestId)) return
+      countedRequests.add(requestId)
+    }
+
+    sawUsage = true
+    tokens +=
+      numberOr0(usage.input_tokens) + numberOr0(usage.output_tokens) + numberOr0(usage.cache_creation_input_tokens)
+    cacheReadTokens += numberOr0(usage.cache_read_input_tokens)
+  }
+
+  const snapshot = (): ClaudeAgentTranscriptSummary => ({
+    startedAtMs,
+    lastActivityAtMs,
+    turnCount: countedTurns.size,
+    tokens: sawUsage ? tokens : null,
+    cacheReadTokens: sawUsage ? cacheReadTokens : null
+  })
+
+  return { ingest, snapshot, toolUses, toolResults, notifications }
+}
+
+function collectAll(lines: Iterable<string>): ClaudeTranscriptCollector {
+  const collector = createClaudeTranscriptCollector()
+  for (const line of lines) collector.ingest(line)
+  return collector
+}
+
 // Index every Agent/Task call a transcript made, keyed by the tool-use id that its
 // meta file will point back at. Works on a session transcript and on an agent's
 // own transcript alike, which is how nested runs find their parent.
 export function collectAgentToolUses(lines: Iterable<string>): Map<string, ClaudeAgentToolUse> {
-  const uses = new Map<string, ClaudeAgentToolUse>()
-
-  for (const line of lines) {
-    const row = parseLine(line)
-    if (!row) continue
-
-    const timestampMs = parseTimestamp(row.timestamp)
-    const ownerAgentId = asText(row.agentId)
-
-    for (const block of contentBlocks(row)) {
-      if (block.type !== 'tool_use') continue
-      const name = asText(block.name)
-      if (!name || !AGENT_TOOL_NAMES.has(name)) continue
-      const toolUseId = asText(block.id)
-      if (!toolUseId) continue
-
-      const input = asRecord(block.input)
-      uses.set(toolUseId, {
-        toolUseId,
-        description: asText(input?.description),
-        agentType: asText(input?.subagent_type),
-        timestampMs,
-        ownerAgentId
-      })
-    }
-  }
-
-  return uses
+  return collectAll(lines).toolUses
 }
 
-// Index the tool results a transcript wrote. A result answering an Agent call is
-// the only on-disk proof that the run ended.
+// Index the tool results a transcript wrote. On its own this does NOT prove a run
+// ended — see the note at the top of this file.
 export function collectToolResults(lines: Iterable<string>): Map<string, ClaudeToolResult> {
-  const results = new Map<string, ClaudeToolResult>()
+  return collectAll(lines).toolResults
+}
 
-  for (const line of lines) {
-    const row = parseLine(line)
-    if (!row) continue
-    const timestampMs = parseTimestamp(row.timestamp)
-
-    for (const block of contentBlocks(row)) {
-      if (block.type !== 'tool_result') continue
-      const toolUseId = asText(block.tool_use_id)
-      if (!toolUseId) continue
-      results.set(toolUseId, { toolUseId, timestampMs, isError: block.is_error === true })
-    }
-  }
-
-  return results
+// Collect the completion notifications a transcript recorded for its background
+// agents. A later notification for the same run supersedes an earlier one, because a
+// stopped agent can be resumed and will notify again.
+export function collectAgentNotifications(lines: Iterable<string>): Map<string, ClaudeAgentNotification> {
+  return collectAll(lines).notifications
 }
 
 // Date the run and measure what it has spent.
@@ -181,50 +301,7 @@ export function collectToolResults(lines: Iterable<string>): Map<string, ClaudeT
 //     newly consumed (input + output + cache writes); the cache reads are
 //     returned alongside rather than hidden, so nothing is lost.
 export function summariseClaudeAgentTranscript(lines: Iterable<string>): ClaudeAgentTranscriptSummary {
-  let startedAtMs: number | null = null
-  let lastActivityAtMs: number | null = null
-  let turnCount = 0
-  let sawUsage = false
-  let tokens = 0
-  let cacheReadTokens = 0
-  const countedRequests = new Set<string>()
-
-  for (const line of lines) {
-    const row = parseLine(line)
-    if (!row) continue
-
-    const timestampMs = parseTimestamp(row.timestamp)
-    if (timestampMs !== null) {
-      if (startedAtMs === null || timestampMs < startedAtMs) startedAtMs = timestampMs
-      if (lastActivityAtMs === null || timestampMs > lastActivityAtMs) lastActivityAtMs = timestampMs
-    }
-
-    if (row.type === 'assistant') turnCount += 1
-
-    const usage = asRecord(asRecord(row.message)?.usage)
-    if (!usage) continue
-
-    const requestId = asText(row.requestId) ?? asText(row.request_id)
-    if (requestId !== null) {
-      if (countedRequests.has(requestId)) continue
-      countedRequests.add(requestId)
-    }
-
-    sawUsage = true
-    tokens +=
-      numberOr0(usage.input_tokens) +
-      numberOr0(usage.output_tokens) +
-      numberOr0(usage.cache_creation_input_tokens)
-    cacheReadTokens += numberOr0(usage.cache_read_input_tokens)
-  }
-
-  return {
-    startedAtMs,
-    lastActivityAtMs,
-    turnCount,
-    tokens: sawUsage ? tokens : null,
-    cacheReadTokens: sawUsage ? cacheReadTokens : null
-  }
+  return collectAll(lines).snapshot()
 }
 
 function numberOr0(value: unknown): number {
@@ -245,28 +322,48 @@ export type BuildClaudeAgentRunsInput = {
   // every agent transcript, so a nested run resolves against its real spawner.
   toolUses: Map<string, ClaudeAgentToolUse>
   toolResults: Map<string, ClaudeToolResult>
+  notifications: Map<string, ClaudeAgentNotification>
   nowMs: number
   stallAfterMs?: number
 }
 
+// A tool result written before the agent's own last line cannot mean the agent had
+// finished. Allowed slack for the two writes racing at the very end of a run; the
+// background-launch acknowledgement this exists to reject predates the last line by
+// minutes, not seconds.
+const RESULT_ORDERING_SLACK_MS = 2_000
+
 export function buildClaudeAgentRuns(input: BuildClaudeAgentRunsInput): AgentRun[] {
-  const { sessionId, agents, toolUses, toolResults, nowMs, stallAfterMs } = input
+  const { sessionId, agents, toolUses, toolResults, notifications, nowMs, stallAfterMs } = input
 
   return agents.map((agent) => {
     const toolUseId = agent.meta?.toolUseId ?? null
     const call = toolUseId === null ? undefined : toolUses.get(toolUseId)
     const result = toolUseId === null ? undefined : toolResults.get(toolUseId)
+    const notification = toolUseId === null ? undefined : notifications.get(toolUseId)
 
     // The spawning call is timestamped before the agent writes its first line, so
     // it dates the run more accurately than the transcript does.
     const startedAtMs = call?.timestampMs ?? agent.summary.startedAtMs
-    const completedAtMs = result ? (result.timestampMs ?? agent.summary.lastActivityAtMs) : null
+    const lastActivityAtMs = agent.summary.lastActivityAtMs
+
+    const resultEndsTheRun =
+      result !== undefined &&
+      (lastActivityAtMs === null ||
+        result.timestampMs === null ||
+        result.timestampMs >= lastActivityAtMs - RESULT_ORDERING_SLACK_MS)
+
+    const completedAtMs = notification
+      ? (notification.timestampMs ?? lastActivityAtMs)
+      : resultEndsTheRun
+        ? (result?.timestampMs ?? lastActivityAtMs)
+        : null
 
     const status = resolveAgentStatus({
       completedAtMs,
-      failed: result?.isError === true,
+      failed: notification ? notification.status !== 'completed' : result?.isError === true,
       interruptedAtMs: null,
-      lastActivityAtMs: agent.summary.lastActivityAtMs,
+      lastActivityAtMs,
       nowMs,
       stallAfterMs
     })

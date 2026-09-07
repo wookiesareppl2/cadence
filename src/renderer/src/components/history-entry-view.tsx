@@ -9,6 +9,9 @@ import { CopyableCodeBlock, HistoryMarkdown } from './history-markdown'
 // the DOM and skips `.history-entry-meta` and `.md-code-toolbar` so role tags,
 // timestamps and Copy buttons never match. Keep them.
 
+// Only tool rows carry detail beyond the rail badge (which tool ran). User,
+// assistant, and context rows are fully identified by the rail, so showing a
+// speaker label there would just duplicate it.
 export function historySpeakerLabel(entry: AssistantSessionHistoryEntry): string | null {
   if (entry.role !== 'tool') return null
   return entry.label || 'Tool'

@@ -9,6 +9,7 @@ import {
 import {
   agentIdFromFilename,
   buildClaudeAgentRuns,
+  collectAgentNotifications,
   collectAgentToolUses,
   collectToolResults,
   parseClaudeAgentMeta,
@@ -354,6 +355,63 @@ describe('summariseClaudeAgentTranscript', () => {
   })
 })
 
+// The acknowledgement Claude Code writes the moment a background agent is launched.
+// Shape taken from a real transcript: it answers the same toolUseId as a genuine
+// result and arrives 2.3s after the call, while the agent then ran for nine minutes.
+const ASYNC_LAUNCH_ACK_LINE = JSON.stringify({
+  type: 'user',
+  timestamp: '2026-09-02T01:52:53.000Z',
+  message: {
+    content: [
+      {
+        type: 'tool_result',
+        tool_use_id: 'toolu_01Web',
+        content: [{ type: 'text', text: 'Async agent launched successfully. The agent is working in the background.' }]
+      }
+    ]
+  }
+})
+
+// How a background agent's completion is actually recorded: a user row carrying a
+// task-notification naming the tool-use id.
+function notificationLine(toolUseId: string, status: string, timestamp: string): string {
+  const body = [
+    '<task-notification>',
+    '<task-id>aacfd5a</task-id>',
+    `<tool-use-id>${toolUseId}</tool-use-id>`,
+    `<status>${status}</status>`,
+    '<summary>Agent finished</summary>',
+    '</task-notification>'
+  ].join('\n')
+  return JSON.stringify({ type: 'user', timestamp, message: { content: body } })
+}
+
+describe('collectAgentNotifications', () => {
+  it('reads the tool-use id and status out of a task notification', () => {
+    const found = collectAgentNotifications([notificationLine('toolu_01Web', 'completed', '2026-09-02T02:02:45.000Z')])
+    expect(found.get('toolu_01Web')).toMatchObject({ status: 'completed' })
+    expect(found.get('toolu_01Web')?.timestampMs).toBe(Date.parse('2026-09-02T02:02:45.000Z'))
+  })
+
+  it('lets a later notification supersede an earlier one, because an agent can be resumed', () => {
+    const found = collectAgentNotifications([
+      notificationLine('toolu_01Web', 'failed', '2026-09-02T02:00:00.000Z'),
+      notificationLine('toolu_01Web', 'completed', '2026-09-02T02:30:00.000Z')
+    ])
+    expect(found.get('toolu_01Web')?.status).toBe('completed')
+  })
+
+  it('ignores ordinary rows and malformed notifications', () => {
+    expect(collectAgentNotifications([AGENT_CALL_LINE, AGENT_RESULT_LINE, '{bad']).size).toBe(0)
+    const noStatus = JSON.stringify({
+      type: 'user',
+      timestamp: '2026-09-02T02:00:00.000Z',
+      message: { content: '<task-notification><tool-use-id>toolu_x</tool-use-id></task-notification>' }
+    })
+    expect(collectAgentNotifications([noStatus]).size).toBe(0)
+  })
+})
+
 describe('buildClaudeAgentRuns', () => {
   const agent = {
     agentId: 'agent-a5f5',
@@ -366,14 +424,15 @@ describe('buildClaudeAgentRuns', () => {
       JSON.stringify({ type: 'assistant', timestamp: '2026-09-02T02:02:41.347Z' })
     ])
   }
+  const lastLineAt = Date.parse('2026-09-02T02:02:41.347Z')
 
   it('reports a run whose spawner has not answered it as still running', () => {
-    const lastLineAt = Date.parse('2026-09-02T02:02:41.347Z')
     const [built] = buildClaudeAgentRuns({
       sessionId: 'session-1',
       agents: [agent],
       toolUses: collectAgentToolUses([AGENT_CALL_LINE]),
       toolResults: new Map(),
+      notifications: new Map(),
       nowMs: lastLineAt + 30_000
     })
 
@@ -384,23 +443,69 @@ describe('buildClaudeAgentRuns', () => {
     expect(built.startedAtMs).toBe(Date.parse('2026-09-02T01:52:50.000Z'))
   })
 
-  it('reports a run as completed once its spawner records the result', () => {
+  it('does NOT treat the background-launch acknowledgement as completion', () => {
+    // The defect this exists for: the ack answers the same toolUseId within seconds
+    // of the call, so any-result-means-done reported every background agent as
+    // finished the instant it started, and the running count was permanently zero.
     const [built] = buildClaudeAgentRuns({
       sessionId: 'session-1',
       agents: [agent],
       toolUses: collectAgentToolUses([AGENT_CALL_LINE]),
-      toolResults: collectToolResults([AGENT_RESULT_LINE]),
-      nowMs: NOW
+      toolResults: collectToolResults([ASYNC_LAUNCH_ACK_LINE]),
+      notifications: new Map(),
+      nowMs: lastLineAt + 30_000
+    })
+    expect(built.status).toBe('running')
+  })
+
+  it('reports completion when the task notification arrives', () => {
+    const [built] = buildClaudeAgentRuns({
+      sessionId: 'session-1',
+      agents: [agent],
+      toolUses: collectAgentToolUses([AGENT_CALL_LINE]),
+      toolResults: collectToolResults([ASYNC_LAUNCH_ACK_LINE]),
+      notifications: collectAgentNotifications([
+        notificationLine('toolu_01Web', 'completed', '2026-09-02T02:02:45.000Z')
+      ]),
+      nowMs: lastLineAt + 30_000
     })
     expect(built.status).toBe('completed')
   })
 
-  it('does not leave a long-finished run spinning when no result was ever written', () => {
+  it('carries a failed notification through as failed, not completed', () => {
     const [built] = buildClaudeAgentRuns({
       sessionId: 'session-1',
       agents: [agent],
       toolUses: collectAgentToolUses([AGENT_CALL_LINE]),
       toolResults: new Map(),
+      notifications: collectAgentNotifications([
+        notificationLine('toolu_01Web', 'failed', '2026-09-02T02:02:45.000Z')
+      ]),
+      nowMs: lastLineAt + 30_000
+    })
+    expect(built.status).toBe('failed')
+  })
+
+  it('still accepts a synchronous result written after the agent stopped writing', () => {
+    // A foreground agent's result IS its output and lands after its last line.
+    const [built] = buildClaudeAgentRuns({
+      sessionId: 'session-1',
+      agents: [agent],
+      toolUses: collectAgentToolUses([AGENT_CALL_LINE]),
+      toolResults: collectToolResults([AGENT_RESULT_LINE]),
+      notifications: new Map(),
+      nowMs: NOW
+    })
+    expect(built.status).toBe('completed')
+  })
+
+  it('does not leave a long-finished run spinning when nothing was ever recorded', () => {
+    const [built] = buildClaudeAgentRuns({
+      sessionId: 'session-1',
+      agents: [agent],
+      toolUses: collectAgentToolUses([AGENT_CALL_LINE]),
+      toolResults: new Map(),
+      notifications: new Map(),
       nowMs: NOW // days after the transcript's last line
     })
     expect(built.status).toBe('stalled')
